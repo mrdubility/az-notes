@@ -10,6 +10,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -21,10 +23,19 @@ class MainViewModel @Inject constructor(
     private val vaultRepository: VaultRepository
 ) : ViewModel() {
 
+    /**
+     * 设置是否已从 DataStore 首次回流：启动画面据此延迟退场、导航图据此决定起点，
+     * 避免已配置 Vault 时先闪一帧引导页。
+     */
+    private val _ready = MutableStateFlow(false)
+    val ready: StateFlow<Boolean> = _ready.asStateFlow()
+
     val settings: StateFlow<AppSettings> = settingsRepository.settings
+        .onEach { _ready.value = true }
+        .catch { _ready.value = true } // 读取失败也放行，避免卡在启动画面
         .stateIn(
             scope = viewModelScope,
-            started = SharingStarted.WhileSubscribed(5_000),
+            started = SharingStarted.Eagerly,
             initialValue = AppSettings()
         )
 

@@ -53,7 +53,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.NavigationDrawerItem
@@ -146,7 +145,6 @@ fun HomeScreen(
     val context = LocalContext.current
 
     var searchActive by rememberSaveable { mutableStateOf(false) }
-    var actionTarget by remember { mutableStateOf<NoteListItem?>(null) }
     var renameTarget by remember { mutableStateOf<NoteListItem?>(null) }
     var deleteTarget by remember { mutableStateOf<NoteListItem?>(null) }
     var fabMenuOpen by remember { mutableStateOf(false) }
@@ -353,7 +351,8 @@ fun HomeScreen(
                             onOpenFile(item.node.absolutePath)
                         }
                     },
-                    onMore = { actionTarget = it },
+                    onRename = { renameTarget = it },
+                    onDelete = { deleteTarget = it },
                     onRefresh = viewModel::refresh
                 )
                 // 拖拽悬停提示：松开即把内容保存为新笔记
@@ -377,21 +376,6 @@ fun HomeScreen(
     }
 
     // 条目右侧 ⋮ 弹窗：重命名 / 删除
-    actionTarget?.let { target ->
-        NoteActionSheet(
-            target = target,
-            onDismiss = { actionTarget = null },
-            onRename = {
-                actionTarget = null
-                renameTarget = target
-            },
-            onDelete = {
-                actionTarget = null
-                deleteTarget = target
-            }
-        )
-    }
-
     renameTarget?.let { target ->
         RenameDialog(
             initialName = editableName(target.node),
@@ -637,7 +621,8 @@ private fun NotesListContent(
     searchActive: Boolean,
     modifier: Modifier = Modifier,
     onOpen: (NoteListItem) -> Unit,
-    onMore: (NoteListItem) -> Unit,
+    onRename: (NoteListItem) -> Unit,
+    onDelete: (NoteListItem) -> Unit,
     onRefresh: () -> Unit
 ) {
     val visible = if (searchActive) state.searchResults else state.items
@@ -701,7 +686,8 @@ private fun NotesListContent(
                             NoteRow(
                                 item = item,
                                 onClick = { onOpen(item) },
-                                onMore = { onMore(item) }
+                                onRename = { onRename(item) },
+                                onDelete = { onDelete(item) }
                             )
                         }
                     }
@@ -731,7 +717,8 @@ private fun ListHint(text: String) {
 private fun NoteRow(
     item: NoteListItem,
     onClick: () -> Unit,
-    onMore: () -> Unit
+    onRename: () -> Unit,
+    onDelete: () -> Unit
 ) {
     val node = item.node
     Column(
@@ -759,13 +746,7 @@ private fun NoteRow(
                     modifier = Modifier.weight(1f)
                 )
                 // 文件夹同样提供重命名 / 删除入口（重命名后云端由 MOVE 同步）
-                IconButton(onClick = onMore) {
-                    Icon(
-                        imageVector = Icons.Outlined.MoreVert,
-                        contentDescription = stringResource(R.string.action_more),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+                NoteMoreButton(onRename = onRename, onDelete = onDelete)
             }
         } else {
             Text(
@@ -785,13 +766,7 @@ private fun NoteRow(
                     ReadingProgressDot(progress = percent)
                     Spacer(Modifier.width(6.dp))
                 }
-                IconButton(onClick = onMore) {
-                    Icon(
-                        imageVector = Icons.Outlined.MoreVert,
-                        contentDescription = stringResource(R.string.action_more),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+                NoteMoreButton(onRename = onRename, onDelete = onDelete)
             }
             if (item.preview.isNotEmpty()) {
                 Text(
@@ -816,57 +791,42 @@ private fun NoteRow(
     }
 }
 
-/** ⋮ 弹窗（ModalBottomSheet）：重命名 / 删除。 */
-@OptIn(ExperimentalMaterial3Api::class)
+/** ⋮ 按钮：点击在按钮旁弹出浮层菜单（重命名 / 删除），替代底部弹窗以便单手操作。 */
 @Composable
-private fun NoteActionSheet(
-    target: NoteListItem,
-    onDismiss: () -> Unit,
+private fun NoteMoreButton(
     onRename: () -> Unit,
     onDelete: () -> Unit
 ) {
-    ModalBottomSheet(onDismissRequest = onDismiss) {
-        Column(Modifier.fillMaxWidth().padding(bottom = 24.dp)) {
-            Text(
-                text = displayTitle(target.node),
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp)
-            )
-            HorizontalDivider(Modifier.padding(horizontal = 24.dp))
-            Spacer(Modifier.height(8.dp))
-            SheetAction(
-                icon = Icons.Outlined.Edit,
-                label = stringResource(R.string.action_rename),
-                onClick = onRename
-            )
-            SheetAction(
-                icon = Icons.Outlined.Delete,
-                label = stringResource(R.string.action_delete),
-                onClick = onDelete
+    var menuOpen by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { menuOpen = true }) {
+            Icon(
+                imageVector = Icons.Outlined.MoreVert,
+                contentDescription = stringResource(R.string.action_more),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
-    }
-}
-
-@Composable
-private fun SheetAction(
-    icon: ImageVector,
-    label: String,
-    onClick: () -> Unit
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(horizontal = 24.dp, vertical = 16.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-        Spacer(Modifier.width(16.dp))
-        Text(label, style = MaterialTheme.typography.titleMedium)
+        DropdownMenu(
+            expanded = menuOpen,
+            onDismissRequest = { menuOpen = false }
+        ) {
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.action_rename)) },
+                leadingIcon = { Icon(Icons.Outlined.Edit, null) },
+                onClick = {
+                    menuOpen = false
+                    onRename()
+                }
+            )
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.action_delete)) },
+                leadingIcon = { Icon(Icons.Outlined.Delete, null) },
+                onClick = {
+                    menuOpen = false
+                    onDelete()
+                }
+            )
+        }
     }
 }
 

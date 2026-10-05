@@ -1,6 +1,7 @@
 package com.az.notes.ui.settings
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -28,12 +29,13 @@ import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.Sync
 import androidx.compose.material.icons.outlined.TextFormat
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
@@ -61,7 +63,8 @@ import com.az.notes.domain.model.ThemeMode
 
 /**
  * 设置页（§5.6 重设计）：图标 + 标题 + 副标题的分组列表。
- * 主题 / 字体 / 排序 → 底部弹窗单选；字号 / 行间距 / 预览字符数 → 滑杆对话框；
+ * 单选类选项（主题 / 字体 / 排序 / 加号行为 / 回收站清理）→ 行旁浮层菜单，
+ * 单手即可触达；字号 / 行间距 / 预览字符数 → 滑杆对话框；
  * 动态取色 → 开关；同步、Vault 更换目录 → 对应入口。
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -74,15 +77,10 @@ fun SettingsScreen(
 ) {
     val settings by viewModel.settings.collectAsStateWithLifecycle()
 
-    var themeSheet by remember { mutableStateOf(false) }
-    var fontSheet by remember { mutableStateOf(false) }
-    var sortSheet by remember { mutableStateOf(false) }
     var fontSizeDialog by remember { mutableStateOf(false) }
     var lineHeightDialog by remember { mutableStateOf(false) }
     var previewDialog by remember { mutableStateOf(false) }
     var noteNameDialog by remember { mutableStateOf(false) }
-    var fabSheet by remember { mutableStateOf(false) }
-    var trashRetentionSheet by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -103,11 +101,12 @@ fun SettingsScreen(
             // —— 外观 ——
             item { SectionHeader(stringResource(R.string.settings_appearance)) }
             item {
-                SettingsRow(
+                SettingsChoiceRow(
                     icon = Icons.Outlined.Palette,
                     title = stringResource(R.string.settings_theme),
-                    subtitle = settings.themeMode.label(),
-                    onClick = { themeSheet = true }
+                    options = ThemeMode.entries.map { it to it.label() },
+                    selected = settings.themeMode,
+                    onSelect = viewModel::setThemeMode
                 )
             }
             item {
@@ -128,11 +127,12 @@ fun SettingsScreen(
             // —— 编辑器和查看器 ——
             item { SectionHeader(stringResource(R.string.settings_editor_viewer)) }
             item {
-                SettingsRow(
+                SettingsChoiceRow(
                     icon = Icons.Outlined.TextFormat,
                     title = stringResource(R.string.settings_font_family),
-                    subtitle = settings.fontFamily.label(),
-                    onClick = { fontSheet = true }
+                    options = FontFamilyPreference.entries.map { it to it.label() },
+                    selected = settings.fontFamily,
+                    onSelect = viewModel::setFontFamily
                 )
             }
             item {
@@ -174,19 +174,21 @@ fun SettingsScreen(
                 )
             }
             item {
-                SettingsRow(
+                SettingsChoiceRow(
                     icon = Icons.AutoMirrored.Outlined.Sort,
                     title = stringResource(R.string.settings_sort_order),
-                    subtitle = settings.sortOrder.label(),
-                    onClick = { sortSheet = true }
+                    options = NoteSortOrder.entries.map { it to it.label() },
+                    selected = settings.sortOrder,
+                    onSelect = viewModel::setSortOrder
                 )
             }
             item {
-                SettingsRow(
+                SettingsChoiceRow(
                     icon = Icons.Outlined.Add,
                     title = stringResource(R.string.settings_fab_action),
-                    subtitle = settings.fabAction.label(),
-                    onClick = { fabSheet = true }
+                    options = FabAction.entries.map { it to it.label() },
+                    selected = settings.fabAction,
+                    onSelect = viewModel::setFabAction
                 )
             }
 
@@ -221,15 +223,15 @@ fun SettingsScreen(
                 )
             }
             item {
-                SettingsRow(
+                SettingsChoiceRow(
                     icon = Icons.Outlined.DeleteSweep,
                     title = stringResource(R.string.settings_trash_retention),
-                    subtitle = if (settings.trashRetentionDays <= 0) {
-                        stringResource(R.string.settings_trash_retention_never)
-                    } else {
-                        stringResource(R.string.settings_trash_retention_value, settings.trashRetentionDays)
+                    options = TRASH_RETENTION_OPTIONS.map { days ->
+                        days to if (days <= 0) stringResource(R.string.settings_trash_retention_never)
+                        else stringResource(R.string.settings_trash_retention_value, days)
                     },
-                    onClick = { trashRetentionSheet = true }
+                    selected = settings.trashRetentionDays,
+                    onSelect = viewModel::setTrashRetentionDays
                 )
             }
 
@@ -243,74 +245,6 @@ fun SettingsScreen(
                 )
             }
         }
-    }
-
-    if (themeSheet) {
-        ChoiceSheet(
-            title = stringResource(R.string.settings_theme),
-            options = ThemeMode.entries.map { it to it.label() },
-            selected = settings.themeMode,
-            onSelect = {
-                viewModel.setThemeMode(it)
-                themeSheet = false
-            },
-            onDismiss = { themeSheet = false }
-        )
-    }
-
-    if (fontSheet) {
-        ChoiceSheet(
-            title = stringResource(R.string.settings_font_family),
-            options = FontFamilyPreference.entries.map { it to it.label() },
-            selected = settings.fontFamily,
-            onSelect = {
-                viewModel.setFontFamily(it)
-                fontSheet = false
-            },
-            onDismiss = { fontSheet = false }
-        )
-    }
-
-    if (sortSheet) {
-        ChoiceSheet(
-            title = stringResource(R.string.settings_sort_order),
-            options = NoteSortOrder.entries.map { it to it.label() },
-            selected = settings.sortOrder,
-            onSelect = {
-                viewModel.setSortOrder(it)
-                sortSheet = false
-            },
-            onDismiss = { sortSheet = false }
-        )
-    }
-
-    if (fabSheet) {
-        ChoiceSheet(
-            title = stringResource(R.string.settings_fab_action),
-            options = FabAction.entries.map { it to it.label() },
-            selected = settings.fabAction,
-            onSelect = {
-                viewModel.setFabAction(it)
-                fabSheet = false
-            },
-            onDismiss = { fabSheet = false }
-        )
-    }
-
-    if (trashRetentionSheet) {
-        ChoiceSheet(
-            title = stringResource(R.string.settings_trash_retention),
-            options = TRASH_RETENTION_OPTIONS.map { days ->
-                days to if (days <= 0) stringResource(R.string.settings_trash_retention_never)
-                else stringResource(R.string.settings_trash_retention_value, days)
-            },
-            selected = settings.trashRetentionDays,
-            onSelect = {
-                viewModel.setTrashRetentionDays(it)
-                trashRetentionSheet = false
-            },
-            onDismiss = { trashRetentionSheet = false }
-        )
     }
 
     if (fontSizeDialog) {
@@ -415,43 +349,43 @@ private fun SettingsRow(
     }
 }
 
-/** 底部弹窗单选（主题 / 字体族 / 排序方式）。 */
-@OptIn(ExperimentalMaterial3Api::class)
+/**
+ * 单选设置行：点击在行旁弹出浮层菜单（替代底部弹窗，单手更好操作），
+ * 选中项显示对勾；点选后立即生效并收起。
+ */
 @Composable
-private fun <T> ChoiceSheet(
+private fun <T> SettingsChoiceRow(
+    icon: ImageVector,
     title: String,
     options: List<Pair<T, String>>,
     selected: T,
-    onSelect: (T) -> Unit,
-    onDismiss: () -> Unit
+    onSelect: (T) -> Unit
 ) {
-    ModalBottomSheet(onDismissRequest = onDismiss) {
-        Column(Modifier.fillMaxWidth().padding(bottom = 24.dp)) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp)
-            )
-            HorizontalDivider(Modifier.padding(horizontal = 24.dp))
-            Spacer(Modifier.height(8.dp))
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        SettingsRow(
+            icon = icon,
+            title = title,
+            subtitle = options.firstOrNull { it.first == selected }?.second.orEmpty(),
+            onClick = { expanded = true }
+        )
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false }
+        ) {
             options.forEach { (value, label) ->
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { onSelect(value) }
-                        .padding(horizontal = 24.dp, vertical = 16.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = label,
-                        style = MaterialTheme.typography.bodyLarge,
-                        modifier = Modifier.weight(1f)
-                    )
-                    if (value == selected) {
-                        Icon(Icons.Filled.Check, null, tint = MaterialTheme.colorScheme.primary)
+                DropdownMenuItem(
+                    text = { Text(label) },
+                    trailingIcon = {
+                        if (value == selected) {
+                            Icon(Icons.Filled.Check, null, tint = MaterialTheme.colorScheme.primary)
+                        }
+                    },
+                    onClick = {
+                        expanded = false
+                        onSelect(value)
                     }
-                }
+                )
             }
         }
     }

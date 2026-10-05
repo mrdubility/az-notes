@@ -19,10 +19,12 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.concurrent.ConcurrentHashMap
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -94,6 +96,9 @@ class NotesViewModel @Inject constructor(
     private var loadJob: Job? = null
     private var searchJob: Job? = null
 
+    /** 正文预览内存缓存（绝对路径 → 文件 mtime + 预览）：跨目录往返与重复刷新零重读。 */
+    private val previewCache = ConcurrentHashMap<String, CachedPreview>()
+
     init {
         viewModelScope.launch {
             settingsRepository.settings.collect { applySettings(it) }
@@ -126,6 +131,7 @@ class NotesViewModel @Inject constructor(
             }
             // 预览字符数 / 排序方式变化：保持当前目录重新加载
             initialized && (s.previewChars != prev.previewChars || s.sortOrder != prev.sortOrder) -> {
+                if (s.previewChars != prev.previewChars) previewCache.clear() // 预览长度变化：缓存失效
                 reloadItems(pullRefresh = false)
             }
         }
@@ -141,22 +147,18 @@ class NotesViewModel @Inject constructor(
         if (initialized) reloadItems(pullRefresh = true)
     }
 
-    /** 进入子文件夹。 */
+    /** 进入子文件夹：保留当前列表直到新数据就绪，避免白屏 / 转圈闪动。 */
     fun enterDir(node: FileNode) {
         if (!node.isDirectory) return
-        _state.update {
-            it.copy(dirStack = it.dirStack + node.absolutePath, items = emptyList(), loading = true)
-        }
+        _state.update { it.copy(dirStack = it.dirStack + node.absolutePath) }
         reloadItems(pullRefresh = false)
     }
 
-    /** 返回上一级；根目录时无操作。 */
+    /** 返回上一级；根目录时无操作。列表保留到新数据就绪，避免闪动。 */
     fun navigateUp() {
         val stack = _state.value.dirStack
         if (stack.isEmpty()) return
-        _state.update {
-            it.copy(dirStack = stack.dropLast(1), items = emptyList(), loading = true)
-        }
+        _state.update { it.copy(dirStack = stack.dropLast(1)) }
         reloadItems(pullRefresh = false)
     }
 
@@ -188,7 +190,7 @@ class NotesViewModel @Inject constructor(
                         vaultRepository.searchNotes(vault, trimmed).map { node ->
                             NoteListItem(
                                 node = node,
-                                preview = vaultRepository.readPreview(node.absolutePath, previewChars),
+                                preview = previewFor(node, previewChars),
                                 subtitle = node.relativePath.substringBeforeLast('/', "").ifEmpty { null },
                                 progress = progress[node.absolutePath]
                             )
@@ -259,7 +261,10 @@ class NotesViewModel @Inject constructor(
      */
     fun createNoteFromShare(content: String, onCreated: (String) -> Unit) {
         viewModelScope.launch {
-            val vault = currentSettings.vaultPath
+            // 冷启动分享时设置可能尚未回流到 currentSettings：直接读一次最新快照，
+            // 避免误报“未选择 Vault 目录”并丢失分享内容
+            val vault = runCatching { settingsRepository.settings.first().vaultPath }
+                .getOrNull() ?: currentSettings.vaultPath
             if (vault.isNullOrBlank()) {
                 _state.update { it.copy(message = "未选择 Vault 目录") }
                 return@launch
@@ -359,17 +364,10 @@ class NotesViewModel @Inject constructor(
             }
             result.fold(
                 onSuccess = { items ->
-                    // 目录结构先渲染；沿用未变化文件的已加载预览，
-                    // 避免刷新时预览先被清空再逐条重现（屏幕闪动）
+                    // 列表与预览一次到位：避免目录切换 / 刷新时预览分批填充导致闪动
                     _state.update { s ->
-                        s.copy(
-                            items = mergePreviews(s.items, items),
-                            loading = false,
-                            refreshing = false,
-                            error = null
-                        )
+                        s.copy(items = items, loading = false, refreshing = false, error = null)
                     }
-                    fillPreviews()
                 },
                 onFailure = { e ->
                     _state.update {
@@ -381,67 +379,41 @@ class NotesViewModel @Inject constructor(
     }
 
     /**
-     * 用上一轮的预览填充新列表：仅当文件未变化（mtime 相同）时沿用，
-     * 变化过的文件预览置空由 [fillPreviews] 重读，保证编辑后返回看到的是最新内容。
+     * 列表与预览一次性备齐后再提交状态：目录切换 / 刷新不再经历
+     * “先无预览、后逐批出现”的过程（此前的分批填充会造成肉眼可见的闪动）。
+     * 预览读取走 [previewFor] 内存缓存，未变化文件不重读、往返目录零等待。
      */
-    private fun mergePreviews(
-        previous: List<NoteListItem>,
-        next: List<NoteListItem>
-    ): List<NoteListItem> {
-        if (previous.isEmpty()) return next
-        val byPath = previous.associateBy { it.node.absolutePath }
-        return next.map { item ->
-            val old = byPath[item.node.absolutePath] ?: return@map item
-            if (old.preview.isNotEmpty() && old.node.lastModified == item.node.lastModified) {
-                item.copy(preview = old.preview)
-            } else {
-                item
-            }
-        }
-    }
-
-    /**
-     * 预览增量填充：目录先行渲染后，在 IO 上读取正文前缀并**分批**写回状态。
-     * 每 [PREVIEW_BATCH] 条合并一次更新，避免逐条写入使列表反复重组（视觉闪动）；
-     * 大批量文件时用户仍可立即看到列表；期间若切换目录 / 重新加载，
-     * 本 Job 被取消，循环自然终止。
-     */
-    private suspend fun fillPreviews() {
-        val previewChars = currentSettings.previewChars
-        val targets = _state.value.items.filter { it.node.isMarkdown && it.preview.isEmpty() }
-        if (targets.isEmpty()) return
-        val pending = HashMap<String, String>()
-        for (item in targets) {
-            val preview = withContext(Dispatchers.IO) {
-                vaultRepository.readPreview(item.node.absolutePath, previewChars)
-            }
-            if (preview.isNotEmpty()) pending[item.node.absolutePath] = preview
-            if (pending.size >= PREVIEW_BATCH) flushPreviews(pending)
-        }
-        flushPreviews(pending)
-    }
-
-    /** 把累积的预览一次性写入状态并清空缓冲。 */
-    private fun flushPreviews(pending: MutableMap<String, String>) {
-        if (pending.isEmpty()) return
-        _state.update { s ->
-            s.copy(
-                items = s.items.map { item ->
-                    pending[item.node.absolutePath]?.let { item.copy(preview = it) } ?: item
-                }
-            )
-        }
-        pending.clear()
-    }
-
     private suspend fun loadListing(dirPath: String, vaultPath: String): List<NoteListItem> {
         val nodes = vaultRepository.listChildren(dirPath, vaultPath)
         val folders = nodes.filter { it.isDirectory }.sortedBy { it.name.lowercase() }
         val notes = sortNotes(nodes.filter { it.isMarkdown }, currentSettings.sortOrder)
         val progress = progressByPath()
-        return folders.map { NoteListItem(it) } + notes.map {
-            NoteListItem(it, progress = progress[it.absolutePath])
+        val previewChars = currentSettings.previewChars
+        return folders.map { NoteListItem(it) } + notes.map { node ->
+            NoteListItem(
+                node = node,
+                preview = previewFor(node, previewChars),
+                progress = progress[node.absolutePath]
+            )
         }
+    }
+
+    /** 预览缓存条目：文件 mtime 未变即可复用。 */
+    private data class CachedPreview(val lastModified: Long, val preview: String)
+
+    /**
+     * 预览读取：命中缓存（mtime 未变）直接复用，否则读盘并写回缓存；
+     * 读取为空（无正文 / 失败）时不缓存，下次仍会重试。
+     */
+    private fun previewFor(node: FileNode, previewChars: Int): String {
+        val cached = previewCache[node.absolutePath]
+        if (cached != null && cached.lastModified == node.lastModified) return cached.preview
+        val preview = vaultRepository.readPreview(node.absolutePath, previewChars)
+        if (preview.isNotEmpty()) {
+            if (previewCache.size >= PREVIEW_CACHE_LIMIT) previewCache.clear()
+            previewCache[node.absolutePath] = CachedPreview(node.lastModified, preview)
+        }
+        return preview
     }
 
     /**
@@ -463,7 +435,7 @@ class NotesViewModel @Inject constructor(
     }
 
     private companion object {
-        /** 预览批量写回的条数：约一屏，兼顾首屏速度与重组次数。 */
-        const val PREVIEW_BATCH = 12
+        /** 预览缓存上限：超过后整体清空，控制内存占用。 */
+        const val PREVIEW_CACHE_LIMIT = 2000
     }
 }

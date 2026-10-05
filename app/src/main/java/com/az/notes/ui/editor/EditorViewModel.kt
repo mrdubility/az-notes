@@ -70,6 +70,8 @@ class EditorViewModel @Inject constructor(
     }
 
     fun onTextChange(newText: String) {
+        // 相同文本（如编辑器初始化回灌）不置脏、不重置自动保存计时
+        if (newText == _state.value.text) return
         _state.update { it.copy(text = newText, dirty = true) }
         autoSaveJob?.cancel()
         autoSaveJob = viewModelScope.launch {
@@ -123,20 +125,8 @@ class EditorViewModel @Inject constructor(
         }
     }
 
-    /** 常用标记插入（工具栏）。[wrap] 为成对标记，光标内容包裹。 */
-    fun applyDecoration(before: String, after: String = before) {
-        val s = _state.value.text
-        val decorated = if (s.isEmpty()) before + after else s + " " + before + "文本" + after
-        _state.update { it.copy(text = decorated, dirty = true) }
-    }
-
-    /** 行首标记插入（标题/列表/代码块）。 */
-    fun insertLinePrefix(prefix: String) {
-        val s = _state.value.text
-        _state.update { it.copy(text = if (s.isEmpty()) prefix else "$s\n$prefix", dirty = true) }
-        autoSaveJob?.cancel()
-        autoSaveJob = viewModelScope.launch { delay(1500); save() }
-    }
+    // 工具栏的标记插入已迁移到 EditorScreen：直接操作 TextFieldState，
+    // 插入标记后光标 / 选区自动跟随（旧实现只在文末拼接，体验差）。
 
     /**
      * 重命名当前笔记（编辑页标题入口）：

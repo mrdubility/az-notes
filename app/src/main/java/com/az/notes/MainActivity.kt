@@ -2,6 +2,7 @@ package com.az.notes
 
 import android.content.Intent
 import android.os.Bundle
+import android.os.SystemClock
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
@@ -28,7 +29,14 @@ class MainActivity : ComponentActivity() {
     private val mainViewModel: MainViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        installSplashScreen()
+        val splashScreen = installSplashScreen()
+        // 设置回流完成前保持系统启动画面（最多 2.5s 兜底），
+        // 避免已配置 Vault 时先闪一帧引导页
+        val splashWaitStart = SystemClock.uptimeMillis()
+        splashScreen.setKeepOnScreenCondition {
+            !mainViewModel.ready.value &&
+                SystemClock.uptimeMillis() - splashWaitStart < SPLASH_MAX_WAIT_MS
+        }
         super.onCreate(savedInstanceState)
 
         handleShareIntent(intent)
@@ -72,5 +80,10 @@ class MainActivity : ComponentActivity() {
             else -> null
         }
         if (!text.isNullOrBlank()) mainViewModel.setSharedText(text)
+    }
+
+    private companion object {
+        /** 启动画面等待设置回流的上限（毫秒）；DataStore 正常仅需数毫秒。 */
+        const val SPLASH_MAX_WAIT_MS = 2500L
     }
 }

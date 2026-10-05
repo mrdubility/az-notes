@@ -3,6 +3,7 @@ package com.az.notes.ui.sync
 import android.widget.Toast
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -23,13 +24,14 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -84,10 +86,6 @@ fun SyncScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     val logs by viewModel.logs.collectAsStateWithLifecycle()
     val conflicts by viewModel.conflicts.collectAsStateWithLifecycle()
-    var modeSheet by remember { mutableStateOf(false) }
-    var strategySheet by remember { mutableStateOf(false) }
-    var intervalSheet by remember { mutableStateOf(false) }
-    var maxSizeSheet by remember { mutableStateOf(false) }
     var filterEditOpen by remember { mutableStateOf(false) }
 
     // 连接测试结果用 Toast 弹出；展示后立即消费，避免重组 / 重建时重复提示
@@ -124,24 +122,27 @@ fun SyncScreen(
             // —— 同步策略 ——
             item { SectionHeader(stringResource(R.string.sync_section_policy)) }
             item {
-                ClickableRow(
+                ChoiceRow(
                     title = stringResource(R.string.sync_mode_row),
-                    value = state.config.mode.label(),
-                    onClick = { modeSheet = true }
+                    options = SyncMode.entries.map { it to it.label() },
+                    selected = state.config.mode,
+                    onSelect = viewModel::updateMode
                 )
             }
             item {
-                ClickableRow(
+                ChoiceRow(
                     title = stringResource(R.string.sync_conflict_strategy_row),
-                    value = state.config.conflictStrategy.label(),
-                    onClick = { strategySheet = true }
+                    options = ConflictStrategy.entries.map { it to it.label() },
+                    selected = state.config.conflictStrategy,
+                    onSelect = viewModel::updateConflictStrategy
                 )
             }
             item {
-                ClickableRow(
+                ChoiceRow(
                     title = stringResource(R.string.sync_max_file_size_row),
-                    value = fileSizeLabel(state.config.maxFileSizeMb),
-                    onClick = { maxSizeSheet = true }
+                    options = MAX_FILE_SIZE_OPTIONS.map { it to fileSizeLabel(it) },
+                    selected = state.config.maxFileSizeMb,
+                    onSelect = viewModel::updateMaxFileSizeMb
                 )
             }
 
@@ -174,10 +175,11 @@ fun SyncScreen(
                 )
             }
             item {
-                ClickableRow(
+                ChoiceRow(
                     title = stringResource(R.string.sync_auto_periodic),
-                    value = state.config.periodicInterval.label(),
-                    onClick = { intervalSheet = true }
+                    options = SyncInterval.entries.map { it to it.label() },
+                    selected = state.config.periodicInterval,
+                    onSelect = viewModel::updatePeriodicInterval
                 )
             }
             item {
@@ -295,58 +297,6 @@ fun SyncScreen(
                 onDismiss = viewModel::cancelPlan
             )
         }
-    }
-
-    if (modeSheet) {
-        ChoiceSheet(
-            title = stringResource(R.string.sync_mode_row),
-            options = SyncMode.entries.map { it to it.label() },
-            selected = state.config.mode,
-            onSelect = {
-                viewModel.updateMode(it)
-                modeSheet = false
-            },
-            onDismiss = { modeSheet = false }
-        )
-    }
-
-    if (strategySheet) {
-        ChoiceSheet(
-            title = stringResource(R.string.sync_conflict_strategy_row),
-            options = ConflictStrategy.entries.map { it to it.label() },
-            selected = state.config.conflictStrategy,
-            onSelect = {
-                viewModel.updateConflictStrategy(it)
-                strategySheet = false
-            },
-            onDismiss = { strategySheet = false }
-        )
-    }
-
-    if (intervalSheet) {
-        ChoiceSheet(
-            title = stringResource(R.string.sync_auto_periodic),
-            options = SyncInterval.entries.map { it to it.label() },
-            selected = state.config.periodicInterval,
-            onSelect = {
-                viewModel.updatePeriodicInterval(it)
-                intervalSheet = false
-            },
-            onDismiss = { intervalSheet = false }
-        )
-    }
-
-    if (maxSizeSheet) {
-        ChoiceSheet(
-            title = stringResource(R.string.sync_max_file_size_row),
-            options = MAX_FILE_SIZE_OPTIONS.map { it to fileSizeLabel(it) },
-            selected = state.config.maxFileSizeMb,
-            onSelect = {
-                viewModel.updateMaxFileSizeMb(it)
-                maxSizeSheet = false
-            },
-            onDismiss = { maxSizeSheet = false }
-        )
     }
 
     if (filterEditOpen) {
@@ -713,43 +663,41 @@ private fun ClickableRow(title: String, value: String, onClick: () -> Unit) {
     }
 }
 
-/** 底部弹窗单选（同步策略）。 */
-@OptIn(ExperimentalMaterial3Api::class)
+/**
+ * 单选行：点击在行旁弹出浮层菜单（替代底部弹窗，单手更好操作），
+ * 选中项显示对勾；点选后立即生效并收起。
+ */
 @Composable
-private fun <T> ChoiceSheet(
+private fun <T> ChoiceRow(
     title: String,
     options: List<Pair<T, String>>,
     selected: T,
-    onSelect: (T) -> Unit,
-    onDismiss: () -> Unit
+    onSelect: (T) -> Unit
 ) {
-    ModalBottomSheet(onDismissRequest = onDismiss) {
-        Column(Modifier.fillMaxWidth().padding(bottom = 24.dp)) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp)
-            )
-            HorizontalDivider(Modifier.padding(horizontal = 24.dp))
-            Spacer(Modifier.height(8.dp))
-            options.forEach { (value, optionLabel) ->
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { onSelect(value) }
-                        .padding(horizontal = 24.dp, vertical = 16.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = optionLabel,
-                        style = MaterialTheme.typography.bodyLarge,
-                        modifier = Modifier.weight(1f)
-                    )
-                    if (value == selected) {
-                        Icon(Icons.Filled.Check, null, tint = MaterialTheme.colorScheme.primary)
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        ClickableRow(
+            title = title,
+            value = options.firstOrNull { it.first == selected }?.second.orEmpty(),
+            onClick = { expanded = true }
+        )
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false }
+        ) {
+            options.forEach { (value, label) ->
+                DropdownMenuItem(
+                    text = { Text(label) },
+                    trailingIcon = {
+                        if (value == selected) {
+                            Icon(Icons.Filled.Check, null, tint = MaterialTheme.colorScheme.primary)
+                        }
+                    },
+                    onClick = {
+                        expanded = false
+                        onSelect(value)
                     }
-                }
+                )
             }
         }
     }

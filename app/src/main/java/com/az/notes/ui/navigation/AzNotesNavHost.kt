@@ -1,7 +1,13 @@
 package com.az.notes.ui.navigation
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Modifier
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
@@ -18,6 +24,7 @@ import com.az.notes.ui.reader.ReaderScreen
 import com.az.notes.ui.settings.SettingsScreen
 import com.az.notes.ui.sync.SyncScreen
 import com.az.notes.ui.trash.TrashScreen
+import com.az.notes.util.StoragePermission
 
 /** 全局导航图（§5.7）。path 参数以 URL 编码存放绝对路径。 */
 @Composable
@@ -25,7 +32,26 @@ fun AzNotesNavHost(
     mainViewModel: MainViewModel,
     navController: NavHostController = rememberNavController()
 ) {
-    NavHost(navController = navController, startDestination = Routes.GATE) {
+    val ready by mainViewModel.ready.collectAsStateWithLifecycle()
+    val settings by mainViewModel.settings.collectAsStateWithLifecycle()
+
+    if (!ready) {
+        // 设置尚未回流完成：显示与启动画面一致的底色，防止引导页闪现（正常仅数毫秒）
+        Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface))
+        return
+    }
+
+    // 起点在就绪后一次性固化（remember）：已配置且权限就绪直接进主页，
+    // 从根上避免引导页一闪而过；此后设置变化不会重建导航图
+    val startDestination = remember {
+        if (settings.vaultPath.isNullOrBlank() || !StoragePermission.hasAllFilesAccess()) {
+            Routes.GATE
+        } else {
+            Routes.HOME
+        }
+    }
+
+    NavHost(navController = navController, startDestination = startDestination) {
         composable(Routes.GATE) {
             GateScreen(
                 viewModel = mainViewModel,
