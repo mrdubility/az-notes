@@ -37,9 +37,10 @@ fun AzNotesNavHost(
         composable(Routes.HOME) {
             HomeScreen(
                 onOpenFile = { navController.navigate(Routes.reader(it)) },
-                onOpenEditor = { navController.navigate(Routes.editor(it)) },
+                onOpenEditor = { path, fresh -> navController.navigate(Routes.editor(path, fresh)) },
                 onSettings = { navController.navigate(Routes.SETTINGS) },
-                onSync = { navController.navigate(Routes.SYNC) }
+                // 主页右上角 = 立即同步（进页自动开始扫描）
+                onSync = { navController.navigate(Routes.sync(autoStart = true)) }
             )
         }
 
@@ -56,7 +57,13 @@ fun AzNotesNavHost(
 
         composable(
             route = Routes.EDITOR,
-            arguments = listOf(navArgument("path") { type = NavType.StringType })
+            arguments = listOf(
+                navArgument("path") { type = NavType.StringType },
+                navArgument("fresh") {
+                    type = NavType.BoolType
+                    defaultValue = false
+                }
+            )
         ) {
             EditorScreen(
                 viewModel = hiltViewModel(),
@@ -69,7 +76,7 @@ fun AzNotesNavHost(
             SettingsScreen(
                 viewModel = hiltViewModel(),
                 onBack = { navController.popBackStack() },
-                onSync = { navController.navigate(Routes.SYNC) },
+                onSync = { navController.navigate(Routes.sync(autoStart = false)) },
                 onChangeVault = {
                     // 清掉主界面与设置页，回到门禁重新选择 Vault
                     navController.navigate(Routes.GATE) {
@@ -79,8 +86,17 @@ fun AzNotesNavHost(
             )
         }
 
-        composable(Routes.SYNC) {
+        composable(
+            route = Routes.SYNC,
+            arguments = listOf(
+                navArgument("autoStart") {
+                    type = NavType.BoolType
+                    defaultValue = false
+                }
+            )
+        ) { entry ->
             SyncScreen(
+                autoStart = entry.arguments?.getBoolean("autoStart") ?: false,
                 onBack = { navController.popBackStack() },
                 viewModel = hiltViewModel()
             )

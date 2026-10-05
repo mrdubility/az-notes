@@ -309,6 +309,7 @@ fun SettingsScreen(
             title = stringResource(R.string.settings_default_note_name),
             initial = settings.defaultNoteName,
             label = stringResource(R.string.dialog_note_name_label),
+            hint = stringResource(R.string.settings_default_note_name_hint),
             onConfirm = {
                 viewModel.setDefaultNoteName(it)
                 noteNameDialog = false
@@ -402,12 +403,13 @@ private fun <T> ChoiceSheet(
     }
 }
 
-/** 文本输入对话框（默认新建笔记名等）。 */
+/** 文本输入对话框（默认新建笔记名等；[hint] 显示格式说明）。 */
 @Composable
 private fun TextInputDialog(
     title: String,
     initial: String,
     label: String,
+    hint: String? = null,
     onConfirm: (String) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -416,12 +418,22 @@ private fun TextInputDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = {
-            OutlinedTextField(
-                value = draft,
-                onValueChange = { draft = it },
-                singleLine = true,
-                label = { Text(label) }
-            )
+            Column {
+                OutlinedTextField(
+                    value = draft,
+                    onValueChange = { draft = it },
+                    singleLine = true,
+                    label = { Text(label) }
+                )
+                hint?.let {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text = it,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
         },
         confirmButton = {
             TextButton(onClick = { onConfirm(draft) }) {

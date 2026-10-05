@@ -115,15 +115,31 @@ class SyncViewModel @Inject constructor(
             return
         }
         viewModelScope.launch {
-            _state.update { it.copy(phase = SyncPhase.TESTING, testMessage = null, error = null) }
-            val result = syncEngine.testConnection(config)
+            _state.update {
+                it.copy(
+                    phase = SyncPhase.TESTING,
+                    statusText = "正在测试连接…",
+                    testMessage = null,
+                    error = null
+                )
+            }
+            // 限流等待（自动重试中）时同步展示到进度区，避免只看到进度条无文字
+            val result = syncEngine.testConnection(config) { status ->
+                _state.update { it.copy(statusText = status) }
+            }
             result.fold(
                 onSuccess = {
-                    _state.update { it.copy(phase = SyncPhase.IDLE, testMessage = "连接成功") }
+                    _state.update {
+                        it.copy(phase = SyncPhase.IDLE, statusText = "", testMessage = "连接成功")
+                    }
                 },
                 onFailure = { e ->
                     _state.update {
-                        it.copy(phase = SyncPhase.IDLE, testMessage = e.message ?: "连接失败：未知错误")
+                        it.copy(
+                            phase = SyncPhase.IDLE,
+                            statusText = "",
+                            testMessage = e.message ?: "连接失败：未知错误"
+                        )
                     }
                 }
             )
@@ -132,10 +148,21 @@ class SyncViewModel @Inject constructor(
 
     // ---------------------------------------------------------------- 手动同步
 
-    /** 开始同步：扫描两端生成计划，等用户预览确认后执行。 */
+    /** 开始同步：扫描两端生成计划，等用户预览确认后执行。前置检查用 Toast 提示。 */
     fun startSync() {
         val snapshot = _state.value
-        if (snapshot.busy) return
+        if (snapshot.busy) {
+            _state.update { it.copy(testMessage = "同步正在进行中，请稍候") }
+            return
+        }
+        if (!snapshot.config.configured) {
+            _state.update { it.copy(testMessage = "请先在下方填写服务器地址、账号与应用密码") }
+            return
+        }
+        if (snapshot.vaultPath.isNullOrBlank()) {
+            _state.update { it.copy(testMessage = "尚未选择 Vault 目录") }
+            return
+        }
         viewModelScope.launch {
             _state.update {
                 it.copy(

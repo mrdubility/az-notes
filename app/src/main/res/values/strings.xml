@@ -21,6 +21,7 @@
     <string name="tree_empty">该目录暂无 Markdown 文件</string>
     <string name="action_settings">设置</string>
     <string name="action_sync">同步</string>
+    <string name="action_sync_now">立即同步</string>
     <string name="action_edit">编辑</string>
     <string name="action_preview">预览</string>
     <string name="action_outline">大纲</string>
@@ -82,6 +83,7 @@
     <string name="settings_preview_range_hint">正文预览在列表中的截取长度（20～300）</string>
     <string name="settings_default_note_name">默认新建笔记名</string>
     <string name="settings_default_note_name_subtitle">当前：%1$s</string>
+    <string name="settings_default_note_name_hint">支持日期变量：yyyy（年）MM（月）dd（日）HH（时）mm（分）ss（秒），如 yyyyMMdd 生成 20261005；普通字母需用英文单引号包裹，如 \'Notes\'</string>
     <string name="dialog_note_name_label">笔记名称</string>
     <string name="settings_sort_order">默认排序方式</string>
     <string name="settings_sort_subtitle">主页右上角可随时切换</string>

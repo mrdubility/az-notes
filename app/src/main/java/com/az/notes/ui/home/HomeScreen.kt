@@ -89,14 +89,14 @@ import java.util.Locale
 
 /**
  * 主界面（§5.1 重设计）：抽屉菜单 + 笔记卡片列表。
- * 左上角抽屉 → 设置入口；右上角 → 搜索 / 排序；右下角 FAB → 新建笔记；
+ * 左上角抽屉 → 设置入口；右上角 → 立即同步 / 搜索 / 排序；右下角 FAB → 新建笔记；
  * 下拉刷新；条目右侧 ⋮ → 重命名 / 删除；文件夹可点击进入；隐藏 '.' 开头项。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
     onOpenFile: (String) -> Unit,
-    onOpenEditor: (String) -> Unit,
+    onOpenEditor: (path: String, fresh: Boolean) -> Unit,
     onSettings: () -> Unit,
     onSync: () -> Unit,
     viewModel: NotesViewModel = hiltViewModel()
@@ -168,7 +168,7 @@ fun HomeScreen(
             },
             floatingActionButton = {
                 FloatingActionButton(
-                    onClick = { viewModel.createNote { path -> onOpenEditor(path) } },
+                    onClick = { viewModel.createNote { path -> onOpenEditor(path, true) } },
                     containerColor = MaterialTheme.colorScheme.primary,
                     contentColor = MaterialTheme.colorScheme.onPrimary
                 ) {
@@ -303,7 +303,7 @@ private fun HomeTopBar(
                 }
             } else {
                 IconButton(onClick = onSync) {
-                    Icon(Icons.Outlined.Sync, stringResource(R.string.action_sync))
+                    Icon(Icons.Outlined.Sync, stringResource(R.string.action_sync_now))
                 }
                 IconButton(onClick = onSearchOpen) {
                     Icon(Icons.Outlined.Search, stringResource(R.string.home_search_hint))

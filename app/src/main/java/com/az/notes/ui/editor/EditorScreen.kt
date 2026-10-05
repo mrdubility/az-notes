@@ -1,5 +1,6 @@
 package com.az.notes.ui.editor
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -49,6 +50,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -68,6 +70,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.az.notes.R
 import com.az.notes.ui.components.RenameDialog
 import com.az.notes.ui.theme.LocalReadingStyle
+import kotlinx.coroutines.launch
 
 /**
  * 编辑页（§5.3 重设计）：工具条移到底部（键盘上方，横向可滚动）；
@@ -83,10 +86,19 @@ fun EditorScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     val readingStyle = LocalReadingStyle.current
     val snackbarHostState = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
 
     var searchActive by rememberSaveable { mutableStateOf(false) }
     var query by rememberSaveable { mutableStateOf("") }
     var renameDialog by remember { mutableStateOf(false) }
+
+    // 系统返回：先收尾（新建空笔记清理 / 保存未落盘内容），完成后再返回
+    BackHandler {
+        scope.launch {
+            viewModel.flushOnExit()
+            onBack()
+        }
+    }
 
     // 一次性提示（重命名结果等）
     LaunchedEffect(state.message) {
@@ -126,7 +138,12 @@ fun EditorScreen(
                     }
                 },
                 navigationIcon = {
-                    IconButton(onClick = { viewModel.save(); onBack() }) {
+                    IconButton(onClick = {
+                        scope.launch {
+                            viewModel.flushOnExit()
+                            onBack()
+                        }
+                    }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.action_back))
                     }
                 },

@@ -217,7 +217,9 @@ class NotesViewModel @Inject constructor(
             val dir = _state.value.currentDir ?: vault
             val createdPath = runCatching {
                 withContext(Dispatchers.IO) {
-                    val path = vaultRepository.uniqueNotePath(dir, currentSettings.defaultNoteName)
+                    // 名称支持日期变量（如 yyyyMMdd），用当前时间解析后生成唯一路径
+                    val baseName = VaultRepository.resolveDateName(currentSettings.defaultNoteName)
+                    val path = vaultRepository.uniqueNotePath(dir, baseName)
                     if (vaultRepository.createFile(path, "")) path else null
                 }
             }.getOrNull()

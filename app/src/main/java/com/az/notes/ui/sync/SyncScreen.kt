@@ -69,16 +69,25 @@ private const val MAX_PLAN_ROWS = 100
 /**
  * 同步页（§6）：WebDAV / 坚果云配置（服务器 / 账号 / 应用密码 / 远端目录）、
  * 同步策略、手动同步（Scan → 预览确认 → Execute）、结果汇总与同步日志。
+ *
+ * 两个入口：主页右上角“立即同步”（[autoStart] = true，进页自动开始扫描）；
+ * 设置 → 同步（[autoStart] = false，先配置再手动开始）。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SyncScreen(
+    autoStart: Boolean,
     onBack: () -> Unit,
     viewModel: SyncViewModel = hiltViewModel()
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val logs by viewModel.logs.collectAsStateWithLifecycle()
     var modeSheet by remember { mutableStateOf(false) }
+
+    // 「立即同步」入口：进页自动开始；未配置 / 忙碌时由 startSync 弹 Toast 提示
+    LaunchedEffect(Unit) {
+        if (autoStart) viewModel.startSync()
+    }
 
     // 连接测试结果用 Toast 弹出；展示后立即消费，避免重组 / 重建时重复提示
     val context = LocalContext.current

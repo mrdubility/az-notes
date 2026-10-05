@@ -41,6 +41,9 @@ class EditorViewModel @Inject constructor(
     private var absolutePath: String =
         savedStateHandle.get<String>("path") ?: ""
 
+    /** 是否刚从“新建笔记”进入：退出时若仍无任何内容则清理空文件（不产生空笔记）。 */
+    private val fresh: Boolean = savedStateHandle.get<Boolean>("fresh") ?: false
+
     private val _state = MutableStateFlow(EditorUiState(path = absolutePath))
     val state: StateFlow<EditorUiState> = _state.asStateFlow()
 
@@ -81,6 +84,29 @@ class EditorViewModel @Inject constructor(
                 onSuccess = { _state.update { it.copy(saving = false, dirty = false, savedAt = System.currentTimeMillis()) } },
                 onFailure = { e -> _state.update { it.copy(saving = false, error = e.message ?: "保存失败") } }
             )
+        }
+    }
+
+    /**
+     * 退出编辑页前的收尾（返回按钮 / 系统返回共用，完成后才应导航返回）：
+     * - 新建笔记且从未写入任何内容 → 删除占位空文件，不留下空笔记；
+     * - 否则将未落盘内容写入磁盘（避免返回瞬间销毁 ViewModel 丢字）。
+     */
+    suspend fun flushOnExit() {
+        val current = _state.value
+        if (current.loading) return
+        autoSaveJob?.cancel()
+        val path = absolutePath
+        val discardFresh = fresh && current.text.isBlank()
+        withContext(Dispatchers.IO) {
+            if (discardFresh) {
+                vaultRepository.delete(path)
+            } else if (current.dirty) {
+                runCatching { vaultRepository.writeTextAtomically(path, current.text) }
+            }
+        }
+        if (discardFresh) {
+            _state.update { it.copy(dirty = false) }
         }
     }
 

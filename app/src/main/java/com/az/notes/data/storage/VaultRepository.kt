@@ -4,6 +4,9 @@ import com.az.notes.domain.markdown.PreviewExtractor
 import com.az.notes.domain.model.FileNode
 import java.io.File
 import java.nio.charset.StandardCharsets
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -52,6 +55,17 @@ class VaultRepository @Inject constructor() {
         /** 笔记名补全 .md 后缀（已带 Markdown 扩展则保留）。 */
         fun ensureMarkdownName(name: String): String =
             if (isMarkdownName(name)) name else "$name.md"
+
+        /**
+         * 解析新建笔记名中的日期变量：整个 [pattern] 按 Android/Java 的
+         * SimpleDateFormat 语法用当前时间格式化（如 "yyyyMMdd" → "20261005"，
+         * "yyyy-MM-dd HHmmss" → "2026-10-05 142035"）。
+         * 无日期字母时原样返回；模式非法时回退原文。
+         * 注意：普通英文字母也属于模式字母，需用英文单引号包裹（如 'Notes'）。
+         */
+        fun resolveDateName(pattern: String): String =
+            runCatching { SimpleDateFormat(pattern, Locale.getDefault()).format(Date()) }
+                .getOrDefault(pattern)
 
         /**
          * 敏感路径护栏：delete / rename / createFile 等破坏性操作前的最后一道防线。

@@ -51,8 +51,16 @@ class SyncEngine @Inject constructor(
 
     // ---------------------------------------------------------------- 连接测试
 
-    suspend fun testConnection(config: SyncConfig): Result<Unit> {
-        val client = runCatching { buildClient(config) }.getOrElse { return Result.failure(it) }
+    /** 连接测试；遇到服务端限流（503/429 自动等待重试）时经 [onStatus] 反馈进度。 */
+    suspend fun testConnection(
+        config: SyncConfig,
+        onStatus: (String) -> Unit = {}
+    ): Result<Unit> {
+        val client = runCatching {
+            buildClient(config) { attempt ->
+                onStatus("触发服务端限流，自动等待重试（第 $attempt 次）…")
+            }
+        }.getOrElse { return Result.failure(it) }
         return client.testConnection()
     }
 
