@@ -4,10 +4,12 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.az.notes.data.local.ProgressRepository
 import com.az.notes.data.settings.SettingsRepository
+import com.az.notes.data.storage.TrashRepository
 import com.az.notes.data.storage.VaultRepository
 import com.az.notes.data.sync.SyncEngine
 import com.az.notes.data.sync.SyncRunNotifier
 import com.az.notes.domain.model.AppSettings
+import com.az.notes.domain.model.FabAction
 import com.az.notes.domain.model.FileNode
 import com.az.notes.domain.model.NoteSortOrder
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -21,6 +23,9 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import javax.inject.Inject
 import kotlin.math.roundToInt
 
@@ -46,6 +51,8 @@ data class NotesUiState(
     val searching: Boolean = false,
     val searchResults: List<NoteListItem> = emptyList(),
     val sortOrder: NoteSortOrder = NoteSortOrder.MODIFIED_DESC,
+    /** 右下角加号点击的默认行为（长按始终弹出全部选项） */
+    val fabAction: FabAction = FabAction.NEW_NOTE,
     val error: String? = null,
     /** 一次性提示（Snackbar），消费后清空 */
     val message: String? = null
@@ -67,6 +74,7 @@ data class NotesUiState(
 class NotesViewModel @Inject constructor(
     private val vaultRepository: VaultRepository,
     private val settingsRepository: SettingsRepository,
+    private val trashRepository: TrashRepository,
     private val syncEngine: SyncEngine,
     private val progressRepository: ProgressRepository,
     syncRunNotifier: SyncRunNotifier
@@ -95,7 +103,7 @@ class NotesViewModel @Inject constructor(
     private fun applySettings(s: AppSettings) {
         val prev = currentSettings
         currentSettings = s
-        _state.update { it.copy(sortOrder = s.sortOrder) }
+        _state.update { it.copy(sortOrder = s.sortOrder, fabAction = s.fabAction) }
 
         when {
             s.vaultPath != prev.vaultPath -> {
@@ -234,12 +242,42 @@ class NotesViewModel @Inject constructor(
         }
     }
 
-    /** 删除（二次确认由 UI 负责）。 */
+    /** 删除：移入回收站（可恢复），不物理删除；目录整体入站。 */
     fun delete(node: FileNode) {
         viewModelScope.launch {
-            val ok = withContext(Dispatchers.IO) { vaultRepository.delete(node.absolutePath) }
-            _state.update { it.copy(message = if (ok) "已删除「${node.name}」" else "删除失败") }
+            val vault = currentSettings.vaultPath
+            val ok = !vault.isNullOrBlank() &&
+                withContext(Dispatchers.IO) { trashRepository.moveToTrash(vault, node.absolutePath) }
+            _state.update { it.copy(message = if (ok) "已移入回收站「${node.name}」" else "删除失败") }
             if (ok) reloadItems(pullRefresh = false)
+        }
+    }
+
+    /**
+     * 从系统分享 / 内容传送门传入的文本新建笔记：文件名为「分享笔记 yyyy-MM-dd HHmmss」，
+     * 存入当前目录（分享进入时通常位于根目录），成功后回调路径供直接进入编辑页。
+     */
+    fun createNoteFromShare(content: String, onCreated: (String) -> Unit) {
+        viewModelScope.launch {
+            val vault = currentSettings.vaultPath
+            if (vault.isNullOrBlank()) {
+                _state.update { it.copy(message = "未选择 Vault 目录") }
+                return@launch
+            }
+            val dir = _state.value.currentDir ?: vault
+            val createdPath = runCatching {
+                withContext(Dispatchers.IO) {
+                    val stamp = SimpleDateFormat("yyyy-MM-dd HHmmss", Locale.getDefault()).format(Date())
+                    val path = vaultRepository.uniqueNotePath(dir, "分享笔记 $stamp")
+                    if (vaultRepository.createFile(path, content)) path else null
+                }
+            }.getOrNull()
+            if (createdPath == null) {
+                _state.update { it.copy(message = "新建分享笔记失败") }
+                return@launch
+            }
+            reloadItems(pullRefresh = false)
+            onCreated(createdPath)
         }
     }
 

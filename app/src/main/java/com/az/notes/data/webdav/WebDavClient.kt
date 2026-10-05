@@ -1,9 +1,14 @@
 package com.az.notes.data.webdav
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import okhttp3.Credentials
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -29,7 +34,9 @@ import java.util.concurrent.TimeUnit
  * 鉴权为 Basic（坚果云“应用密码”、Nextcloud 等自托管通用）。
  *
  * 请求纪律（参考坚果云官方 Obsidian 同步插件的限流策略，避免触发服务端限流）：
- * 所有请求严格串行、相邻间隔不小于 [MIN_REQUEST_INTERVAL_MS]；
+ * 传输类请求严格串行、相邻间隔不小于 [MIN_REQUEST_INTERVAL_MS]；
+ * 目录扫描（PROPFIND）走独立并发通道（[SCAN_CONCURRENCY] 并发 + [SCAN_REQUEST_INTERVAL_MS] 间隔），
+ * 并在探测到限流时自动放慢回保守节奏；
  * 遇 503 / 429（限流）自动等待 [RATE_LIMIT_RETRY_DELAY_MS] 后重试，
  * 并通过 [onRateLimited] 向调用方反馈等待状态。
  *
@@ -76,9 +83,18 @@ class WebDavClient(
         .writeTimeout(120, TimeUnit.SECONDS)
         .build()
 
-    /** 请求闸门：保证所有请求串行执行（对应官方插件 Bottleneck maxConcurrent = 1）。 */
+    /** 请求闸门：保证传输类请求串行执行（对应官方插件 Bottleneck maxConcurrent = 1）。 */
     private val requestGate = Mutex()
     private var lastRequestAtMillis = 0L
+
+    /** 扫描闸门：目录扫描按 [SCAN_CONCURRENCY] 并发，独立于传输串行通道。 */
+    private val scanGate = Semaphore(SCAN_CONCURRENCY)
+    private val scanSlotMutex = Mutex()
+    private var lastScanRequestAtMillis = 0L
+
+    /** 本次会话累计被限流次数：> 0 时扫描自动降速（每次 +50ms，封顶 [MIN_REQUEST_INTERVAL_MS]）。 */
+    @Volatile
+    private var rateLimitHits = 0
 
     // ------------------------------------------------------------------ 连接测试
 
@@ -100,8 +116,9 @@ class WebDavClient(
     // ------------------------------------------------------------------ 列目录
 
     /**
-     * PROPFIND Depth:1 逐目录递归拉取全部条目（§6.1 Scan）。
-     * 顺序 BFS（与坚果云官方插件策略一致）；[visited] 保证每个目录只请求一次——
+     * PROPFIND Depth:1 逐层递归拉取全部条目（§6.1 Scan）。
+     * 层内目录并发扫描（走 [scanGate]，受扫描间隔节流），共享状态（结果 / 已访问 /
+     * 截断目录）只在主协程汇总写入；[visited] 保证每个目录只请求一次——
      * 服务端 Depth:1 响应会包含被请求目录自身，若不剔除会被反复入队重复扫描。
      */
     suspend fun listAll(
@@ -111,46 +128,48 @@ class WebDavClient(
             val result = ArrayList<RemoteEntry>()
             val truncated = HashSet<String>()
             val visited = HashSet<String>()
-            val queue = ArrayDeque<String>()
-            queue += ""
             visited += ""
             var scanned = 0
             var discoveredFiles = 0
-            while (queue.isNotEmpty()) {
-                val dir = queue.removeFirst()
-                val entries = propfind(dir, truncated)
-                scanned++
-                for (entry in entries) {
-                    if (entry.path.isBlank()) continue
-                    if (!entry.isDirectory) discoveredFiles++
-                    result += entry
-                    if (entry.isDirectory && visited.add(entry.path)) {
-                        queue += entry.path
+            var layer = listOf("")
+            while (layer.isNotEmpty()) {
+                // 同一层目录并发拉取；任一层失败即整体失败（与原串行行为一致）
+                val layerEntries = coroutineScope {
+                    layer.map { dir -> async { dir to propfind(dir) } }.awaitAll()
+                }
+                val next = ArrayList<String>()
+                for ((dir, all) in layerEntries) {
+                    // 达到服务端单次返回上限（坚果云 750 个）：可能仍有未列出的条目，标记为不可信目录
+                    if (all.size >= SINGLE_PAGE_LIMIT) truncated += dir
+                    scanned++
+                    for (entry in all) {
+                        // Depth:1 响应包含被请求目录自身（href 与请求路径一致），剔除避免重复入队
+                        if (entry.isDirectory && entry.path == dir) continue
+                        if (entry.path.isBlank()) continue
+                        if (!entry.isDirectory) discoveredFiles++
+                        result += entry
+                        if (entry.isDirectory && visited.add(entry.path)) {
+                            next += entry.path
+                        }
                     }
                 }
+                layer = next
                 onDirectoryScanned(scanned, discoveredFiles)
             }
             ScanResult(result, truncated)
         }
 
-    private suspend fun propfind(
-        relativeDir: String,
-        truncated: MutableSet<String>
-    ): List<RemoteEntry> {
+    /** PROPFIND Depth:1 拉取单个目录的原始条目（含被请求目录自身；截断判定见 [listAll]）。 */
+    private suspend fun propfind(relativeDir: String): List<RemoteEntry> {
         val request = auth(Request.Builder().url(dirUrl(relativeDir)))
             .method("PROPFIND", PROPFIND_BODY.toRequestBody(XML_MEDIA))
             .header("Depth", "1")
             .build()
-        execute(request).use { resp ->
+        execute(request) { awaitScanSlot() }.use { resp ->
             if (resp.code !in 200..299) {
                 throw httpError("列目录失败（${relativeDir.ifBlank { "/" }}）", resp)
             }
-            val xml = resp.body?.string().orEmpty()
-            val all = parseMultiStatus(xml)
-            // 达到服务端单次返回上限（坚果云 750 个）：可能仍有未列出的条目，标记为不可信目录
-            if (all.size >= SINGLE_PAGE_LIMIT) truncated += relativeDir
-            // Depth:1 响应包含被请求目录自身（href 与请求路径一致），剔除避免重复入队
-            return all.filterNot { it.isDirectory && it.path == relativeDir }
+            return parseMultiStatus(resp.body?.string().orEmpty())
         }
     }
 
@@ -243,16 +262,21 @@ class WebDavClient(
 
     /**
      * 统一请求入口（请求纪律，对齐坚果云官方 Obsidian 插件的 Bottleneck 配置）：
-     * 严格串行 + 最小间隔节流；收到 503 / 429（服务端限流）时等待后自动重试。
+     * [slot] 负责节流与并发约束（默认传输串行通道，扫描传入 [awaitScanSlot]）；
+     * 收到 503 / 429（服务端限流）时等待后自动重试。
      */
-    private suspend fun execute(request: Request): Response {
+    private suspend fun execute(
+        request: Request,
+        slot: suspend () -> Unit = { awaitRequestSlot() }
+    ): Response {
         var attempt = 0
         while (true) {
-            awaitRequestSlot()
+            slot()
             val response = client.newCall(request).execute()
             if (response.code == 503 || response.code == 429) {
                 response.close()
                 attempt++
+                rateLimitHits++
                 if (attempt > RATE_LIMIT_MAX_RETRIES) {
                     throw IOException(
                         "服务端请求限流（HTTP ${response.code}），已自动等待重试 $RATE_LIMIT_MAX_RETRIES 次仍被拒绝，请稍后再试"
@@ -266,12 +290,28 @@ class WebDavClient(
         }
     }
 
-    /** 保证相邻请求间隔不小于 [MIN_REQUEST_INTERVAL_MS]（多协程下也串行排队）。 */
+    /** 传输通道：保证相邻请求间隔不小于 [MIN_REQUEST_INTERVAL_MS]（多协程下也串行排队）。 */
     private suspend fun awaitRequestSlot() = requestGate.withLock {
         val wait = MIN_REQUEST_INTERVAL_MS - (System.currentTimeMillis() - lastRequestAtMillis)
         if (wait > 0) delay(wait)
         lastRequestAtMillis = System.currentTimeMillis()
     }
+
+    /**
+     * 扫描通道：[SCAN_CONCURRENCY] 并发 + 相邻间隔 [SCAN_REQUEST_INTERVAL_MS]；
+     * 探测到限流后间隔自动放慢（[currentScanIntervalMs]），避免持续触发风控。
+     */
+    private suspend fun awaitScanSlot() = scanGate.withPermit {
+        scanSlotMutex.withLock {
+            val wait = currentScanIntervalMs() - (System.currentTimeMillis() - lastScanRequestAtMillis)
+            if (wait > 0) delay(wait)
+            lastScanRequestAtMillis = System.currentTimeMillis()
+        }
+    }
+
+    /** 扫描间隔：基础 [SCAN_REQUEST_INTERVAL_MS]，每次限流 +50ms，封顶 [MIN_REQUEST_INTERVAL_MS]。 */
+    private fun currentScanIntervalMs(): Long =
+        (SCAN_REQUEST_INTERVAL_MS + rateLimitHits * 50L).coerceAtMost(MIN_REQUEST_INTERVAL_MS)
 
     /** 构造带服务端有效信息的友好错误（优先提取 WebDAV 错误 XML 中的 exception / message）。 */
     private fun httpError(action: String, response: Response): IOException {
@@ -370,8 +410,12 @@ class WebDavClient(
         if (relativePath.endsWith(".md", ignoreCase = true)) MARKDOWN_MEDIA else BINARY_MEDIA
 
     private companion object {
-        /** 相邻请求的最小间隔毫秒数：对齐坚果云官方插件的 Bottleneck minTime = 200。 */
+        /** 传输类请求的最小间隔毫秒数：对齐坚果云官方插件的 Bottleneck minTime = 200。 */
         private const val MIN_REQUEST_INTERVAL_MS = 200L
+
+        /** 目录扫描的并发度与相邻请求间隔（仅用于 PROPFIND；探测到限流时自动放慢）。 */
+        private const val SCAN_CONCURRENCY = 3
+        private const val SCAN_REQUEST_INTERVAL_MS = 100L
         /** 触发限流（503 / 429）后的等待时长与最大自动重试次数。 */
         private const val RATE_LIMIT_RETRY_DELAY_MS = 30_000L
         private const val RATE_LIMIT_MAX_RETRIES = 3

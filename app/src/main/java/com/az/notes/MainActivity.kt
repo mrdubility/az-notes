@@ -1,5 +1,6 @@
 package com.az.notes
 
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
@@ -30,6 +31,8 @@ class MainActivity : ComponentActivity() {
         installSplashScreen()
         super.onCreate(savedInstanceState)
 
+        handleShareIntent(intent)
+
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.auto(
                 android.graphics.Color.TRANSPARENT,
@@ -45,5 +48,29 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    /** 已在前台时收到新的分享 / 处理文字请求（launchMode="singleTask"），复用实例不重建。 */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleShareIntent(intent)
+    }
+
+    /**
+     * 系统分享（ACTION_SEND）与文本选择菜单的“处理文字”（ACTION_PROCESS_TEXT）入口：
+     * 提取纯文本交给主页新建笔记并进入编辑页；其它 Intent 忽略。
+     */
+    private fun handleShareIntent(intent: Intent?) {
+        val text = when (intent?.action) {
+            Intent.ACTION_SEND ->
+                if (intent.type?.startsWith("text/") == true) {
+                    intent.getStringExtra(Intent.EXTRA_TEXT)
+                } else null
+            Intent.ACTION_PROCESS_TEXT ->
+                intent.getCharSequenceExtra(Intent.EXTRA_PROCESS_TEXT)?.toString()
+            else -> null
+        }
+        if (!text.isNullOrBlank()) mainViewModel.setSharedText(text)
     }
 }

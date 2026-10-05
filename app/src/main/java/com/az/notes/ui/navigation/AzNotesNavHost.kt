@@ -1,7 +1,9 @@
 package com.az.notes.ui.navigation
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -36,13 +38,17 @@ fun AzNotesNavHost(
         }
 
         composable(Routes.HOME) {
+            val sharedText by mainViewModel.sharedText.collectAsStateWithLifecycle()
             HomeScreen(
                 onOpenFile = { navController.navigate(Routes.reader(it)) },
                 onOpenEditor = { path, fresh -> navController.navigate(Routes.editor(path, fresh)) },
                 onOpenTrash = { navController.navigate(Routes.TRASH) },
                 // 主页右上角“立即同步”在本页以弹窗完成（扫描 → 确认 → 执行），无需导航；
                 // 同步配置从抽屉 → 设置 → 同步进入
-                onSettings = { navController.navigate(Routes.SETTINGS) }
+                onSettings = { navController.navigate(Routes.SETTINGS) },
+                // 系统分享 / 内容传送门传入的文本：主页消费后新建笔记
+                sharedText = sharedText,
+                onSharedTextConsumed = mainViewModel::consumeSharedText
             )
         }
 

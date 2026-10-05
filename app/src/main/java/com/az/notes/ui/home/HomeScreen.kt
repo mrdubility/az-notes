@@ -1,10 +1,14 @@
 package com.az.notes.ui.home
 
+import android.app.Activity
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.draganddrop.dragAndDropTarget
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -45,7 +49,6 @@ import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -58,6 +61,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -69,10 +73,15 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draganddrop.DragAndDropEvent
+import androidx.compose.ui.draganddrop.DragAndDropTarget
+import androidx.compose.ui.draganddrop.mimeTypes
+import androidx.compose.ui.draganddrop.toAndroidDragEvent
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -88,6 +97,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.az.notes.R
+import com.az.notes.domain.model.FabAction
 import com.az.notes.domain.model.FileNode
 import com.az.notes.domain.model.NoteSortOrder
 import com.az.notes.ui.components.RenameDialog
@@ -112,13 +122,16 @@ import java.util.Locale
  * 立即同步不离开本页：扫描进度、变更清单确认与结果均以弹窗展示
  * （与同步页共用 [SyncConfirmSheet] 等组件）；同步配置仍从设置 → 同步进入。
  */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun HomeScreen(
     onOpenFile: (String) -> Unit,
     onOpenEditor: (path: String, fresh: Boolean) -> Unit,
     onOpenTrash: () -> Unit,
     onSettings: () -> Unit,
+    /** 系统分享 / 内容传送门传入的待写入文本（null = 无） */
+    sharedText: String? = null,
+    onSharedTextConsumed: () -> Unit = {},
     viewModel: NotesViewModel = hiltViewModel(),
     syncViewModel: SyncViewModel = hiltViewModel()
 ) {
@@ -138,6 +151,8 @@ fun HomeScreen(
     var deleteTarget by remember { mutableStateOf<NoteListItem?>(null) }
     var fabMenuOpen by remember { mutableStateOf(false) }
     var newFolderDialog by remember { mutableStateOf(false) }
+    var lastBackAt by remember { mutableStateOf(0L) }
+    var dragActive by remember { mutableStateOf(false) }
 
     // 首次进入 / 从阅读、编辑页返回时静默重读当前目录，保证修改时间与预览最新
     LaunchedEffect(Unit) { viewModel.onScreenEntered() }
@@ -162,12 +177,65 @@ fun HomeScreen(
         if (syncCompletedAt > 0L) viewModel.onScreenEntered()
     }
 
-    // 系统返回：优先退出搜索，其次返回上一级目录
+    // 系统分享 / 文本处理（ACTION_SEND / ACTION_PROCESS_TEXT）传入的内容：新建笔记并进入编辑页
+    LaunchedEffect(sharedText) {
+        val text = sharedText ?: return@LaunchedEffect
+        onSharedTextConsumed()
+        viewModel.createNoteFromShare(text) { path -> onOpenEditor(path, false) }
+    }
+
+    // 接收跨应用拖入的纯文本（ColorOS 内容传送门等）；拖拽悬停期间显示“松开新建”提示
+    val onDropText by rememberUpdatedState<(String) -> Unit> { text ->
+        viewModel.createNoteFromShare(text) { path -> onOpenEditor(path, false) }
+    }
+    val dragTarget = remember {
+        object : DragAndDropTarget {
+            override fun onStarted(event: DragAndDropEvent) {
+                dragActive = true
+            }
+
+            override fun onEntered(event: DragAndDropEvent) {
+                dragActive = true
+            }
+
+            override fun onExited(event: DragAndDropEvent) {
+                dragActive = false
+            }
+
+            override fun onEnded(event: DragAndDropEvent) {
+                dragActive = false
+            }
+
+            override fun onDrop(event: DragAndDropEvent): Boolean {
+                dragActive = false
+                val clip = event.toAndroidDragEvent().clipData ?: return false
+                val text = clip.getItemAt(0).coerceToText(context)?.toString() ?: return false
+                if (text.isBlank()) return false
+                onDropText(text)
+                return true
+            }
+        }
+    }
+
+    // 系统返回：优先退出搜索，其次返回上一级目录，根目录下双击返回才退出应用
     BackHandler(enabled = searchActive) {
         searchActive = false
         viewModel.clearSearch()
     }
     BackHandler(enabled = !searchActive && !state.atRoot) { viewModel.navigateUp() }
+    BackHandler(enabled = !searchActive && state.atRoot) {
+        val now = System.currentTimeMillis()
+        if (now - lastBackAt <= DOUBLE_BACK_EXIT_MS) {
+            (context as? Activity)?.finish()
+        } else {
+            lastBackAt = now
+            Toast.makeText(
+                context,
+                context.getString(R.string.home_double_back_exit),
+                Toast.LENGTH_SHORT
+            ).show()
+        }
+    }
 
     ModalNavigationDrawer(
         drawerState = drawerState,
@@ -214,12 +282,31 @@ fun HomeScreen(
             },
             floatingActionButton = {
                 Box {
-                    FloatingActionButton(
-                        onClick = { fabMenuOpen = true },
-                        containerColor = MaterialTheme.colorScheme.primary,
-                        contentColor = MaterialTheme.colorScheme.onPrimary
+                    // 点击执行设置中的默认行为（新建笔记 / 新建文件夹 / 弹出菜单），长按始终弹出菜单；
+                    // 由 combinedClickable 全权处理两者，无内部 onClick 以防重复触发
+                    Surface(
+                        modifier = Modifier
+                            .size(56.dp)
+                            .combinedClickable(
+                                onClick = {
+                                    when (state.fabAction) {
+                                        FabAction.NEW_NOTE -> viewModel.createNote { path ->
+                                            onOpenEditor(path, true)
+                                        }
+                                        FabAction.NEW_FOLDER -> newFolderDialog = true
+                                        FabAction.SHOW_MENU -> fabMenuOpen = true
+                                    }
+                                },
+                                onLongClick = { fabMenuOpen = true }
+                            ),
+                        shape = RoundedCornerShape(16.dp),
+                        color = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary,
+                        shadowElevation = 6.dp
                     ) {
-                        Icon(Icons.Filled.Add, stringResource(R.string.home_new_note))
+                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Icon(Icons.Filled.Add, stringResource(R.string.home_new_note))
+                        }
                     }
                     // FAB 菜单：新建笔记 / 新建文件夹（底部空间不足时自动向上展开）
                     DropdownMenu(
@@ -247,20 +334,45 @@ fun HomeScreen(
             },
             snackbarHost = { SnackbarHost(snackbarHostState) }
         ) { inner ->
-            NotesListContent(
-                state = state,
-                searchActive = searchActive,
-                modifier = Modifier.fillMaxSize().padding(inner),
-                onOpen = { item ->
-                    if (item.node.isDirectory) {
-                        viewModel.enterDir(item.node)
-                    } else {
-                        onOpenFile(item.node.absolutePath)
+            Box(modifier = Modifier.fillMaxSize().padding(inner)) {
+                NotesListContent(
+                    state = state,
+                    searchActive = searchActive,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .dragAndDropTarget(
+                            shouldStartDragAndDrop = { event ->
+                                event.mimeTypes().any { it.startsWith("text/") }
+                            },
+                            target = dragTarget
+                        ),
+                    onOpen = { item ->
+                        if (item.node.isDirectory) {
+                            viewModel.enterDir(item.node)
+                        } else {
+                            onOpenFile(item.node.absolutePath)
+                        }
+                    },
+                    onMore = { actionTarget = it },
+                    onRefresh = viewModel::refresh
+                )
+                // 拖拽悬停提示：松开即把内容保存为新笔记
+                if (dragActive) {
+                    Surface(
+                        modifier = Modifier.align(Alignment.Center).padding(32.dp),
+                        shape = RoundedCornerShape(16.dp),
+                        color = MaterialTheme.colorScheme.inverseSurface,
+                        contentColor = MaterialTheme.colorScheme.inverseOnSurface,
+                        shadowElevation = 6.dp
+                    ) {
+                        Text(
+                            text = stringResource(R.string.home_drop_hint),
+                            style = MaterialTheme.typography.titleMedium,
+                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp)
+                        )
                     }
-                },
-                onMore = { actionTarget = it },
-                onRefresh = viewModel::refresh
-            )
+                }
+            }
         }
     }
 
@@ -870,3 +982,6 @@ private fun editableName(node: FileNode): String =
 
 private fun formatDateTime(millis: Long): String =
     SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date(millis))
+
+/** 双击返回退出的时间窗口（毫秒）。 */
+private const val DOUBLE_BACK_EXIT_MS = 2000L

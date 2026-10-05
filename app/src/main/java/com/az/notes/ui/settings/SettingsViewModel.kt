@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.az.notes.data.settings.SettingsRepository
 import com.az.notes.domain.model.AppSettings
+import com.az.notes.domain.model.FabAction
 import com.az.notes.domain.model.FontFamilyPreference
 import com.az.notes.domain.model.NoteSortOrder
 import com.az.notes.domain.model.ThemeMode
@@ -42,6 +43,14 @@ class SettingsViewModel @Inject constructor(
     /** 默认新建笔记名。 */
     fun setDefaultNoteName(name: String) =
         viewModelScope.launch { settingsRepository.setDefaultNoteName(name) }
+
+    /** 回收站自动清理天数（0 = 永不清理）。 */
+    fun setTrashRetentionDays(days: Int) =
+        viewModelScope.launch { settingsRepository.setTrashRetentionDays(days) }
+
+    /** 右下角加号点击的默认行为。 */
+    fun setFabAction(action: FabAction) =
+        viewModelScope.launch { settingsRepository.setFabAction(action) }
 
     fun resetVault() = viewModelScope.launch { settingsRepository.setVaultPath(null) }
 }

@@ -21,6 +21,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.DeleteSweep
 import androidx.compose.material.icons.outlined.Description
+import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.RestoreFromTrash
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
@@ -207,7 +208,7 @@ private fun TrashRow(
         verticalAlignment = Alignment.CenterVertically
     ) {
         Icon(
-            imageVector = Icons.Outlined.Description,
+            imageVector = if (item.isDirectory) Icons.Outlined.Folder else Icons.Outlined.Description,
             contentDescription = null,
             tint = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -220,7 +221,8 @@ private fun TrashRow(
                 overflow = TextOverflow.Ellipsis
             )
             Text(
-                text = formatSize(item.size),
+                text = if (item.isDirectory) stringResource(R.string.home_folder)
+                else formatSize(item.size),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

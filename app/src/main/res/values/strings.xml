@@ -34,6 +34,8 @@
     <string name="home_search_tip">输入关键字，跨目录搜索全部笔记</string>
     <string name="home_new_note">新建笔记</string>
     <string name="home_new_folder">新建文件夹</string>
+    <string name="home_double_back_exit">再按一次返回键退出应用</string>
+    <string name="home_drop_hint">松开以新建笔记</string>
     <string name="home_no_vault">未选择 Vault 目录</string>
     <string name="home_folder">文件夹</string>
     <string name="action_menu">菜单</string>
@@ -44,8 +46,8 @@
     <string name="action_confirm">确定</string>
     <string name="action_cancel">取消</string>
     <string name="rename_hint">名称</string>
-    <string name="delete_note_message">将删除「%1$s」，此操作不可撤销。</string>
-    <string name="delete_folder_message">将删除文件夹「%1$s」及其全部内容，此操作不可撤销。</string>
+    <string name="delete_note_message">将把「%1$s」移入回收站，可随时恢复。</string>
+    <string name="delete_folder_message">将把文件夹「%1$s」及其内容移入回收站，可随时恢复。</string>
     <string name="sort_by">排序方式</string>
     <string name="sort_modified_desc">修改时间（新 → 旧）</string>
     <string name="sort_modified_asc">修改时间（旧 → 新）</string>
@@ -88,6 +90,13 @@
     <string name="dialog_note_name_label">笔记名称</string>
     <string name="settings_sort_order">默认排序方式</string>
     <string name="settings_sort_subtitle">主页右上角可随时切换</string>
+    <string name="settings_fab_action">加号默认行为</string>
+    <string name="settings_fab_action_new_note">新建笔记</string>
+    <string name="settings_fab_action_new_folder">新建文件夹</string>
+    <string name="settings_fab_action_menu">弹出选项菜单</string>
+    <string name="settings_trash_retention">回收站自动清理</string>
+    <string name="settings_trash_retention_value">%1$d 天后清理</string>
+    <string name="settings_trash_retention_never">永不清理</string>
     <string name="settings_sync">同步</string>
     <string name="settings_sync_subtitle">WebDAV / 坚果云配置与手动同步</string>
     <string name="settings_vault">Vault 目录</string>
@@ -150,7 +159,7 @@
     <!-- 回收站（恢复被云端删除波及的本地文件） -->
     <string name="trash_title">回收站</string>
     <string name="trash_empty">回收站为空</string>
-    <string name="trash_empty_hint">同步时被云端删除的本地文件会暂存在这里，保留 30 天，可随时恢复。</string>
+    <string name="trash_empty_hint">被删除的笔记与文件夹会暂存在这里，保留时长可在设置中调整，支持随时恢复。</string>
     <string name="trash_restore">恢复</string>
     <string name="trash_delete">删除</string>
     <string name="trash_purge">清空回收站</string>

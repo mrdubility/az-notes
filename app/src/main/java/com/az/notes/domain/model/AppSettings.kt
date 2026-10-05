@@ -9,6 +9,9 @@ enum class FontFamilyPreference { SANS, SERIF, MONO }
 /** 笔记列表排序方式（主页右上角可切换） */
 enum class NoteSortOrder { MODIFIED_DESC, MODIFIED_ASC, NAME_ASC, NAME_DESC }
 
+/** 右下角加号：点击时执行的默认行为（长按始终弹出全部选项） */
+enum class FabAction { NEW_NOTE, NEW_FOLDER, SHOW_MENU }
+
 /**
  * 应用偏好设置（DataStore 持久化，§5.6）。
  * 字号同时作用于编辑器正文字号；行高影响阅读与编辑。
@@ -25,5 +28,9 @@ data class AppSettings(
     /** 列表默认排序方式 */
     val sortOrder: NoteSortOrder = NoteSortOrder.MODIFIED_DESC,
     /** 新建笔记时使用的默认文件名（不含扩展名，重名自动追加序号） */
-    val defaultNoteName: String = "新建笔记"
+    val defaultNoteName: String = "新建笔记",
+    /** 回收站自动清理天数（0 = 永不清理）；同步启动前执行 */
+    val trashRetentionDays: Int = 30,
+    /** 右下角加号点击的默认行为（长按始终弹出全部选项） */
+    val fabAction: FabAction = FabAction.NEW_NOTE
 )

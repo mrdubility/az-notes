@@ -11,6 +11,7 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.az.notes.domain.model.AppSettings
+import com.az.notes.domain.model.FabAction
 import com.az.notes.domain.model.FontFamilyPreference
 import com.az.notes.domain.model.NoteSortOrder
 import com.az.notes.domain.model.ThemeMode
@@ -42,6 +43,8 @@ class SettingsRepository @Inject constructor(
         val PREVIEW_CHARS = intPreferencesKey("preview_chars")
         val SORT_ORDER = stringPreferencesKey("note_sort_order")
         val DEFAULT_NOTE_NAME = stringPreferencesKey("default_note_name")
+        val TRASH_RETENTION = intPreferencesKey("trash_retention_days")
+        val FAB_ACTION = stringPreferencesKey("fab_action")
     }
 
     private val dataStore = context.dataStore
@@ -65,7 +68,11 @@ class SettingsRepository @Inject constructor(
                     ?.let { runCatching { NoteSortOrder.valueOf(it) }.getOrNull() }
                     ?: NoteSortOrder.MODIFIED_DESC,
                 defaultNoteName = prefs[Keys.DEFAULT_NOTE_NAME]?.takeIf { it.isNotBlank() }
-                    ?: "新建笔记"
+                    ?: "新建笔记",
+                trashRetentionDays = prefs[Keys.TRASH_RETENTION] ?: 30,
+                fabAction = prefs[Keys.FAB_ACTION]
+                    ?.let { runCatching { FabAction.valueOf(it) }.getOrNull() }
+                    ?: FabAction.NEW_NOTE
             )
         }
 
@@ -85,6 +92,14 @@ class SettingsRepository @Inject constructor(
         val cleaned = name.trim().take(60)
         it[Keys.DEFAULT_NOTE_NAME] = cleaned.ifBlank { "新建笔记" }
     }
+
+    /** 回收站自动清理天数（0 = 永不清理）。 */
+    suspend fun setTrashRetentionDays(days: Int) = edit {
+        it[Keys.TRASH_RETENTION] = days.coerceIn(0, 365)
+    }
+
+    /** 右下角加号点击的默认行为。 */
+    suspend fun setFabAction(action: FabAction) = edit { it[Keys.FAB_ACTION] = action.name }
 
     private suspend fun edit(block: (androidx.datastore.preferences.core.MutablePreferences) -> Unit) {
         dataStore.edit(block)

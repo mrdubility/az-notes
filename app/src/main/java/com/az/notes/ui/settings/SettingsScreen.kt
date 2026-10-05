@@ -15,7 +15,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.Sort
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.ColorLens
+import androidx.compose.material.icons.outlined.DeleteSweep
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.FormatLineSpacing
@@ -52,6 +54,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.az.notes.R
+import com.az.notes.domain.model.FabAction
 import com.az.notes.domain.model.FontFamilyPreference
 import com.az.notes.domain.model.NoteSortOrder
 import com.az.notes.domain.model.ThemeMode
@@ -78,6 +81,8 @@ fun SettingsScreen(
     var lineHeightDialog by remember { mutableStateOf(false) }
     var previewDialog by remember { mutableStateOf(false) }
     var noteNameDialog by remember { mutableStateOf(false) }
+    var fabSheet by remember { mutableStateOf(false) }
+    var trashRetentionSheet by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -176,6 +181,14 @@ fun SettingsScreen(
                     onClick = { sortSheet = true }
                 )
             }
+            item {
+                SettingsRow(
+                    icon = Icons.Outlined.Add,
+                    title = stringResource(R.string.settings_fab_action),
+                    subtitle = settings.fabAction.label(),
+                    onClick = { fabSheet = true }
+                )
+            }
 
             // —— 同步 ——
             item { SectionHeader(stringResource(R.string.settings_sync)) }
@@ -205,6 +218,18 @@ fun SettingsScreen(
                             Text(stringResource(R.string.settings_change_vault))
                         }
                     }
+                )
+            }
+            item {
+                SettingsRow(
+                    icon = Icons.Outlined.DeleteSweep,
+                    title = stringResource(R.string.settings_trash_retention),
+                    subtitle = if (settings.trashRetentionDays <= 0) {
+                        stringResource(R.string.settings_trash_retention_never)
+                    } else {
+                        stringResource(R.string.settings_trash_retention_value, settings.trashRetentionDays)
+                    },
+                    onClick = { trashRetentionSheet = true }
                 )
             }
 
@@ -256,6 +281,35 @@ fun SettingsScreen(
                 sortSheet = false
             },
             onDismiss = { sortSheet = false }
+        )
+    }
+
+    if (fabSheet) {
+        ChoiceSheet(
+            title = stringResource(R.string.settings_fab_action),
+            options = FabAction.entries.map { it to it.label() },
+            selected = settings.fabAction,
+            onSelect = {
+                viewModel.setFabAction(it)
+                fabSheet = false
+            },
+            onDismiss = { fabSheet = false }
+        )
+    }
+
+    if (trashRetentionSheet) {
+        ChoiceSheet(
+            title = stringResource(R.string.settings_trash_retention),
+            options = TRASH_RETENTION_OPTIONS.map { days ->
+                days to if (days <= 0) stringResource(R.string.settings_trash_retention_never)
+                else stringResource(R.string.settings_trash_retention_value, days)
+            },
+            selected = settings.trashRetentionDays,
+            onSelect = {
+                viewModel.setTrashRetentionDays(it)
+                trashRetentionSheet = false
+            },
+            onDismiss = { trashRetentionSheet = false }
         )
     }
 
@@ -526,3 +580,15 @@ private fun NoteSortOrder.label(): String = stringResource(
         NoteSortOrder.NAME_DESC -> R.string.sort_name_desc
     }
 )
+
+@Composable
+private fun FabAction.label(): String = stringResource(
+    when (this) {
+        FabAction.NEW_NOTE -> R.string.settings_fab_action_new_note
+        FabAction.NEW_FOLDER -> R.string.settings_fab_action_new_folder
+        FabAction.SHOW_MENU -> R.string.settings_fab_action_menu
+    }
+)
+
+/** 回收站自动清理天数候选（0 = 永不清理）。 */
+private val TRASH_RETENTION_OPTIONS = listOf(7, 30, 90, 365, 0)

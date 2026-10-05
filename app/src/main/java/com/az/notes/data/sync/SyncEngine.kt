@@ -1,6 +1,5 @@
 package com.az.notes.data.sync
 
-import android.content.Context
 import com.az.notes.data.local.ConflictRecordDao
 import com.az.notes.data.local.ConflictRecordEntity
 import com.az.notes.data.local.SyncBaselineDao
@@ -8,6 +7,7 @@ import com.az.notes.data.local.SyncBaselineEntity
 import com.az.notes.data.local.SyncLogDao
 import com.az.notes.data.local.SyncLogEntity
 import com.az.notes.data.settings.SettingsRepository
+import com.az.notes.data.storage.TrashRepository
 import com.az.notes.data.webdav.WebDavClient
 import com.az.notes.domain.model.ConflictStrategy
 import com.az.notes.domain.model.SyncConfig
@@ -18,9 +18,10 @@ import com.az.notes.domain.model.SyncPlan
 import com.az.notes.domain.model.SyncSummary
 import com.az.notes.domain.model.displayPath
 import com.az.notes.domain.model.label
-import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withContext
@@ -40,17 +41,17 @@ import javax.inject.Singleton
  * → Execute → CommitBaseline（重新快照两端一致状态）。
  *
  * 能力：五种同步模式（含两种镜像）、冲突副本/优先策略、重命名启发式（MOVE）、
- * Gitignore 风格过滤、大文件上限、回收站（30 天）、操作预览确认、日志与基线。
+ * Gitignore 风格过滤、大文件上限、回收站（保留天数可在设置调整）、操作预览确认、日志与基线。
  * 差异判定采用宽松模式（本地 size+mtime、远端 size+etag 短路）。
  * 安全阀（§6.5）：远端为空而基线存在中止；本地被删文件进 App 私有 trash/ 不物理删除；
  * 删除量达阈值时自动同步转人工确认；失败路径不写基线，下一轮重新决策。
  */
 @Singleton
 class SyncEngine @Inject constructor(
-    @ApplicationContext private val context: Context,
     private val settingsRepository: SettingsRepository,
     private val syncConfigRepository: SyncConfigRepository,
     private val credentialStore: CredentialStore,
+    private val trashRepository: TrashRepository,
     private val baselineDao: SyncBaselineDao,
     private val syncLogDao: SyncLogDao,
     private val conflictRecordDao: ConflictRecordDao,
@@ -113,18 +114,22 @@ class SyncEngine @Inject constructor(
             onStatus("触发服务端限流，自动等待重试（第 $attempt 次）…")
         }
 
-        // 回收站保留 30 天（§6.5-3）：同步前顺手清理过期批次
+        // 回收站过期批次清理（保留天数可在设置调整，0 = 永不清理）：同步前顺手执行
         purgeTrash()
 
         // 上一次同步若异常中止，快照可能残留；本轮重新扫描后才有可信快照
         lastSnapshot = null
 
-        onStatus("正在扫描本地文件…")
-        val local = withContext(Dispatchers.IO) { scanLocal(vault, ignore) }
-
-        onStatus("正在扫描远端目录…")
-        val scan = client.listAll { scanned, discoveredFiles ->
-            onStatus("正在扫描远端目录（已扫描 $scanned 个目录，发现 $discoveredFiles 个文件）…")
+        // 本地与远端扫描并行：远端逐目录 PROPFIND 是长耗时环节，本地扫描（毫秒级）不必串行等待
+        onStatus("正在扫描本地与远端文件…")
+        val (local, scan) = coroutineScope {
+            val localDeferred = async(Dispatchers.IO) { scanLocal(vault, ignore) }
+            val remoteDeferred = async {
+                client.listAll { scanned, discoveredFiles ->
+                    onStatus("正在扫描远端目录（已扫描 $scanned 个目录，发现 $discoveredFiles 个文件）…")
+                }
+            }
+            localDeferred.await() to remoteDeferred.await()
         }
         val remote = scan.entries
             .filter { !it.isDirectory && !ignore.isIgnored(it.path, false) }
@@ -556,7 +561,8 @@ class SyncEngine @Inject constructor(
             }
             SyncOpType.DOWNLOAD -> client.download(op.path, File(vaultRoot, op.path))
             SyncOpType.DELETE_REMOTE -> client.delete(op.path)
-            SyncOpType.TRASH_LOCAL -> moveToTrash(vaultRoot, op.path)
+            SyncOpType.TRASH_LOCAL ->
+                trashRepository.moveToTrash(vaultRoot, File(vaultRoot, op.path).absolutePath)
             SyncOpType.CONFLICT_COPY -> {
                 val backupRel = op.backupPath
                 if (backupRel.isNullOrEmpty()) {
@@ -758,13 +764,10 @@ class SyncEngine @Inject constructor(
         return out
     }
 
-    /** 回收站保留 30 天（§6.5-3）：同步前清理过期批次目录。 */
-    private suspend fun purgeTrash() = withContext(Dispatchers.IO) {
-        val root = File(context.filesDir, "trash")
-        val cutoff = System.currentTimeMillis() - TRASH_RETENTION_MS
-        root.listFiles()?.forEach { batch ->
-            if (batch.isDirectory && batch.lastModified() < cutoff) batch.deleteRecursively()
-        }
+    /** 回收站过期清理（§6.5-3）：保留天数来自设置，0 表示永不清理。 */
+    private suspend fun purgeTrash() {
+        val days = settingsRepository.settings.first().trashRetentionDays
+        withContext(Dispatchers.IO) { trashRepository.purgeExpired(days) }
     }
 
     /** 计算文件 SHA-1（冲突记录指纹，尽力而为；读取失败返回 null）。 */
@@ -787,18 +790,6 @@ class SyncEngine @Inject constructor(
     /** 文本类文件（可人工合并）：冲突时生成冲突副本；图片/二进制按优先策略直接覆盖（§6.2）。 */
     private fun isTextLike(path: String): Boolean =
         path.substringAfterLast('.', "").lowercase(Locale.ROOT) in TEXT_EXTENSIONS
-
-    /** 被远端删除波及的本地文件移入 App 私有 trash/（§6.5-3），不物理删除。 */
-    private fun moveToTrash(vaultRoot: String, relativePath: String): Boolean {
-        val source = File(vaultRoot, relativePath)
-        if (!source.isFile) return false
-        val target = File(context.filesDir, "trash/${conflictStamp()}/$relativePath")
-        return runCatching {
-            target.parentFile?.mkdirs()
-            source.copyTo(target, overwrite = false)
-            source.delete()
-        }.getOrDefault(false)
-    }
 
     /** 冲突副本相对路径：`名称 (conflict yyyy-MM-dd HHmmss).md`，重名自动加序号。 */
     private fun conflictRelativePath(vaultRoot: String, relativePath: String): String {
@@ -892,9 +883,6 @@ class SyncEngine @Inject constructor(
     private companion object {
         /** 日志中的“云端重命名”操作名（不属于 [SyncOpType]，仅用于展示）。 */
         const val LOG_OP_REMOTE_MOVE = "REMOTE_MOVE"
-
-        /** 回收站保留时长（§6.5-3）：30 天。 */
-        const val TRASH_RETENTION_MS = 30L * 24 * 60 * 60 * 1000
 
         /** 冲突时按“文本可人工合并”处理的扩展名（其余走优先策略直接覆盖，§6.2）。 */
         val TEXT_EXTENSIONS =
