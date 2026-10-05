@@ -1,0 +1,3 @@
+# 二进制文件：禁止行尾/编码转换，防止 keystore / APK 被破坏
+*.keystore binary
+*.apk binary

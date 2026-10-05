@@ -13,9 +13,12 @@ captures/
 .externalNativeBuild/
 .cxx/
 
-# 签名密钥（切勿提交）
+# 签名密钥：发布密钥切勿提交；
+# keystore/debug.keystore 为固定调试密钥（标准公知密码 android），
+# 特意入库以保证 CI 每次构建的 debug APK 签名一致、可覆盖安装。
 *.jks
 *.keystore
+!keystore/debug.keystore
 keystore.properties
 
 # 系统文件

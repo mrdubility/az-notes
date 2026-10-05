@@ -11,6 +11,18 @@ android {
     namespace = "com.az.notes"
     compileSdk = libs.versions.compileSdk.get().toInt()
 
+    // 固定 debug 签名：CI 每次在全新 runner 上自动生成的调试密钥不同，
+    // 会导致前后构建的 APK 无法覆盖安装；改用仓库内置密钥后签名保持一致。
+    // （keystore/debug.keystore 为公知密码 android 的调试密钥，发布密钥仍不入库）
+    signingConfigs {
+        getByName("debug") {
+            storeFile = rootProject.file("keystore/debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
     defaultConfig {
         applicationId = "com.az.notes"
         minSdk = libs.versions.minSdk.get().toInt()
