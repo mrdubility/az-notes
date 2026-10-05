@@ -39,6 +39,9 @@ class VaultRepository @Inject constructor() {
             "pdf", "mp3", "mp4", "mov", "webm", "avif"
         )
 
+        /** 日期变量：`$...$` 包裹的片段（内容按 SimpleDateFormat 语法解析）。 */
+        private val DATE_VAR = Regex("\\$([^$]+)\\$")
+
         /** 文件名（不含扩展）对应的 Markdown 判断 */
         fun isMarkdownName(name: String): Boolean =
             name.substringAfterLast('.', "").lowercase() in MARKDOWN_EXT
@@ -57,15 +60,17 @@ class VaultRepository @Inject constructor() {
             if (isMarkdownName(name)) name else "$name.md"
 
         /**
-         * 解析新建笔记名中的日期变量：整个 [pattern] 按 Android/Java 的
-         * SimpleDateFormat 语法用当前时间格式化（如 "yyyyMMdd" → "20261005"，
-         * "yyyy-MM-dd HHmmss" → "2026-10-05 142035"）。
-         * 无日期字母时原样返回；模式非法时回退原文。
-         * 注意：普通英文字母也属于模式字母，需用英文单引号包裹（如 'Notes'）。
+         * 解析新建笔记名：仅 `$...$` 包裹的片段按 Android/Java 的 SimpleDateFormat
+         * 语法用当前时间格式化（如 `日记$yyyyMMdd$` → `日记20261005`）。
+         * 其余字符（含普通英文字母）一律原样保留；片段模式非法时保留原样（含 `$`），
+         * 便于用户在列表中直接看出写错了变量。
          */
         fun resolveDateName(pattern: String): String =
-            runCatching { SimpleDateFormat(pattern, Locale.getDefault()).format(Date()) }
-                .getOrDefault(pattern)
+            DATE_VAR.replace(pattern) { match ->
+                runCatching {
+                    SimpleDateFormat(match.groupValues[1], Locale.getDefault()).format(Date())
+                }.getOrDefault(match.value)
+            }
 
         /**
          * 敏感路径护栏：delete / rename / createFile 等破坏性操作前的最后一道防线。

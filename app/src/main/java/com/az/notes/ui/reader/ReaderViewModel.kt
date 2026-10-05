@@ -47,23 +47,46 @@ class ReaderViewModel @Inject constructor(
 
     private var totalBlocks: Int = 1
 
+    /** 首次加载是否已结束（区分“首次进入”与“从编辑页返回”，避免重复读盘）。 */
+    private var loadedOnce = false
+
     init {
-        load()
+        load(showLoading = true)
     }
 
-    private fun load() {
+    /**
+     * 从编辑页返回（预览页重新进入组合）时静默重读正文，保证看到的是最新内容。
+     * 不显示 loading、不重读阅读进度，避免画面闪一下或滚动位置被拉回。
+     */
+    fun reload() {
+        if (loadedOnce) load(showLoading = false)
+    }
+
+    private fun load(showLoading: Boolean) {
         viewModelScope.launch {
-            _state.update { it.copy(loading = true, error = null) }
+            if (showLoading) _state.update { it.copy(loading = true, error = null) }
             try {
                 val text = withContext(Dispatchers.IO) { vaultRepository.readText(absolutePath) }
                 val headings = HeadingExtractor.extract(text)
-                val progress = withContext(Dispatchers.IO) { progressRepository.load(absolutePath) }
+                val progress = if (showLoading) {
+                    withContext(Dispatchers.IO) { progressRepository.load(absolutePath) }
+                } else {
+                    _state.value.initialProgress
+                }
                 totalBlocks = text.lines().count { it.isNotBlank() }.coerceAtLeast(1)
                 _state.update {
-                    it.copy(loading = false, content = text, headings = headings, initialProgress = progress)
+                    it.copy(
+                        loading = false,
+                        content = text,
+                        headings = headings,
+                        initialProgress = progress,
+                        error = null
+                    )
                 }
             } catch (e: Exception) {
                 _state.update { it.copy(loading = false, error = e.message ?: "读取失败") }
+            } finally {
+                loadedOnce = true
             }
         }
     }

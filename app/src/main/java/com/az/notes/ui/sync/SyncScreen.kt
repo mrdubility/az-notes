@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -54,40 +53,30 @@ import com.az.notes.R
 import com.az.notes.data.local.SyncLogEntity
 import com.az.notes.domain.model.SyncConfig
 import com.az.notes.domain.model.SyncMode
-import com.az.notes.domain.model.SyncOp
 import com.az.notes.domain.model.SyncOpType
-import com.az.notes.domain.model.SyncPlan
 import com.az.notes.domain.model.SyncSummary
 import com.az.notes.domain.model.label
+import com.az.notes.ui.components.SyncConfirmSheet
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-/** 计划预览最多展示的操作条数（更多时仅提示数量）。 */
-private const val MAX_PLAN_ROWS = 100
-
 /**
  * 同步页（§6）：WebDAV / 坚果云配置（服务器 / 账号 / 应用密码 / 远端目录）、
- * 同步策略、手动同步（Scan → 预览确认 → Execute）、结果汇总与同步日志。
+ * 同步策略、手动同步（Scan → 弹窗预览确认 → Execute）、结果汇总与同步日志。
  *
- * 两个入口：主页右上角“立即同步”（[autoStart] = true，进页自动开始扫描）；
- * 设置 → 同步（[autoStart] = false，先配置再手动开始）。
+ * 从设置 → 同步进入；主页右上角的“立即同步”不跳本页，而是在主页用同一套
+ * 弹窗组件（[SyncConfirmSheet] 等）完成扫描 → 确认 → 执行。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SyncScreen(
-    autoStart: Boolean,
     onBack: () -> Unit,
     viewModel: SyncViewModel = hiltViewModel()
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val logs by viewModel.logs.collectAsStateWithLifecycle()
     var modeSheet by remember { mutableStateOf(false) }
-
-    // 「立即同步」入口：进页自动开始；未配置 / 忙碌时由 startSync 弹 Toast 提示
-    LaunchedEffect(Unit) {
-        if (autoStart) viewModel.startSync()
-    }
 
     // 连接测试结果用 Toast 弹出；展示后立即消费，避免重组 / 重建时重复提示
     val context = LocalContext.current
@@ -162,42 +151,8 @@ fun SyncScreen(
                 SyncPhase.EXECUTING -> item {
                     ExecutingRow(state = state)
                 }
-                SyncPhase.AWAIT_CONFIRM -> {
-                    val plan = state.plan
-                    if (plan == null || plan.isEmpty) {
-                        item {
-                            HintCard(
-                                message = stringResource(R.string.sync_plan_empty),
-                                actionLabel = stringResource(R.string.sync_result_dismiss),
-                                onAction = viewModel::cancelPlan
-                            )
-                        }
-                    } else {
-                        item { PlanHeaderCard(plan = plan) }
-                        itemsIndexed(
-                            plan.ops.take(MAX_PLAN_ROWS),
-                            key = { index, _ -> index }
-                        ) { _, op ->
-                            OpRow(op = op)
-                        }
-                        if (plan.ops.size > MAX_PLAN_ROWS) {
-                            item {
-                                Text(
-                                    text = stringResource(R.string.sync_plan_more, MAX_PLAN_ROWS),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)
-                                )
-                            }
-                        }
-                        item {
-                            PlanActions(
-                                onConfirm = viewModel::confirmExecute,
-                                onCancel = viewModel::cancelPlan
-                            )
-                        }
-                    }
-                }
+                // 变更清单改由底部弹窗展示（见 Scaffold 之后的 SyncConfirmSheet）
+                SyncPhase.AWAIT_CONFIRM -> Unit
                 SyncPhase.DONE -> item {
                     state.summary?.let { summary ->
                         SummaryCard(summary = summary, onDismiss = viewModel::dismissResult)
@@ -226,6 +181,17 @@ fun SyncScreen(
             } else {
                 items(logs, key = { it.id }) { log -> LogRow(log = log) }
             }
+        }
+    }
+
+    // 变更清单确认弹窗：与主页“立即同步”入口共用同一组件与交互
+    if (state.phase == SyncPhase.AWAIT_CONFIRM) {
+        state.plan?.let { plan ->
+            SyncConfirmSheet(
+                plan = plan,
+                onConfirm = viewModel::confirmExecute,
+                onDismiss = viewModel::cancelPlan
+            )
         }
     }
 
@@ -317,84 +283,6 @@ private fun ServerSection(
             ) {
                 Text(stringResource(R.string.sync_test))
             }
-        }
-    }
-}
-
-// ---------------------------------------------------------------- 计划预览
-
-@Composable
-private fun PlanHeaderCard(plan: SyncPlan) {
-    Card(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerLow
-        )
-    ) {
-        Column(
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Text(
-                text = stringResource(R.string.sync_plan_title),
-                style = MaterialTheme.typography.titleMedium
-            )
-            Text(
-                text = stringResource(
-                    R.string.sync_counts_line,
-                    plan.uploadCount,
-                    plan.downloadCount,
-                    plan.deleteRemoteCount,
-                    plan.trashLocalCount,
-                    plan.conflictCount
-                ),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-    }
-}
-
-/** 单条计划操作：类型（按语义着色）+ 相对路径。 */
-@Composable
-private fun OpRow(op: SyncOp) {
-    val labelColor = when (op.type) {
-        SyncOpType.DELETE_REMOTE, SyncOpType.TRASH_LOCAL -> MaterialTheme.colorScheme.error
-        SyncOpType.CONFLICT_COPY -> MaterialTheme.colorScheme.tertiary
-        SyncOpType.UPLOAD, SyncOpType.DOWNLOAD -> MaterialTheme.colorScheme.primary
-    }
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(
-            text = op.type.label(),
-            style = MaterialTheme.typography.labelMedium,
-            color = labelColor
-        )
-        Spacer(Modifier.width(10.dp))
-        Text(
-            text = op.path,
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
-    }
-}
-
-@Composable
-private fun PlanActions(onConfirm: () -> Unit, onCancel: () -> Unit) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        TextButton(onClick = onCancel) {
-            Text(stringResource(R.string.action_cancel))
-        }
-        Spacer(Modifier.weight(1f))
-        Button(onClick = onConfirm) {
-            Text(stringResource(R.string.sync_confirm_execute))
         }
     }
 }
@@ -518,32 +406,18 @@ private fun ErrorCard(message: String, onDismiss: () -> Unit) {
     }
 }
 
-@Composable
-private fun HintCard(message: String, actionLabel: String, onAction: () -> Unit) {
-    Card(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerLow
-        )
-    ) {
-        Column(
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Text(message, style = MaterialTheme.typography.bodyMedium)
-            TextButton(onClick = onAction, modifier = Modifier.align(Alignment.End)) {
-                Text(actionLabel)
-            }
-        }
-    }
-}
-
 // ---------------------------------------------------------------- 日志
 
 @Composable
 private fun LogRow(log: SyncLogEntity) {
     val opLabel = runCatching { SyncOpType.valueOf(log.op).label() }
-        .getOrDefault(if (log.op == "BASELINE") "同步基线" else log.op)
+        .getOrDefault(
+            when (log.op) {
+                "BASELINE" -> "同步基线"
+                "REMOTE_MOVE" -> "云端重命名"
+                else -> log.op
+            }
+        )
     Column(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp)
     ) {

@@ -54,6 +54,18 @@ class WebDavClient(
         val etag: String?
     )
 
+    /**
+     * 一次远端全树扫描的结果。
+     *
+     * [truncatedDirs]：条目数达到服务端单次返回上限（坚果云为 750 个）的目录，
+     * 其列表可能被分页截断而不完整（续取协议未公开），调用方必须避免仅凭
+     * “远端没列出”就对本地文件做删除类决策。
+     */
+    data class ScanResult(
+        val entries: List<RemoteEntry>,
+        val truncatedDirs: Set<String>
+    )
+
     private val rootUrl: String = baseUrl.trimEnd('/') + "/"
     private val basePath: String = runCatching { rootUrl.toHttpUrl().encodedPath }
         .getOrDefault("/")
@@ -94,9 +106,10 @@ class WebDavClient(
      */
     suspend fun listAll(
         onDirectoryScanned: (scannedDirs: Int, discoveredFiles: Int) -> Unit = { _, _ -> }
-    ): List<RemoteEntry> =
+    ): ScanResult =
         withContext(Dispatchers.IO) {
             val result = ArrayList<RemoteEntry>()
+            val truncated = HashSet<String>()
             val visited = HashSet<String>()
             val queue = ArrayDeque<String>()
             queue += ""
@@ -105,7 +118,7 @@ class WebDavClient(
             var discoveredFiles = 0
             while (queue.isNotEmpty()) {
                 val dir = queue.removeFirst()
-                val entries = propfind(dir)
+                val entries = propfind(dir, truncated)
                 scanned++
                 for (entry in entries) {
                     if (entry.path.isBlank()) continue
@@ -117,10 +130,13 @@ class WebDavClient(
                 }
                 onDirectoryScanned(scanned, discoveredFiles)
             }
-            result
+            ScanResult(result, truncated)
         }
 
-    private suspend fun propfind(relativeDir: String): List<RemoteEntry> {
+    private suspend fun propfind(
+        relativeDir: String,
+        truncated: MutableSet<String>
+    ): List<RemoteEntry> {
         val request = auth(Request.Builder().url(dirUrl(relativeDir)))
             .method("PROPFIND", PROPFIND_BODY.toRequestBody(XML_MEDIA))
             .header("Depth", "1")
@@ -130,8 +146,29 @@ class WebDavClient(
                 throw httpError("列目录失败（${relativeDir.ifBlank { "/" }}）", resp)
             }
             val xml = resp.body?.string().orEmpty()
+            val all = parseMultiStatus(xml)
+            // 达到服务端单次返回上限（坚果云 750 个）：可能仍有未列出的条目，标记为不可信目录
+            if (all.size >= SINGLE_PAGE_LIMIT) truncated += relativeDir
             // Depth:1 响应包含被请求目录自身（href 与请求路径一致），剔除避免重复入队
-            return parseMultiStatus(xml).filterNot { it.isDirectory && it.path == relativeDir }
+            return all.filterNot { it.isDirectory && it.path == relativeDir }
+        }
+    }
+
+    /**
+     * 取单个远端条目的最新属性（PROPFIND Depth:0）；不存在返回 null。
+     * 用于上传后刷新基线（etag / size / mtime），避免为少量变更重扫全树。
+     */
+    suspend fun stat(relativePath: String): RemoteEntry? = withContext(Dispatchers.IO) {
+        val request = auth(Request.Builder().url(fileUrl(relativePath)))
+            .method("PROPFIND", PROPFIND_BODY.toRequestBody(XML_MEDIA))
+            .header("Depth", "0")
+            .build()
+        execute(request).use { resp ->
+            if (resp.code == 404) return@withContext null
+            if (resp.code !in 200..299) {
+                throw httpError("读取远端属性 $relativePath 失败", resp)
+            }
+            parseMultiStatus(resp.body?.string().orEmpty()).firstOrNull()
         }
     }
 
@@ -180,6 +217,27 @@ class WebDavClient(
             resp.code in 200..299 || resp.code == 404
         }
     }
+
+    /**
+     * 移动 / 重命名远端条目（MOVE，`Overwrite: F` 不覆盖已存在的目标）。
+     * 用于本地重命名后同步到云端，避免退化为“删除旧路径 + 重新上传新路径”。
+     * 源不存在（404）视为无需处理，返回 false 交由常规同步处理。
+     */
+    suspend fun move(
+        fromRelative: String,
+        toRelative: String,
+        isDirectory: Boolean = false
+    ): Boolean =
+        withContext(Dispatchers.IO) {
+            // 集合（文件夹）的 Destination 需以 '/' 结尾，部分服务端据此区分文件与目录
+            val destination = fileUrl(toRelative).let { if (isDirectory) "$it/" else it }
+            val request = auth(Request.Builder().url(fileUrl(fromRelative)))
+                .method("MOVE", null)
+                .header("Destination", destination)
+                .header("Overwrite", "F")
+                .build()
+            execute(request).use { resp -> resp.code in 200..299 }
+        }
 
     // ------------------------------------------------------------------ 内部
 
@@ -317,6 +375,12 @@ class WebDavClient(
         /** 触发限流（503 / 429）后的等待时长与最大自动重试次数。 */
         private const val RATE_LIMIT_RETRY_DELAY_MS = 30_000L
         private const val RATE_LIMIT_MAX_RETRIES = 3
+
+        /**
+         * 服务端单次 PROPFIND 返回的条目上限（坚果云官方说明为 750 个，超出分页）。
+         * 达到该值即视为可能截断（续取协议未公开），由调用方跳过删除类决策。
+         */
+        private const val SINGLE_PAGE_LIMIT = 750
 
         private const val PROPFIND_BODY = """<?xml version="1.0" encoding="utf-8"?>
 <d:propfind xmlns:d="DAV:"><d:prop>

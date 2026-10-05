@@ -19,6 +19,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -33,6 +35,8 @@ data class SyncUiState(
     /** 编辑中的密码（预填自加密存储；仅内存 + EncryptedSharedPreferences，不落明文） */
     val password: String = "",
     val vaultPath: String? = null,
+    /** 配置与偏好是否已从 DataStore 载入；自动开始的同步必须等它就绪，否则会误报“未配置”。 */
+    val loaded: Boolean = false,
     val phase: SyncPhase = SyncPhase.IDLE,
     val statusText: String = "",
     val progressDone: Int = 0,
@@ -78,13 +82,11 @@ class SyncViewModel @Inject constructor(
             }
         }
         viewModelScope.launch {
-            syncConfigRepository.config.collect { config ->
-                _state.update { it.copy(config = config) }
-            }
-        }
-        viewModelScope.launch {
-            settingsRepository.settings.collect { settings ->
-                _state.update { it.copy(vaultPath = settings.vaultPath) }
+            // 合并两个 DataStore flow：首次发射即代表同步配置与 Vault 均已就绪
+            combine(syncConfigRepository.config, settingsRepository.settings) { config, settings ->
+                config to settings.vaultPath
+            }.collect { (config, vaultPath) ->
+                _state.update { it.copy(config = config, vaultPath = vaultPath, loaded = true) }
             }
         }
     }
@@ -148,19 +150,16 @@ class SyncViewModel @Inject constructor(
 
     // ---------------------------------------------------------------- 手动同步
 
-    /** 开始同步：扫描两端生成计划，等用户预览确认后执行。前置检查用 Toast 提示。 */
+    /**
+     * 开始同步：扫描两端生成计划，等用户预览确认后执行。
+     *
+     * 先占位为“扫描中”拦截连点，再等配置从 DataStore 载入完成后做前置检查——
+     * 否则刚进页就点同步（或主页“立即同步”）会因为配置尚未回流而误报“未配置”。
+     * 前置检查未通过时回退空闲并用 Toast 提示。
+     */
     fun startSync() {
-        val snapshot = _state.value
-        if (snapshot.busy) {
+        if (_state.value.busy) {
             _state.update { it.copy(testMessage = "同步正在进行中，请稍候") }
-            return
-        }
-        if (!snapshot.config.configured) {
-            _state.update { it.copy(testMessage = "请先在下方填写服务器地址、账号与应用密码") }
-            return
-        }
-        if (snapshot.vaultPath.isNullOrBlank()) {
-            _state.update { it.copy(testMessage = "尚未选择 Vault 目录") }
             return
         }
         viewModelScope.launch {
@@ -172,6 +171,23 @@ class SyncViewModel @Inject constructor(
                     summary = null,
                     error = null
                 )
+            }
+            val snapshot = state.first { it.loaded }
+            if (!snapshot.config.configured) {
+                _state.update {
+                    it.copy(
+                        phase = SyncPhase.IDLE,
+                        statusText = "",
+                        testMessage = "请先在同步设置中填写服务器地址、账号与应用密码"
+                    )
+                }
+                return@launch
+            }
+            if (snapshot.vaultPath.isNullOrBlank()) {
+                _state.update {
+                    it.copy(phase = SyncPhase.IDLE, statusText = "", testMessage = "尚未选择 Vault 目录")
+                }
+                return@launch
             }
             try {
                 val plan = syncEngine.plan(snapshot.config) { status ->

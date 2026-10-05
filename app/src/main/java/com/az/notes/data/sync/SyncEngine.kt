@@ -42,12 +42,23 @@ import javax.inject.Singleton
 class SyncEngine @Inject constructor(
     @ApplicationContext private val context: Context,
     private val settingsRepository: SettingsRepository,
+    private val syncConfigRepository: SyncConfigRepository,
     private val credentialStore: CredentialStore,
     private val baselineDao: SyncBaselineDao,
     private val syncLogDao: SyncLogDao
 ) {
 
     private data class LocalStat(val size: Long, val mtime: Long)
+
+    /** plan 阶段的扫描结果，供同一次同步的 commitBaseline 复用。 */
+    private class ScanSnapshot(
+        val remote: Map<String, WebDavClient.RemoteEntry>,
+        /** 远端列表可能被分页截断、需原样保留的基线条目（否则会被误判为未同步而反复重传）。 */
+        val carryOver: List<SyncBaselineEntity> = emptyList()
+    )
+
+    @Volatile
+    private var lastSnapshot: ScanSnapshot? = null
 
     // ---------------------------------------------------------------- 连接测试
 
@@ -73,13 +84,21 @@ class SyncEngine @Inject constructor(
             onStatus("触发服务端限流，自动等待重试（第 $attempt 次）…")
         }
 
+        // 上一次同步若异常中止，快照可能残留；本轮重新扫描后才有可信快照
+        lastSnapshot = null
+
         onStatus("正在扫描本地文件…")
         val local = withContext(Dispatchers.IO) { scanLocal(vault) }
 
         onStatus("正在扫描远端目录…")
-        val remote = client.listAll { scanned, discoveredFiles ->
+        val scan = client.listAll { scanned, discoveredFiles ->
             onStatus("正在扫描远端目录（已扫描 $scanned 个目录，发现 $discoveredFiles 个文件）…")
-        }.filter { !it.isDirectory && !isIgnoredPath(it.path) }.associateBy { it.path }
+        }
+        val remote = scan.entries
+            .filter { !it.isDirectory && !isIgnoredPath(it.path) }
+            .associateBy { it.path }
+        // 条目数达到服务端单次返回上限的目录，其远端列表可能被分页截断而不完整
+        val untrustedDirs = scan.truncatedDirs
 
         val baseline = withContext(Dispatchers.IO) { baselineDao.getAll() }.associateBy { it.path }
 
@@ -94,6 +113,12 @@ class SyncEngine @Inject constructor(
         val keepConflictCopies = config.mode == SyncMode.BIDIRECTIONAL
 
         val ops = ArrayList<SyncOp>()
+        val carryOver = ArrayList<SyncBaselineEntity>()
+        var unsafeSkipped = 0
+        // 不可信判定：路径落在被截断的目录内（根目录 "" 被截断时全库不可信）
+        fun untrusted(path: String): Boolean =
+            untrustedDirs.any { it.isEmpty() || path.startsWith("$it/") }
+
         val paths = (local.keys + remote.keys + baseline.keys).toSortedSet()
         for (path in paths) {
             val l = local[path]
@@ -155,8 +180,15 @@ class SyncEngine @Inject constructor(
                             ops += SyncOp(SyncOpType.UPLOAD, path, detail = "远端已删除，本地修改已保留")
                         }
                     } else if (allowDownload) {
-                        // 远端删除传播到本地：移入 App 私有回收站（§6.5-3），不物理删除
-                        ops += SyncOp(SyncOpType.TRASH_LOCAL, path)
+                        if (untrusted(path)) {
+                            // “没列出”不等于“已删除”（可能只是分页截断），跳过以免误删本地文件；
+                            // 同时保留其基线条目，避免下一轮把它当成新文件重新上传
+                            unsafeSkipped++
+                            b?.let { carryOver += it }
+                        } else {
+                            // 远端删除传播到本地：移入 App 私有回收站（§6.5-3），不物理删除
+                            ops += SyncOp(SyncOpType.TRASH_LOCAL, path)
+                        }
                     }
                 }
                 l != null && r != null -> when {
@@ -187,7 +219,21 @@ class SyncEngine @Inject constructor(
 
         // 执行顺序：写入类在前、删除类在后；冲突副本（保留旧版）必须先于同路径的下载覆盖
         val ordered = ops.sortedBy { opPriority(it.type) }
-        return SyncPlan(ops = ordered, scannedLocal = local.size, scannedRemote = remote.size)
+        // 快照留给 commitBaseline 复用：同一次同步不再把远端全树扫第二遍
+        lastSnapshot = ScanSnapshot(remote, carryOver)
+        val warning = if (untrustedDirs.isNotEmpty()) {
+            val sample = untrustedDirs.first().ifEmpty { "/" }
+            "目录「$sample」等 ${untrustedDirs.size} 个目录的条目数已达服务端单次返回上限（750 个），" +
+                "远端列表可能不完整；本次已跳过 $unsafeSkipped 项本地删除以避免误删，建议将大目录拆分为子目录。"
+        } else {
+            null
+        }
+        return SyncPlan(
+            ops = ordered,
+            scannedLocal = local.size,
+            scannedRemote = remote.size,
+            warning = warning
+        )
     }
 
     // ---------------------------------------------------------------- Execute
@@ -207,6 +253,8 @@ class SyncEngine @Inject constructor(
         var conflictCopies = 0
         var failed = 0
         val failedPaths = HashSet<String>()
+        // 上传成功的路径：远端属性已变，提交基线时需逐个 Depth:0 刷新
+        val uploadedPaths = HashSet<String>()
         val logs = ArrayList<SyncLogEntity>()
         val total = plan.ops.size
         var progressIndex = 0
@@ -229,7 +277,10 @@ class SyncEngine @Inject constructor(
             }
             if (ok) {
                 when (op.type) {
-                    SyncOpType.UPLOAD -> uploaded++
+                    SyncOpType.UPLOAD -> {
+                        uploaded++
+                        uploadedPaths += op.path
+                    }
                     SyncOpType.DOWNLOAD -> downloaded++
                     SyncOpType.DELETE_REMOTE -> deletedRemote++
                     SyncOpType.TRASH_LOCAL -> trashedLocal++
@@ -256,7 +307,11 @@ class SyncEngine @Inject constructor(
         // CommitBaseline：重新快照两端状态；失败路径不写基线，下一轮重新决策
         var baselineError: String? = null
         try {
-            withContext(Dispatchers.IO) { commitBaseline(vault, client, failedPaths) }
+            val snapshot = lastSnapshot
+            lastSnapshot = null // 用完即弃，避免跨会话复用陈旧快照
+            withContext(Dispatchers.IO) {
+                commitBaseline(vault, client, failedPaths, uploadedPaths, snapshot)
+            }
         } catch (ce: CancellationException) {
             throw ce
         } catch (t: Exception) {
@@ -315,20 +370,44 @@ class SyncEngine @Inject constructor(
 
     // ---------------------------------------------------------------- 基线
 
+    /**
+     * 提交基线：重新快照两端一致状态。
+     *
+     * 远端优先复用 plan 阶段的扫描快照 [snapshot]，仅对本次上传过的路径
+     * （[uploadedPaths]）逐个 Depth:0 取最新属性——避免每次同步都把远端全树
+     * 扫两遍（请求数约减半，无变更时零额外请求）。无快照时回退全量扫描。
+     */
     private suspend fun commitBaseline(
         vaultRoot: String,
         client: WebDavClient,
-        excludePaths: Set<String>
+        excludePaths: Set<String>,
+        uploadedPaths: Set<String>,
+        snapshot: ScanSnapshot?
     ) {
         val local = scanLocal(vaultRoot)
-        val remote = client.listAll()
-            .filter { !it.isDirectory && !isIgnoredPath(it.path) }
-            .associateBy { it.path }
+        val carryOver = snapshot?.carryOver.orEmpty()
+        val remote: Map<String, WebDavClient.RemoteEntry> = if (snapshot != null) {
+            val merged = snapshot.remote.toMutableMap()
+            for (path in uploadedPaths) {
+                val fresh = runCatching { client.stat(path) }.getOrNull()
+                if (fresh != null) merged[path] = fresh else merged.remove(path)
+            }
+            merged
+        } else {
+            client.listAll().entries
+                .filter { !it.isDirectory && !isIgnoredPath(it.path) }
+                .associateBy { it.path }
+        }
         val now = System.currentTimeMillis()
         val entries = ArrayList<SyncBaselineEntity>()
         for ((path, l) in local) {
             if (path in excludePaths) continue
-            val r = remote[path] ?: continue
+            val r = remote[path]
+            if (r == null) {
+                // 远端未列出：可能是分页截断造成的假象，沿用原基线避免反复重传
+                carryOver.firstOrNull { it.path == path }?.let { entries += it }
+                continue
+            }
             entries += SyncBaselineEntity(
                 path = path,
                 localSize = l.size,
@@ -340,6 +419,65 @@ class SyncEngine @Inject constructor(
             )
         }
         baselineDao.replaceAll(entries)
+    }
+
+    // ---------------------------------------------------------------- 重命名同步
+
+    /**
+     * 本地重命名（文件或文件夹）后，把改名同步到云端（MOVE）并重映射基线路径。
+     *
+     * 不做这一步，下次同步会把它当成“旧路径删除 + 新路径新增”，
+     * 导致整个目录重新上传（慢且耗流量）。未配置同步、路径不在 Vault 内、
+     * 远端不存在或 MOVE 失败时静默跳过（仅记一条日志），由下次常规同步兜底。
+     */
+    suspend fun applyRemoteRename(vaultRoot: String, oldAbsPath: String, newAbsPath: String) {
+        val config = runCatching { syncConfigRepository.config.first() }.getOrNull() ?: return
+        if (!config.configured) return
+        val root = vaultRoot.trimEnd('/') + "/"
+        if (!oldAbsPath.startsWith(root) || !newAbsPath.startsWith(root)) return
+        val oldRel = oldAbsPath.removePrefix(root).trim('/')
+        val newRel = newAbsPath.removePrefix(root).trim('/')
+        if (oldRel.isEmpty() || newRel.isEmpty()) return
+        val client = runCatching { buildClient(config) }.getOrNull() ?: return
+        // 本地已改名完成，旧路径不再存在；以新路径判定是否为文件夹
+        val isDirectory = withContext(Dispatchers.IO) { File(newAbsPath).isDirectory }
+        val ok = runCatching { client.move(oldRel, newRel, isDirectory) }.getOrDefault(false)
+        withContext(Dispatchers.IO) {
+            if (ok) remapBaseline(oldRel, newRel)
+            syncLogDao.insertAll(
+                listOf(
+                    SyncLogEntity(
+                        ts = System.currentTimeMillis(),
+                        op = LOG_OP_REMOTE_MOVE,
+                        path = "$oldRel → $newRel",
+                        result = if (ok) "OK" else "SKIP",
+                        detail = if (ok) "重命名已同步到云端"
+                        else "云端未同步本次重命名，将在下次同步时处理"
+                    )
+                )
+            )
+        }
+    }
+
+    /** 基线路径重映射：单文件或整个目录前缀（远端 MOVE 成功后两端仍一致）。 */
+    private suspend fun remapBaseline(oldRel: String, newRel: String) {
+        val all = baselineDao.getAll()
+        val prefix = "$oldRel/"
+        var changed = false
+        val remapped = all.map { entry ->
+            when {
+                entry.path == oldRel -> {
+                    changed = true
+                    entry.copy(path = newRel)
+                }
+                entry.path.startsWith(prefix) -> {
+                    changed = true
+                    entry.copy(path = newRel + entry.path.removePrefix(oldRel))
+                }
+                else -> entry
+            }
+        }
+        if (changed) baselineDao.replaceAll(remapped)
     }
 
     // ---------------------------------------------------------------- 文件系统辅助
@@ -432,5 +570,10 @@ class SyncEngine @Inject constructor(
             credentialStore.getPassword(),
             onRateLimited
         )
+    }
+
+    private companion object {
+        /** 日志中的“云端重命名”操作名（不属于 [SyncOpType]，仅用于展示）。 */
+        const val LOG_OP_REMOTE_MOVE = "REMOTE_MOVE"
     }
 }

@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.az.notes.data.settings.SettingsRepository
 import com.az.notes.data.storage.VaultRepository
+import com.az.notes.data.sync.SyncEngine
 import com.az.notes.domain.model.AppSettings
 import com.az.notes.domain.model.FileNode
 import com.az.notes.domain.model.NoteSortOrder
@@ -52,11 +53,13 @@ data class NotesUiState(
  * 主页笔记列表 ViewModel：单层列目录（隐藏 '.' 开头项）、
  * 排序（修改时间/名称）、递归搜索、重命名、删除、新建笔记。
  * 所有文件操作在 `Dispatchers.IO` 执行；偏好变化（Vault / 排序 / 预览字符数）自动重载。
+ * 重命名成功后额外把改名同步到云端（MOVE），避免下次同步退化为删除 + 重传。
  */
 @HiltViewModel
 class NotesViewModel @Inject constructor(
     private val vaultRepository: VaultRepository,
-    private val settingsRepository: SettingsRepository
+    private val settingsRepository: SettingsRepository,
+    private val syncEngine: SyncEngine
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(NotesUiState())
@@ -176,7 +179,7 @@ class NotesViewModel @Inject constructor(
         _state.update { it.copy(searchQuery = "", searchResults = emptyList(), searching = false) }
     }
 
-    /** 重命名（保留/补全 .md 扩展名；非法字符过滤）。 */
+    /** 重命名（笔记保留/补全 .md 扩展名，文件夹仅清洗非法字符）；成功后把改名同步到云端。 */
     fun rename(node: FileNode, input: String) {
         viewModelScope.launch {
             val newName = resolveNewName(node, input)
@@ -193,7 +196,23 @@ class NotesViewModel @Inject constructor(
             val target = File(parent, newName).absolutePath
             val ok = withContext(Dispatchers.IO) { vaultRepository.rename(node.absolutePath, target) }
             _state.update { it.copy(message = if (ok) "已重命名" else "重命名失败（可能存在同名项）") }
-            if (ok) reloadItems(pullRefresh = false)
+            if (ok) {
+                reloadItems(pullRefresh = false)
+                syncRemoteRename(node.absolutePath, target)
+            }
+        }
+    }
+
+    /**
+     * 本地重命名后把改名同步到云端（MOVE + 基线路径重映射），避免下次同步
+     * 把它当成“旧路径删除 + 新路径新增”而重传整个目录。
+     * 后台执行、不阻塞列表刷新；未配置同步或失败时静默跳过（同步日志可查）。
+     */
+    private fun syncRemoteRename(oldAbsPath: String, newAbsPath: String) {
+        val vault = currentSettings.vaultPath
+        if (vault.isNullOrBlank()) return
+        viewModelScope.launch {
+            runCatching { syncEngine.applyRemoteRename(vault, oldAbsPath, newAbsPath) }
         }
     }
 
@@ -259,8 +278,16 @@ class NotesViewModel @Inject constructor(
             }
             result.fold(
                 onSuccess = { items ->
-                    // 目录结构先渲染（预览为空占位），避免大量文件时等待全部预览读完
-                    _state.update { it.copy(items = items, loading = false, refreshing = false, error = null) }
+                    // 目录结构先渲染；沿用未变化文件的已加载预览，
+                    // 避免刷新时预览先被清空再逐条重现（屏幕闪动）
+                    _state.update { s ->
+                        s.copy(
+                            items = mergePreviews(s.items, items),
+                            loading = false,
+                            refreshing = false,
+                            error = null
+                        )
+                    }
                     fillPreviews()
                 },
                 onFailure = { e ->
@@ -273,26 +300,57 @@ class NotesViewModel @Inject constructor(
     }
 
     /**
-     * 预览增量填充：目录先行渲染后，逐条在 IO 上读取正文前缀并更新状态。
-     * 大批量文件时用户可立即看到列表，无需等待所有预览读完（性能优化）；
-     * 期间若切换目录 / 重新加载，本 Job 被取消，循环自然终止。
+     * 用上一轮的预览填充新列表：仅当文件未变化（mtime 相同）时沿用，
+     * 变化过的文件预览置空由 [fillPreviews] 重读，保证编辑后返回看到的是最新内容。
+     */
+    private fun mergePreviews(
+        previous: List<NoteListItem>,
+        next: List<NoteListItem>
+    ): List<NoteListItem> {
+        if (previous.isEmpty()) return next
+        val byPath = previous.associateBy { it.node.absolutePath }
+        return next.map { item ->
+            val old = byPath[item.node.absolutePath] ?: return@map item
+            if (old.preview.isNotEmpty() && old.node.lastModified == item.node.lastModified) {
+                item.copy(preview = old.preview)
+            } else {
+                item
+            }
+        }
+    }
+
+    /**
+     * 预览增量填充：目录先行渲染后，在 IO 上读取正文前缀并**分批**写回状态。
+     * 每 [PREVIEW_BATCH] 条合并一次更新，避免逐条写入使列表反复重组（视觉闪动）；
+     * 大批量文件时用户仍可立即看到列表；期间若切换目录 / 重新加载，
+     * 本 Job 被取消，循环自然终止。
      */
     private suspend fun fillPreviews() {
         val previewChars = currentSettings.previewChars
         val targets = _state.value.items.filter { it.node.isMarkdown && it.preview.isEmpty() }
+        if (targets.isEmpty()) return
+        val pending = HashMap<String, String>()
         for (item in targets) {
             val preview = withContext(Dispatchers.IO) {
                 vaultRepository.readPreview(item.node.absolutePath, previewChars)
             }
-            if (preview.isEmpty()) continue
-            _state.update { s ->
-                val index = s.items.indexOfFirst { it.node.absolutePath == item.node.absolutePath }
-                if (index < 0) return@update s
-                val updated = s.items.toMutableList()
-                updated[index] = updated[index].copy(preview = preview)
-                s.copy(items = updated)
-            }
+            if (preview.isNotEmpty()) pending[item.node.absolutePath] = preview
+            if (pending.size >= PREVIEW_BATCH) flushPreviews(pending)
         }
+        flushPreviews(pending)
+    }
+
+    /** 把累积的预览一次性写入状态并清空缓冲。 */
+    private fun flushPreviews(pending: MutableMap<String, String>) {
+        if (pending.isEmpty()) return
+        _state.update { s ->
+            s.copy(
+                items = s.items.map { item ->
+                    pending[item.node.absolutePath]?.let { item.copy(preview = it) } ?: item
+                }
+            )
+        }
+        pending.clear()
     }
 
     private fun loadListing(dirPath: String, vaultPath: String): List<NoteListItem> {
@@ -307,5 +365,10 @@ class NotesViewModel @Inject constructor(
         NoteSortOrder.MODIFIED_ASC -> notes.sortedBy { it.lastModified }
         NoteSortOrder.NAME_ASC -> notes.sortedBy { it.name.lowercase() }
         NoteSortOrder.NAME_DESC -> notes.sortedByDescending { it.name.lowercase() }
+    }
+
+    private companion object {
+        /** 预览批量写回的条数：约一屏，兼顾首屏速度与重组次数。 */
+        const val PREVIEW_BATCH = 12
     }
 }

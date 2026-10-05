@@ -1,5 +1,6 @@
 package com.az.notes.ui.home
 
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -69,6 +70,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -79,9 +81,14 @@ import com.az.notes.R
 import com.az.notes.domain.model.FileNode
 import com.az.notes.domain.model.NoteSortOrder
 import com.az.notes.ui.components.RenameDialog
+import com.az.notes.ui.components.SyncConfirmSheet
+import com.az.notes.ui.components.SyncProgressDialog
+import com.az.notes.ui.components.SyncResultDialog
 import com.az.notes.ui.notes.NoteListItem
 import com.az.notes.ui.notes.NotesUiState
 import com.az.notes.ui.notes.NotesViewModel
+import com.az.notes.ui.sync.SyncPhase
+import com.az.notes.ui.sync.SyncViewModel
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -90,7 +97,10 @@ import java.util.Locale
 /**
  * 主界面（§5.1 重设计）：抽屉菜单 + 笔记卡片列表。
  * 左上角抽屉 → 设置入口；右上角 → 立即同步 / 搜索 / 排序；右下角 FAB → 新建笔记；
- * 下拉刷新；条目右侧 ⋮ → 重命名 / 删除；文件夹可点击进入；隐藏 '.' 开头项。
+ * 下拉刷新；条目右侧 ⋮ → 重命名 / 删除（文件夹同样支持）；文件夹可点击进入；隐藏 '.' 开头项。
+ *
+ * 立即同步不离开本页：扫描进度、变更清单确认与结果均以弹窗展示
+ * （与同步页共用 [SyncConfirmSheet] 等组件）；同步配置仍从设置 → 同步进入。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -98,13 +108,15 @@ fun HomeScreen(
     onOpenFile: (String) -> Unit,
     onOpenEditor: (path: String, fresh: Boolean) -> Unit,
     onSettings: () -> Unit,
-    onSync: () -> Unit,
-    viewModel: NotesViewModel = hiltViewModel()
+    viewModel: NotesViewModel = hiltViewModel(),
+    syncViewModel: SyncViewModel = hiltViewModel()
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val syncState by syncViewModel.state.collectAsStateWithLifecycle()
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
+    val context = LocalContext.current
 
     var searchActive by rememberSaveable { mutableStateOf(false) }
     var actionTarget by remember { mutableStateOf<NoteListItem?>(null) }
@@ -120,6 +132,18 @@ fun HomeScreen(
             snackbarHostState.showSnackbar(it)
             viewModel.consumeMessage()
         }
+    }
+
+    // 立即同步的一次性提示（尚未配置 / 正在同步中 / 未选 Vault 等）
+    LaunchedEffect(syncState.testMessage) {
+        val message = syncState.testMessage ?: return@LaunchedEffect
+        Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+        syncViewModel.clearTestMessage()
+    }
+
+    // 同步完成后静默重读当前目录（可能从云端拉下了新文件）
+    LaunchedEffect(syncState.phase) {
+        if (syncState.phase == SyncPhase.DONE) viewModel.onScreenEntered()
     }
 
     // 系统返回：优先退出搜索，其次返回上一级目录
@@ -163,7 +187,7 @@ fun HomeScreen(
                     },
                     onSearchQueryChange = viewModel::onSearchQueryChange,
                     onSortSelected = viewModel::setSortOrder,
-                    onSync = onSync
+                    onSync = { syncViewModel.startSync() }
                 )
             },
             floatingActionButton = {
@@ -230,6 +254,40 @@ fun HomeScreen(
                 deleteTarget = null
             }
         )
+    }
+
+    // —— 立即同步：进度 → 变更清单确认 → 结果，三段弹窗均不离开本页 ——
+    when (syncState.phase) {
+        SyncPhase.SCANNING -> SyncProgressDialog(
+            statusText = syncState.statusText,
+            done = 0,
+            total = 0,
+            executing = false
+        )
+        SyncPhase.EXECUTING -> SyncProgressDialog(
+            statusText = syncState.statusText,
+            done = syncState.progressDone,
+            total = syncState.progressTotal,
+            executing = true
+        )
+        SyncPhase.AWAIT_CONFIRM -> syncState.plan?.let { plan ->
+            SyncConfirmSheet(
+                plan = plan,
+                onConfirm = syncViewModel::confirmExecute,
+                onDismiss = syncViewModel::cancelPlan
+            )
+        }
+        SyncPhase.DONE -> SyncResultDialog(
+            summary = syncState.summary,
+            error = null,
+            onDismiss = syncViewModel::dismissResult
+        )
+        SyncPhase.ERROR -> SyncResultDialog(
+            summary = null,
+            error = syncState.error,
+            onDismiss = syncViewModel::dismissResult
+        )
+        SyncPhase.TESTING, SyncPhase.IDLE -> Unit
     }
 }
 
@@ -502,8 +560,17 @@ private fun NoteRow(
                     text = node.name,
                     style = MaterialTheme.typography.titleLarge,
                     maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
                 )
+                // 文件夹同样提供重命名 / 删除入口（重命名后云端由 MOVE 同步）
+                IconButton(onClick = onMore) {
+                    Icon(
+                        imageVector = Icons.Outlined.MoreVert,
+                        contentDescription = stringResource(R.string.action_more),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
         } else {
             Text(

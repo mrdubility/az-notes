@@ -1,6 +1,7 @@
 package com.az.notes.ui.reader
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -35,6 +36,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -53,6 +55,8 @@ import kotlinx.coroutines.launch
  * 渲染用 mikepenz `Markdown`（Material 3）。Demo 用 verticalScroll 包裹 Column；
  * 正式版换 `LazyMarkdownSuccess` 以获得项级虚拟化。滚动定位以“每块近似像素高度”
  * 估算锚点（§5.4 允许的按块序号近似对齐）。
+ *
+ * 从编辑页返回时静默重读正文（预览总是最新版）；双击正文也可快捷进入编辑。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -73,6 +77,9 @@ fun ReaderScreen(
     val pxPerBlock = with(density) {
         (readingStyle.fontSizeSp * readingStyle.lineHeightRatio * 3f).dp.toPx().roundToInt()
     }.coerceAtLeast(1)
+
+    // 从编辑页返回（重新进入组合）时静默重读，避免预览停留在编辑前的旧内容
+    LaunchedEffect(Unit) { viewModel.reload() }
 
     // 恢复上次滚动位置
     LaunchedEffect(state.loading, state.initialProgress) {
@@ -125,6 +132,10 @@ fun ReaderScreen(
                 Modifier
                     .fillMaxSize()
                     .padding(inner)
+                    // 双击正文进入编辑（顶栏编辑按钮之外的快捷入口）；不影响滚动
+                    .pointerInput(state.path) {
+                        detectTapGestures(onDoubleTap = { onEdit(state.path) })
+                    }
                     .verticalScroll(scrollState)
                     .padding(horizontal = 16.dp, vertical = 12.dp)
             ) {

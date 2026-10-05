@@ -83,7 +83,7 @@
     <string name="settings_preview_range_hint">正文预览在列表中的截取长度（20～300）</string>
     <string name="settings_default_note_name">默认新建笔记名</string>
     <string name="settings_default_note_name_subtitle">当前：%1$s</string>
-    <string name="settings_default_note_name_hint">支持日期变量：yyyy（年）MM（月）dd（日）HH（时）mm（分）ss（秒），如 yyyyMMdd 生成 20261005；普通字母需用英文单引号包裹，如 \'Notes\'</string>
+    <string name="settings_default_note_name_hint">用 $ 包裹日期变量：yyyy（年）MM（月）dd（日）HH（时）mm（分）ss（秒），如 日记$yyyyMMdd$ 生成 日记20261005；$ 之外的字符（含英文字母）原样保留</string>
     <string name="dialog_note_name_label">笔记名称</string>
     <string name="settings_sort_order">默认排序方式</string>
     <string name="settings_sort_subtitle">主页右上角可随时切换</string>
@@ -111,6 +111,8 @@
     <string name="sync_start">立即同步</string>
     <string name="sync_no_vault">尚未选择 Vault 目录，请先回到门禁页选择。</string>
     <string name="sync_plan_title">待执行操作预览</string>
+    <string name="sync_dialog_scanning">正在扫描两端差异</string>
+    <string name="sync_dialog_executing">正在同步</string>
     <string name="sync_counts_line">上传 %1$d · 下载 %2$d · 删除云端 %3$d · 本地回收站 %4$d · 冲突副本 %5$d</string>
     <string name="sync_plan_more">列表较长，仅显示前 %1$d 条操作</string>
     <string name="sync_plan_empty">两端已一致，本次无需任何操作。</string>

@@ -38,9 +38,9 @@ fun AzNotesNavHost(
             HomeScreen(
                 onOpenFile = { navController.navigate(Routes.reader(it)) },
                 onOpenEditor = { path, fresh -> navController.navigate(Routes.editor(path, fresh)) },
-                onSettings = { navController.navigate(Routes.SETTINGS) },
-                // 主页右上角 = 立即同步（进页自动开始扫描）
-                onSync = { navController.navigate(Routes.sync(autoStart = true)) }
+                // 主页右上角“立即同步”在本页以弹窗完成（扫描 → 确认 → 执行），无需导航；
+                // 同步配置从抽屉 → 设置 → 同步进入
+                onSettings = { navController.navigate(Routes.SETTINGS) }
             )
         }
 
@@ -76,7 +76,7 @@ fun AzNotesNavHost(
             SettingsScreen(
                 viewModel = hiltViewModel(),
                 onBack = { navController.popBackStack() },
-                onSync = { navController.navigate(Routes.sync(autoStart = false)) },
+                onSync = { navController.navigate(Routes.SYNC) },
                 onChangeVault = {
                     // 清掉主界面与设置页，回到门禁重新选择 Vault
                     navController.navigate(Routes.GATE) {
@@ -86,17 +86,8 @@ fun AzNotesNavHost(
             )
         }
 
-        composable(
-            route = Routes.SYNC,
-            arguments = listOf(
-                navArgument("autoStart") {
-                    type = NavType.BoolType
-                    defaultValue = false
-                }
-            )
-        ) { entry ->
+        composable(Routes.SYNC) {
             SyncScreen(
-                autoStart = entry.arguments?.getBoolean("autoStart") ?: false,
                 onBack = { navController.popBackStack() },
                 viewModel = hiltViewModel()
             )

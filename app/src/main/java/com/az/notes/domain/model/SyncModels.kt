@@ -49,7 +49,9 @@ data class SyncOp(
 data class SyncPlan(
     val ops: List<SyncOp>,
     val scannedLocal: Int,
-    val scannedRemote: Int
+    val scannedRemote: Int,
+    /** 需要用户知晓的扫描限制提醒（如服务端分页截断），无则为 null。 */
+    val warning: String? = null
 ) {
     val uploadCount: Int get() = ops.count { it.type == SyncOpType.UPLOAD }
     val downloadCount: Int get() = ops.count { it.type == SyncOpType.DOWNLOAD }

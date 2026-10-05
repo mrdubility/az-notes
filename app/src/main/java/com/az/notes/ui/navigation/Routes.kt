@@ -8,8 +8,8 @@ object Routes {
     const val HOME = "home"                 // 主界面（抽屉菜单 + 笔记列表）
     const val SETTINGS = "settings"
 
-    /** 同步页；autoStart=true 表示从主页“立即同步”入口进入，进页自动开始扫描。 */
-    const val SYNC = "sync?autoStart={autoStart}"
+    /** 同步设置页（服务器 / 账号 / 策略 / 手动同步 / 日志）；从设置 → 同步进入。 */
+    const val SYNC = "sync"
 
     private const val READER_BASE = "reader"
     private const val EDITOR_BASE = "editor"
@@ -25,6 +25,4 @@ object Routes {
     fun reader(path: String): String = "$READER_BASE/${Uri.encode(path)}"
     fun editor(path: String, fresh: Boolean = false): String =
         "$EDITOR_BASE/${Uri.encode(path)}?fresh=$fresh"
-
-    fun sync(autoStart: Boolean): String = "sync?autoStart=$autoStart"
 }

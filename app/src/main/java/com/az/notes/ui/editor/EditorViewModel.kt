@@ -3,7 +3,9 @@ package com.az.notes.ui.editor
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.az.notes.data.settings.SettingsRepository
 import com.az.notes.data.storage.VaultRepository
+import com.az.notes.data.sync.SyncEngine
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -11,6 +13,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -31,11 +34,14 @@ data class EditorUiState(
 
 /**
  * 编辑页 ViewModel（§5.3）。源码编辑 + 停止输入 1.5s 自动保存（原子写）。
+ * 重命名成功后同样把改名同步到云端（MOVE），避免下次同步退化为删除 + 重传。
  */
 @HiltViewModel
 class EditorViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
-    private val vaultRepository: VaultRepository
+    private val vaultRepository: VaultRepository,
+    private val settingsRepository: SettingsRepository,
+    private val syncEngine: SyncEngine
 ) : ViewModel() {
 
     private var absolutePath: String =
@@ -127,7 +133,8 @@ class EditorViewModel @Inject constructor(
 
     /**
      * 重命名当前笔记（编辑页标题入口）：
-     * 清洗输入 → 先落盘未保存内容 → 同目录改名 → 更新内部路径（后续自动保存写新路径）。
+     * 清洗输入 → 先落盘未保存内容 → 同目录改名 → 更新内部路径（后续自动保存写新路径）
+     * → 后台把改名同步到云端。
      */
     fun rename(input: String) {
         viewModelScope.launch {
@@ -154,6 +161,7 @@ class EditorViewModel @Inject constructor(
                 }
             }.getOrDefault(false)
             if (ok) {
+                val oldPath = src.absolutePath
                 absolutePath = target.absolutePath
                 _state.update {
                     it.copy(
@@ -163,9 +171,22 @@ class EditorViewModel @Inject constructor(
                         message = "已重命名为「$newName」"
                     )
                 }
+                syncRemoteRename(oldPath, absolutePath)
             } else {
                 _state.update { it.copy(message = "重命名失败（可能存在同名项）") }
             }
+        }
+    }
+
+    /**
+     * 把本地改名同步到云端（MOVE + 基线路径重映射）。后台执行、不阻塞编辑；
+     * 未配置同步或失败时静默跳过（同步日志可查），由下次常规同步兜底。
+     */
+    private fun syncRemoteRename(oldAbsPath: String, newAbsPath: String) {
+        viewModelScope.launch {
+            val vault = runCatching { settingsRepository.settings.first().vaultPath }.getOrNull()
+            if (vault.isNullOrBlank()) return@launch
+            runCatching { syncEngine.applyRemoteRename(vault, oldAbsPath, newAbsPath) }
         }
     }
 
