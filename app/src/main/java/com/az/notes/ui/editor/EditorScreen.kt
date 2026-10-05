@@ -328,6 +328,7 @@ private fun FindBar(
 }
 
 /** 底部工具条：撤销 / 重做、标记插入（光标 / 选区跟随）、缩进与插入类快捷操作。 */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun EditorToolbar(textState: TextFieldState) {
     Row(
@@ -528,42 +529,66 @@ private object MarkdownListContinuation : InputTransformation {
     private val prefixRegex = Regex("^(\\s*)([-+*]|>|\\d+[.)])(\\s+)(\\[[ xX]\\]\\s+)?")
 
     override fun TextFieldBuffer.transformInput() {
-        // 只处理“恰好插入一个换行”的输入（跳过删除 / 替换 / 多字符粘贴）
-        if (length != originalValue.length + 1) return
         val new = asCharSequence().toString()
-        val old = originalValue.toString()
-        var insertAt = 0
+        val selAfter = selection
+        // 快速排除：只有“光标紧随换行”的输入才与回车续行相关，其余按键零开销放行
+        if (!selAfter.collapsed || selAfter.min == 0 || new[selAfter.min - 1] != '\n') return
+        // 取编辑前文本：先整体回退缓冲区（originalValue 为 internal 不可用），
+        // 随后在回退状态上重建本次编辑（需要时合并续行内容），撤销仍为一步到位
+        revertAllChanges()
+        val old = asCharSequence().toString()
+
+        // 定位首个差异点，识别“恰好插入单个 '\n'、其余内容不变”
+        var p = 0
         val limit = minOf(old.length, new.length - 1)
-        while (insertAt < limit && old[insertAt] == new[insertAt]) insertAt++
-        if (new[insertAt] != '\n') return
-        for (i in insertAt until old.length) if (old[i] != new[i + 1]) return
-        // 光标必须紧随换行（排除单字符粘贴等非回车场景）
-        if (!selection.collapsed || selection.min != insertAt + 1) return
-        // 回车前光标所在行的内容
-        var lineStart = insertAt
-        while (lineStart > 0 && old[lineStart - 1] != '\n') lineStart--
-        val lineText = old.substring(lineStart, insertAt)
-        val match = prefixRegex.find(lineText) ?: return
-        val indent = match.groupValues[1]
-        val marker = match.groupValues[2]
-        val taskMark = match.groupValues[4]
-        if (match.value.length == lineText.length) {
-            // 空列表项回车：移除本行前缀退出列表，仅保留用户输入的换行
-            val removed = insertAt - lineStart
-            replace(lineStart, insertAt, "")
-            selection = TextRange((insertAt + 1 - removed).coerceAtLeast(0))
-        } else {
-            val nextMarker = if (marker.first().isDigit()) {
-                val number = marker.dropLast(1).toIntOrNull()
-                if (number == null) marker else "${number + 1}${marker.last()}"
-            } else {
-                marker
+        while (p < limit && old[p] == new[p]) p++
+        val tailMatches = new.substring(p + 1) == old.substring(p)
+        val singleEnter = new.length == old.length + 1 && tailMatches && new[p] == '\n'
+
+        if (singleEnter && selAfter.min == p + 1) {
+            // 回车前光标所在行的内容
+            var lineStart = p
+            while (lineStart > 0 && old[lineStart - 1] != '\n') lineStart--
+            val lineText = old.substring(lineStart, p)
+            val match = prefixRegex.find(lineText)
+            when {
+                match == null -> {
+                    // 非列表行：等价于用户原本的回车
+                    replace(p, p, "\n")
+                    selection = selAfter
+                }
+                match.value.length == lineText.length -> {
+                    // 空列表项回车：移除本行前缀退出列表，仅保留换行
+                    replace(lineStart, p, "\n")
+                    selection = TextRange(lineStart + 1)
+                }
+                else -> {
+                    val indent = match.groupValues[1]
+                    val marker = match.groupValues[2]
+                    val nextMarker = if (marker.first().isDigit()) {
+                        val number = marker.dropLast(1).toIntOrNull()
+                        if (number == null) marker else "${number + 1}${marker.last()}"
+                    } else {
+                        marker
+                    }
+                    val task = if (match.groupValues[4].isNotEmpty()) "[ ] " else ""
+                    val continuation = indent + nextMarker + " " + task
+                    replace(p, p, "\n" + continuation)
+                    selection = TextRange(p + 1 + continuation.length)
+                }
             }
-            val task = if (taskMark.isNotEmpty()) "[ ] " else ""
-            val continuation = indent + nextMarker + " " + task
-            replace(insertAt + 1, insertAt + 1, continuation)
-            selection = TextRange(insertAt + 1 + continuation.length)
+            return
         }
+
+        // 其它涉及换行的编辑（多字符粘贴 / 删除 / 替换）：按首尾公共段差异恢复原文
+        var prefix = 0
+        while (prefix < old.length && prefix < new.length && old[prefix] == new[prefix]) prefix++
+        var suffix = 0
+        while (suffix < old.length - prefix && suffix < new.length - prefix &&
+            old[old.length - 1 - suffix] == new[new.length - 1 - suffix]
+        ) suffix++
+        replace(prefix, old.length - suffix, new.substring(prefix, new.length - suffix))
+        selection = selAfter
     }
 }
 
