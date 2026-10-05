@@ -11,6 +11,9 @@
     <!-- Vault 选择 -->
     <string name="vault_title">选择 Vault 目录</string>
     <string name="vault_path_hint">Vault 绝对路径</string>
+    <string name="vault_pick_hint">点击下方按钮，从系统选择器中挑选你的 Obsidian 仓库（Vault）文件夹。</string>
+    <string name="vault_pick_empty">尚未选择目录</string>
+    <string name="vault_pick_button">选择文件夹</string>
     <string name="vault_pick_common">常用目录</string>
     <string name="vault_open">打开</string>
 
@@ -77,10 +80,13 @@
     <string name="settings_preview_chars">预览字符数</string>
     <string name="settings_preview_chars_value">%1$d 字符</string>
     <string name="settings_preview_range_hint">正文预览在列表中的截取长度（20～300）</string>
+    <string name="settings_default_note_name">默认新建笔记名</string>
+    <string name="settings_default_note_name_subtitle">当前：%1$s</string>
+    <string name="dialog_note_name_label">笔记名称</string>
     <string name="settings_sort_order">默认排序方式</string>
     <string name="settings_sort_subtitle">主页右上角可随时切换</string>
     <string name="settings_sync">同步</string>
-    <string name="settings_sync_subtitle">配置后台同步（M3 里程碑接入）</string>
+    <string name="settings_sync_subtitle">WebDAV / 坚果云配置与手动同步</string>
     <string name="settings_vault">Vault 目录</string>
     <string name="settings_vault_unset">未设置</string>
     <string name="settings_change_vault">更换目录</string>
@@ -88,7 +94,29 @@
     <string name="settings_about">关于</string>
     <string name="settings_about_subtitle">Az Notes · 本地 Markdown 笔记 · 数据不离开设备</string>
 
-    <!-- 同步（占位） -->
+    <!-- 同步（M3：坚果云 / 通用 WebDAV） -->
     <string name="sync_title">WebDAV 同步</string>
-    <string name="sync_coming_soon">同步引擎（坚果云 / 通用 WebDAV）将在 M3 里程碑接入，当前为界面占位。</string>
+    <string name="sync_section_server">服务器</string>
+    <string name="sync_server_url">服务器地址</string>
+    <string name="sync_username">账号</string>
+    <string name="sync_password">应用密码</string>
+    <string name="sync_remote_dir">远端目录</string>
+    <string name="sync_preset_nutstore">使用坚果云预设</string>
+    <string name="sync_test">测试连接</string>
+    <string name="sync_section_policy">同步策略</string>
+    <string name="sync_mode_row">同步模式</string>
+    <string name="sync_section_run">手动同步</string>
+    <string name="sync_start">立即同步</string>
+    <string name="sync_no_vault">尚未选择 Vault 目录，请先回到门禁页选择。</string>
+    <string name="sync_plan_title">待执行操作预览</string>
+    <string name="sync_counts_line">上传 %1$d · 下载 %2$d · 删除云端 %3$d · 本地回收站 %4$d · 冲突副本 %5$d</string>
+    <string name="sync_plan_more">列表较长，仅显示前 %1$d 条操作</string>
+    <string name="sync_plan_empty">两端已一致，本次无需任何操作。</string>
+    <string name="sync_confirm_execute">确认执行</string>
+    <string name="sync_done_title">同步完成</string>
+    <string name="sync_summary_failed">失败 %1$d 项，详见下方日志</string>
+    <string name="sync_error_title">同步失败</string>
+    <string name="sync_log_title">同步日志</string>
+    <string name="sync_log_empty">暂无同步记录</string>
+    <string name="sync_result_dismiss">收起</string>
 </resources>

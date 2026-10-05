@@ -5,20 +5,24 @@ import androidx.room.RoomDatabase
 
 /**
  * 应用本地数据库（§4.2）。
- * Demo（M1/M2）阶段先落 `file_index` 与 `read_progress` 两张表；
- * `sync_baseline` / `sync_log` / `conflict_record` / `move_hint` 随 M3 同步引擎接入时补充。
+ * v2：随 M3 同步引擎接入 `sync_baseline` / `sync_log` 两张表
+ * （`conflict_record` / `move_hint` 留待 M4）。
  */
 @Database(
     entities = [
         FileIndexEntity::class,
-        ReadProgressEntity::class
+        ReadProgressEntity::class,
+        SyncBaselineEntity::class,
+        SyncLogEntity::class
     ],
-    version = 1,
+    version = 2,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun fileIndexDao(): FileIndexDao
     abstract fun readProgressDao(): ReadProgressDao
+    abstract fun syncBaselineDao(): SyncBaselineDao
+    abstract fun syncLogDao(): SyncLogDao
 
     companion object {
         const val NAME = "az_notes.db"

@@ -39,5 +39,9 @@ class SettingsViewModel @Inject constructor(
     fun setSortOrder(order: NoteSortOrder) =
         viewModelScope.launch { settingsRepository.setSortOrder(order) }
 
+    /** 默认新建笔记名。 */
+    fun setDefaultNoteName(name: String) =
+        viewModelScope.launch { settingsRepository.setDefaultNoteName(name) }
+
     fun resetVault() = viewModelScope.launch { settingsRepository.setVaultPath(null) }
 }

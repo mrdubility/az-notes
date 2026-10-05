@@ -5,6 +5,8 @@ import androidx.room.Room
 import com.az.notes.data.local.AppDatabase
 import com.az.notes.data.local.FileIndexDao
 import com.az.notes.data.local.ReadProgressDao
+import com.az.notes.data.local.SyncBaselineDao
+import com.az.notes.data.local.SyncLogDao
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -29,4 +31,10 @@ object DatabaseModule {
 
     @Provides
     fun provideReadProgressDao(db: AppDatabase): ReadProgressDao = db.readProgressDao()
+
+    @Provides
+    fun provideSyncBaselineDao(db: AppDatabase): SyncBaselineDao = db.syncBaselineDao()
+
+    @Provides
+    fun provideSyncLogDao(db: AppDatabase): SyncLogDao = db.syncLogDao()
 }

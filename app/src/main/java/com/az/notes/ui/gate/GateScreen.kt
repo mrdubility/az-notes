@@ -1,6 +1,8 @@
 package com.az.notes.ui.gate
 
 import android.content.Intent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -23,7 +25,6 @@ import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -39,13 +40,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.az.notes.R
+import com.az.notes.util.SafPathUtils
 import com.az.notes.util.StoragePermission
 
 /**
@@ -106,8 +108,8 @@ fun GateScreen(
                 )
             } else {
                 VaultStep(
-                    initialPath = settings.vaultPath ?: StoragePermission.externalStorageRoot(),
-                    onOpen = { path ->
+                    currentPath = settings.vaultPath,
+                    onPick = { path ->
                         if (!viewModel.openVault(path)) {
                             invalidPath = path
                         } else {
@@ -174,9 +176,17 @@ private fun PermissionStep(onGrant: () -> Unit) {
     }
 }
 
+/**
+ * Vault 目录选择：使用系统自带文件夹选择器（OpenDocumentTree），
+ * 不让用户手填路径；选中后将 SAF 树 Uri 换算为文件系统绝对路径再回调。
+ */
 @Composable
-private fun VaultStep(initialPath: String, onOpen: (String) -> Unit) {
-    var path by remember { mutableStateOf(initialPath) }
+private fun VaultStep(currentPath: String?, onPick: (String) -> Unit) {
+    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        if (uri != null) {
+            SafPathUtils.treeUriToPath(uri)?.let(onPick)
+        }
+    }
     ElevatedCard(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.elevatedCardColors()
@@ -192,24 +202,24 @@ private fun VaultStep(initialPath: String, onOpen: (String) -> Unit) {
                 Text(stringResource(R.string.vault_title),
                     style = MaterialTheme.typography.titleLarge)
             }
-            OutlinedTextField(
-                value = path,
-                onValueChange = { path = it },
-                label = { Text(stringResource(R.string.vault_path_hint)) },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
+            Text(
+                text = stringResource(R.string.vault_pick_hint),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Text(
-                text = "常见 Vault 位置：/storage/emulated/0/Documents 下的 Obsidian 库目录",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Start
+                text = currentPath ?: stringResource(R.string.vault_pick_empty),
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (currentPath != null) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
             )
             Button(
-                onClick = { onOpen(path) },
+                onClick = { launcher.launch(null) },
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text(stringResource(R.string.vault_open))
+                Text(stringResource(R.string.vault_pick_button))
             }
         }
     }

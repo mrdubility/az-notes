@@ -16,6 +16,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.Sort
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.outlined.ColorLens
+import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.FormatLineSpacing
 import androidx.compose.material.icons.outlined.FormatSize
@@ -31,6 +32,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
@@ -75,6 +77,7 @@ fun SettingsScreen(
     var fontSizeDialog by remember { mutableStateOf(false) }
     var lineHeightDialog by remember { mutableStateOf(false) }
     var previewDialog by remember { mutableStateOf(false) }
+    var noteNameDialog by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -152,6 +155,17 @@ fun SettingsScreen(
                     title = stringResource(R.string.settings_preview_chars),
                     subtitle = stringResource(R.string.settings_preview_chars_value, settings.previewChars),
                     onClick = { previewDialog = true }
+                )
+            }
+            item {
+                SettingsRow(
+                    icon = Icons.Outlined.Edit,
+                    title = stringResource(R.string.settings_default_note_name),
+                    subtitle = stringResource(
+                        R.string.settings_default_note_name_subtitle,
+                        settings.defaultNoteName
+                    ),
+                    onClick = { noteNameDialog = true }
                 )
             }
             item {
@@ -289,6 +303,19 @@ fun SettingsScreen(
             onDismiss = { previewDialog = false }
         )
     }
+
+    if (noteNameDialog) {
+        TextInputDialog(
+            title = stringResource(R.string.settings_default_note_name),
+            initial = settings.defaultNoteName,
+            label = stringResource(R.string.dialog_note_name_label),
+            onConfirm = {
+                viewModel.setDefaultNoteName(it)
+                noteNameDialog = false
+            },
+            onDismiss = { noteNameDialog = false }
+        )
+    }
 }
 
 @Composable
@@ -373,6 +400,40 @@ private fun <T> ChoiceSheet(
             }
         }
     }
+}
+
+/** 文本输入对话框（默认新建笔记名等）。 */
+@Composable
+private fun TextInputDialog(
+    title: String,
+    initial: String,
+    label: String,
+    onConfirm: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var draft by remember(initial) { mutableStateOf(initial) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            OutlinedTextField(
+                value = draft,
+                onValueChange = { draft = it },
+                singleLine = true,
+                label = { Text(label) }
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(draft) }) {
+                Text(stringResource(R.string.action_confirm))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.action_cancel))
+            }
+        }
+    )
 }
 
 /** 滑杆对话框（字号 / 行间距 / 预览字符数）。 */

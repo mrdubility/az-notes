@@ -38,7 +38,8 @@ fun AzNotesNavHost(
             HomeScreen(
                 onOpenFile = { navController.navigate(Routes.reader(it)) },
                 onOpenEditor = { navController.navigate(Routes.editor(it)) },
-                onSettings = { navController.navigate(Routes.SETTINGS) }
+                onSettings = { navController.navigate(Routes.SETTINGS) },
+                onSync = { navController.navigate(Routes.SYNC) }
             )
         }
 
@@ -79,7 +80,10 @@ fun AzNotesNavHost(
         }
 
         composable(Routes.SYNC) {
-            SyncScreen(onBack = { navController.popBackStack() })
+            SyncScreen(
+                onBack = { navController.popBackStack() },
+                viewModel = hiltViewModel()
+            )
         }
     }
 }

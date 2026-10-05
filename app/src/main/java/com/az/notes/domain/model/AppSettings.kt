@@ -23,5 +23,7 @@ data class AppSettings(
     /** 列表中正文预览截取的字符数 */
     val previewChars: Int = 100,
     /** 列表默认排序方式 */
-    val sortOrder: NoteSortOrder = NoteSortOrder.MODIFIED_DESC
+    val sortOrder: NoteSortOrder = NoteSortOrder.MODIFIED_DESC,
+    /** 新建笔记时使用的默认文件名（不含扩展名，重名自动追加序号） */
+    val defaultNoteName: String = "新建笔记"
 )

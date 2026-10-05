@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 import javax.inject.Inject
 
 data class EditorUiState(
@@ -23,7 +24,9 @@ data class EditorUiState(
     val dirty: Boolean = false,
     val saving: Boolean = false,
     val savedAt: Long? = null,
-    val error: String? = null
+    val error: String? = null,
+    /** 一次性提示（Snackbar），消费后清空 */
+    val message: String? = null
 )
 
 /**
@@ -35,7 +38,7 @@ class EditorViewModel @Inject constructor(
     private val vaultRepository: VaultRepository
 ) : ViewModel() {
 
-    private val absolutePath: String =
+    private var absolutePath: String =
         savedStateHandle.get<String>("path") ?: ""
 
     private val _state = MutableStateFlow(EditorUiState(path = absolutePath))
@@ -94,5 +97,53 @@ class EditorViewModel @Inject constructor(
         _state.update { it.copy(text = if (s.isEmpty()) prefix else "$s\n$prefix", dirty = true) }
         autoSaveJob?.cancel()
         autoSaveJob = viewModelScope.launch { delay(1500); save() }
+    }
+
+    /**
+     * 重命名当前笔记（编辑页标题入口）：
+     * 清洗输入 → 先落盘未保存内容 → 同目录改名 → 更新内部路径（后续自动保存写新路径）。
+     */
+    fun rename(input: String) {
+        viewModelScope.launch {
+            val current = _state.value
+            if (current.loading) return@launch
+            val cleaned = VaultRepository.sanitizeEntryName(input)
+            if (cleaned == null) {
+                _state.update { it.copy(message = "名称无效") }
+                return@launch
+            }
+            val newName = VaultRepository.ensureMarkdownName(cleaned)
+            val src = File(absolutePath)
+            if (newName == src.name) return@launch
+            val target = File(src.parentFile, newName)
+            if (target.exists()) {
+                _state.update { it.copy(message = "已存在同名文件") }
+                return@launch
+            }
+            val ok = runCatching {
+                withContext(Dispatchers.IO) {
+                    // 先保存未落盘内容，避免改名后丢失编辑
+                    if (current.dirty) vaultRepository.writeTextAtomically(absolutePath, current.text)
+                    vaultRepository.rename(absolutePath, target.absolutePath)
+                }
+            }.getOrDefault(false)
+            if (ok) {
+                absolutePath = target.absolutePath
+                _state.update {
+                    it.copy(
+                        path = absolutePath,
+                        dirty = false,
+                        savedAt = System.currentTimeMillis(),
+                        message = "已重命名为「$newName」"
+                    )
+                }
+            } else {
+                _state.update { it.copy(message = "重命名失败（可能存在同名项）") }
+            }
+        }
+    }
+
+    fun consumeMessage() {
+        _state.update { it.copy(message = null) }
     }
 }

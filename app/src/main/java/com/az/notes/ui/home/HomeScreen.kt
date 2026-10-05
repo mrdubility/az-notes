@@ -32,6 +32,7 @@ import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Sync
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DrawerValue
@@ -47,7 +48,6 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.NavigationDrawerItem
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -78,6 +78,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.az.notes.R
 import com.az.notes.domain.model.FileNode
 import com.az.notes.domain.model.NoteSortOrder
+import com.az.notes.ui.components.RenameDialog
 import com.az.notes.ui.notes.NoteListItem
 import com.az.notes.ui.notes.NotesUiState
 import com.az.notes.ui.notes.NotesViewModel
@@ -97,6 +98,7 @@ fun HomeScreen(
     onOpenFile: (String) -> Unit,
     onOpenEditor: (String) -> Unit,
     onSettings: () -> Unit,
+    onSync: () -> Unit,
     viewModel: NotesViewModel = hiltViewModel()
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -130,7 +132,8 @@ fun HomeScreen(
     ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
-            ModalDrawerSheet {
+            // 抽屉按“大半屏”宽度拉出（约 72%），不覆盖全屏
+            ModalDrawerSheet(modifier = Modifier.fillMaxWidth(0.72f)) {
                 DrawerContent(
                     vaultPath = state.vaultPath,
                     onSettings = {
@@ -159,7 +162,8 @@ fun HomeScreen(
                         viewModel.clearSearch()
                     },
                     onSearchQueryChange = viewModel::onSearchQueryChange,
-                    onSortSelected = viewModel::setSortOrder
+                    onSortSelected = viewModel::setSortOrder,
+                    onSync = onSync
                 )
             },
             floatingActionButton = {
@@ -229,7 +233,7 @@ fun HomeScreen(
     }
 }
 
-/** 顶栏：抽屉/返回 + 标题（或搜索输入）+ 搜索/排序。 */
+/** 顶栏：抽屉/返回 + 标题（或搜索输入）+ 同步/搜索/排序。 */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun HomeTopBar(
@@ -243,7 +247,8 @@ private fun HomeTopBar(
     onSearchOpen: () -> Unit,
     onSearchClose: () -> Unit,
     onSearchQueryChange: (String) -> Unit,
-    onSortSelected: (NoteSortOrder) -> Unit
+    onSortSelected: (NoteSortOrder) -> Unit,
+    onSync: () -> Unit
 ) {
     var sortMenuOpen by remember { mutableStateOf(false) }
 
@@ -297,6 +302,9 @@ private fun HomeTopBar(
                     }
                 }
             } else {
+                IconButton(onClick = onSync) {
+                    Icon(Icons.Outlined.Sync, stringResource(R.string.action_sync))
+                }
                 IconButton(onClick = onSearchOpen) {
                     Icon(Icons.Outlined.Search, stringResource(R.string.home_search_hint))
                 }
@@ -596,36 +604,7 @@ private fun SheetAction(
     }
 }
 
-@Composable
-private fun RenameDialog(
-    initialName: String,
-    onDismiss: () -> Unit,
-    onConfirm: (String) -> Unit
-) {
-    var text by remember(initialName) { mutableStateOf(initialName) }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.action_rename)) },
-        text = {
-            OutlinedTextField(
-                value = text,
-                onValueChange = { text = it },
-                singleLine = true,
-                label = { Text(stringResource(R.string.rename_hint)) }
-            )
-        },
-        confirmButton = {
-            TextButton(onClick = { onConfirm(text) }) {
-                Text(stringResource(R.string.action_confirm))
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text(stringResource(R.string.action_cancel))
-            }
-        }
-    )
-}
+// 重命名对话框由 ui/components/RenameDialog 提供（主页与编辑页共用）
 
 @Composable
 private fun DeleteDialog(

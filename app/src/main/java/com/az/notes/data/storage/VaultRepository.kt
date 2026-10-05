@@ -21,6 +21,15 @@ class VaultRepository @Inject constructor() {
         /** 忽略的配置目录（§1.1） */
         private val IGNORED_DIRS = setOf(".obsidian", ".trash", ".git")
 
+        /**
+         * 数据安全红线：本应用持有“所有文件访问”权限，
+         * 破坏性操作（删除 / 重命名 / 新建）绝不允许触碰以下系统与存储根路径。
+         */
+        private val PROTECTED_PATHS = setOf(
+            "/", "/sdcard", "/mnt", "/storage", "/storage/emulated",
+            "/system", "/data", "/vendor", "/proc", "/sys"
+        )
+
         private val MARKDOWN_EXT = setOf("md", "markdown", "mdown", "mkd")
         private val ATTACHMENT_EXT = setOf(
             "png", "jpg", "jpeg", "gif", "webp", "svg", "bmp",
@@ -33,6 +42,33 @@ class VaultRepository @Inject constructor() {
 
         fun isAttachmentName(name: String): Boolean =
             name.substringAfterLast('.', "").lowercase() in ATTACHMENT_EXT
+
+        /** 清洗用户输入的文件 / 文件夹名：过滤路径分隔符与非法字符；空或 '.' 开头返回 null。 */
+        fun sanitizeEntryName(input: String): String? = input.trim()
+            .filterNot { it in "\\/:*?\"<>|" }
+            .trim()
+            .takeIf { it.isNotEmpty() && !it.startsWith(".") }
+
+        /** 笔记名补全 .md 后缀（已带 Markdown 扩展则保留）。 */
+        fun ensureMarkdownName(name: String): String =
+            if (isMarkdownName(name)) name else "$name.md"
+
+        /**
+         * 敏感路径护栏：delete / rename / createFile 等破坏性操作前的最后一道防线。
+         * 命中系统目录、外部存储根或其祖先路径时返回 false（禁止操作）。
+         */
+        fun isSafeTarget(path: String): Boolean {
+            val abs = File(path).absolutePath
+            if (abs.isBlank() || abs == "/") return false
+            if (abs in PROTECTED_PATHS) return false
+            val segments = abs.split('/').filter { it.isNotEmpty() }
+            if (segments.size < 3) return false
+            val storageRoot = runCatching {
+                android.os.Environment.getExternalStorageDirectory().absolutePath
+            }.getOrNull()
+            if (storageRoot != null && (abs == storageRoot || storageRoot.startsWith("$abs/"))) return false
+            return true
+        }
     }
 
     /** 校验目录存在且可读。 */
@@ -136,11 +172,35 @@ class VaultRepository @Inject constructor() {
 
     /**
      * 读取列表预览：剥离 Markdown 标记后截取前 [maxChars] 个字符。
+     *
+     * 性能：只读取文件头部有限字节（maxChars × 6 + 2KB 上限），
+     * 避免为生成预览而整读大文件——笔记数量多 / 单文件大时显著省 IO。
      * 读取失败（编码异常等）时返回空串，不影响列表渲染。
      */
     fun readPreview(absolutePath: String, maxChars: Int): String {
-        val text = runCatching { readText(absolutePath) }.getOrElse { return "" }
+        val text = runCatching { readPrefix(absolutePath, maxChars) }.getOrElse { return "" }
         return PreviewExtractor.extract(text, maxChars)
+    }
+
+    /** 读取文件头部有限字节并解码为 UTF-8 文本（剔除末尾被截断的多字节字符）。 */
+    private fun readPrefix(absolutePath: String, maxChars: Int): String {
+        val file = File(absolutePath)
+        if (!file.isFile) return ""
+        val byteLimit = (maxChars.toLong() * 6 + 2048)
+            .coerceAtMost(file.length().coerceAtLeast(1L))
+            .toInt()
+        val buffer = ByteArray(byteLimit)
+        val read = file.inputStream().use { input ->
+            var offset = 0
+            while (offset < buffer.size) {
+                val n = input.read(buffer, offset, buffer.size - offset)
+                if (n < 0) break
+                offset += n
+            }
+            offset
+        }
+        if (read <= 0) return ""
+        return String(buffer, 0, read, StandardCharsets.UTF_8).trimEnd('\uFFFD')
     }
 
     /**
@@ -161,8 +221,9 @@ class VaultRepository @Inject constructor() {
         }
     }
 
-    /** 新建 Markdown 文件（§5.1 长按菜单）。 */
+    /** 新建 Markdown 文件（§5.1 长按菜单）；敏感路径护栏兜底。 */
     fun createFile(absolutePath: String, initialContent: String = ""): Boolean {
+        if (!isSafeTarget(absolutePath)) return false
         val f = File(absolutePath)
         if (f.exists()) return false
         return runCatching { writeTextAtomically(absolutePath, initialContent); true }
@@ -174,10 +235,11 @@ class VaultRepository @Inject constructor() {
      * `新建笔记.md` → `新建笔记 2.md` → `新建笔记 3.md` …
      */
     fun uniqueNotePath(dirPath: String, baseName: String = "新建笔记"): String {
-        var candidate = File(dirPath, "$baseName.md")
+        val safeBase = sanitizeEntryName(baseName) ?: "新建笔记"
+        var candidate = File(dirPath, "$safeBase.md")
         var index = 2
         while (candidate.exists()) {
-            candidate = File(dirPath, "$baseName $index.md")
+            candidate = File(dirPath, "$safeBase $index.md")
             index++
         }
         return candidate.absolutePath
@@ -187,15 +249,18 @@ class VaultRepository @Inject constructor() {
     fun createDirectory(absolutePath: String): Boolean =
         File(absolutePath).mkdirs()
 
-    /** 重命名 / 移动。 */
+    /** 重命名 / 移动。破坏性操作，先经敏感路径护栏校验（数据安全红线）。 */
     fun rename(oldPath: String, newPath: String): Boolean {
+        if (!isSafeTarget(oldPath) || !isSafeTarget(newPath)) return false
         val src = File(oldPath)
         if (!src.exists()) return false
+        if (File(newPath).exists()) return false
         return src.renameTo(File(newPath))
     }
 
-    /** 删除（二次确认由 UI 层负责）。 */
+    /** 删除（二次确认由 UI 层负责；敏感路径护栏兜底，绝不触碰 Vault 之外的系统文件）。 */
     fun delete(absolutePath: String): Boolean {
+        if (!isSafeTarget(absolutePath)) return false
         val f = File(absolutePath)
         return if (f.isDirectory) f.deleteRecursively() else f.delete()
     }

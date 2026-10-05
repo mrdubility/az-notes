@@ -217,7 +217,7 @@ class NotesViewModel @Inject constructor(
             val dir = _state.value.currentDir ?: vault
             val createdPath = runCatching {
                 withContext(Dispatchers.IO) {
-                    val path = vaultRepository.uniqueNotePath(dir)
+                    val path = vaultRepository.uniqueNotePath(dir, currentSettings.defaultNoteName)
                     if (vaultRepository.createFile(path, "")) path else null
                 }
             }.getOrNull()
@@ -235,12 +235,9 @@ class NotesViewModel @Inject constructor(
     }
 
     private fun resolveNewName(node: FileNode, input: String): String? {
-        val cleaned = input.trim()
-            .filterNot { it in "\\/:*?\"<>|" }
-            .trim()
-        if (cleaned.isEmpty() || cleaned.startsWith(".")) return null
+        val cleaned = VaultRepository.sanitizeEntryName(input) ?: return null
         if (node.isDirectory) return cleaned
-        return if (VaultRepository.isMarkdownName(cleaned)) cleaned else "$cleaned.md"
+        return VaultRepository.ensureMarkdownName(cleaned)
     }
 
     private fun reloadItems(pullRefresh: Boolean) {
@@ -260,7 +257,9 @@ class NotesViewModel @Inject constructor(
             }
             result.fold(
                 onSuccess = { items ->
+                    // 目录结构先渲染（预览为空占位），避免大量文件时等待全部预览读完
                     _state.update { it.copy(items = items, loading = false, refreshing = false, error = null) }
+                    fillPreviews()
                 },
                 onFailure = { e ->
                     _state.update {
@@ -271,13 +270,34 @@ class NotesViewModel @Inject constructor(
         }
     }
 
+    /**
+     * 预览增量填充：目录先行渲染后，逐条在 IO 上读取正文前缀并更新状态。
+     * 大批量文件时用户可立即看到列表，无需等待所有预览读完（性能优化）；
+     * 期间若切换目录 / 重新加载，本 Job 被取消，循环自然终止。
+     */
+    private suspend fun fillPreviews() {
+        val previewChars = currentSettings.previewChars
+        val targets = _state.value.items.filter { it.node.isMarkdown && it.preview.isEmpty() }
+        for (item in targets) {
+            val preview = withContext(Dispatchers.IO) {
+                vaultRepository.readPreview(item.node.absolutePath, previewChars)
+            }
+            if (preview.isEmpty()) continue
+            _state.update { s ->
+                val index = s.items.indexOfFirst { it.node.absolutePath == item.node.absolutePath }
+                if (index < 0) return@update s
+                val updated = s.items.toMutableList()
+                updated[index] = updated[index].copy(preview = preview)
+                s.copy(items = updated)
+            }
+        }
+    }
+
     private fun loadListing(dirPath: String, vaultPath: String): List<NoteListItem> {
         val nodes = vaultRepository.listChildren(dirPath, vaultPath)
         val folders = nodes.filter { it.isDirectory }.sortedBy { it.name.lowercase() }
         val notes = sortNotes(nodes.filter { it.isMarkdown }, currentSettings.sortOrder)
-        val previewChars = currentSettings.previewChars
-        return folders.map { NoteListItem(it) } +
-            notes.map { NoteListItem(it, preview = vaultRepository.readPreview(it.absolutePath, previewChars)) }
+        return folders.map { NoteListItem(it) } + notes.map { NoteListItem(it) }
     }
 
     private fun sortNotes(notes: List<FileNode>, order: NoteSortOrder): List<FileNode> = when (order) {

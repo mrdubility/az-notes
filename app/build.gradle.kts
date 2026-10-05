@@ -111,6 +111,9 @@ dependencies {
     implementation(libs.markdown.renderer)
     implementation(libs.markdown.renderer.m3)
 
+    // --- 同步（M3：WebDAV / OkHttp）---
+    implementation(libs.okhttp)
+
     // --- 测试 ---
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)

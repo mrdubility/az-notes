@@ -32,9 +32,10 @@ splashscreen = "1.0.1"
 # --- 三方库 ---
 coil = "3.2.0"
 markdownRenderer = "0.35.0"
-# 同步引擎 (M3) 引入时启用: dav4jvm 需要 core library desugaring
-# dav4jvm = "4.1.1"
-# okhttp = "4.12.0"
+# 同步引擎 (M3)：直接用 OkHttp 实现 WebDAV 原语（PROPFIND/GET/PUT/DELETE/MKCOL）。
+# 不引入 dav4jvm：其 4.x 需要 core library desugaring，云编译链路风险高；
+# OkHttp（纯 JVM，免脱糖）已覆盖 M3 所需全部协议能力。
+okhttp = "4.12.0"
 
 # --- 编译目标 ---
 compileSdk = "35"
@@ -85,6 +86,9 @@ coil-compose = { group = "io.coil-kt.coil3", name = "coil-compose", version.ref 
 # --- Markdown 渲染 ---
 markdown-renderer = { group = "com.mikepenz", name = "multiplatform-markdown-renderer", version.ref = "markdownRenderer" }
 markdown-renderer-m3 = { group = "com.mikepenz", name = "multiplatform-markdown-renderer-m3", version.ref = "markdownRenderer" }
+
+# --- 同步 (M3, WebDAV) ---
+okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
 
 # --- 测试 ---
 junit = { group = "junit", name = "junit", version = "4.13.2" }

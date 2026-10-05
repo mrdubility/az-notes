@@ -1,5 +1,6 @@
 package com.az.notes.ui.editor
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -28,6 +29,7 @@ import androidx.compose.material.icons.filled.FormatSize
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.InsertLink
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material3.CircularProgressIndicator
@@ -38,9 +40,12 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -61,6 +66,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.az.notes.R
+import com.az.notes.ui.components.RenameDialog
 import com.az.notes.ui.theme.LocalReadingStyle
 
 /**
@@ -76,9 +82,19 @@ fun EditorScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val readingStyle = LocalReadingStyle.current
+    val snackbarHostState = remember { SnackbarHostState() }
 
     var searchActive by rememberSaveable { mutableStateOf(false) }
     var query by rememberSaveable { mutableStateOf("") }
+    var renameDialog by remember { mutableStateOf(false) }
+
+    // 一次性提示（重命名结果等）
+    LaunchedEffect(state.message) {
+        state.message?.let {
+            snackbarHostState.showSnackbar(it)
+            viewModel.consumeMessage()
+        }
+    }
 
     val matchCount = remember(state.text, query) {
         if (query.isBlank()) 0
@@ -87,13 +103,27 @@ fun EditorScreen(
     val highlightColor = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.35f)
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = {
-                    Text(
-                        text = displayTitle(state.path),
-                        maxLines = 1, overflow = TextOverflow.Ellipsis
-                    )
+                    // 点击标题可重命名文件（铅笔图标为可点击提示）
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.clickable { renameDialog = true }
+                    ) {
+                        Text(
+                            text = displayTitle(state.path),
+                            maxLines = 1, overflow = TextOverflow.Ellipsis
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Icon(
+                            Icons.Outlined.Edit,
+                            contentDescription = stringResource(R.string.action_rename),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
                 },
                 navigationIcon = {
                     IconButton(onClick = { viewModel.save(); onBack() }) {
@@ -180,6 +210,17 @@ fun EditorScreen(
             EditorToolbar(viewModel)
         }
     }
+
+    if (renameDialog) {
+        RenameDialog(
+            initialName = editableName(state.path),
+            onDismiss = { renameDialog = false },
+            onConfirm = { newName ->
+                viewModel.rename(newName)
+                renameDialog = false
+            }
+        )
+    }
 }
 
 /** 查找栏：实时高亮全部匹配并显示数量。 */
@@ -265,4 +306,8 @@ private class HighlightTransformation(
 
 /** 标题：文件名去掉 .md 扩展名。 */
 private fun displayTitle(path: String): String =
+    path.substringAfterLast('/').let { if (it.endsWith(".md")) it.dropLast(3) else it }
+
+/** 重命名输入框初始值：文件名去掉 .md 扩展名。 */
+private fun editableName(path: String): String =
     path.substringAfterLast('/').let { if (it.endsWith(".md")) it.dropLast(3) else it }

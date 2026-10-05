@@ -16,7 +16,7 @@
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="29" />
 
-    <!-- WebDAV 同步（M3）需要网络；此处先声明，Demo 阶段仅同步页占位 -->
+    <!-- WebDAV 同步（M3）：坚果云 / 通用 WebDAV 需要网络 -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 

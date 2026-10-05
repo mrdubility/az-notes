@@ -41,6 +41,7 @@ class SettingsRepository @Inject constructor(
         val DYNAMIC_COLOR = booleanPreferencesKey("dynamic_color")
         val PREVIEW_CHARS = intPreferencesKey("preview_chars")
         val SORT_ORDER = stringPreferencesKey("note_sort_order")
+        val DEFAULT_NOTE_NAME = stringPreferencesKey("default_note_name")
     }
 
     private val dataStore = context.dataStore
@@ -62,7 +63,9 @@ class SettingsRepository @Inject constructor(
                 previewChars = prefs[Keys.PREVIEW_CHARS] ?: 100,
                 sortOrder = prefs[Keys.SORT_ORDER]
                     ?.let { runCatching { NoteSortOrder.valueOf(it) }.getOrNull() }
-                    ?: NoteSortOrder.MODIFIED_DESC
+                    ?: NoteSortOrder.MODIFIED_DESC,
+                defaultNoteName = prefs[Keys.DEFAULT_NOTE_NAME]?.takeIf { it.isNotBlank() }
+                    ?: "新建笔记"
             )
         }
 
@@ -76,6 +79,12 @@ class SettingsRepository @Inject constructor(
     suspend fun setDynamicColor(enabled: Boolean) = edit { it[Keys.DYNAMIC_COLOR] = enabled }
     suspend fun setPreviewChars(chars: Int) = edit { it[Keys.PREVIEW_CHARS] = chars.coerceIn(20, 300) }
     suspend fun setSortOrder(order: NoteSortOrder) = edit { it[Keys.SORT_ORDER] = order.name }
+
+    /** 默认新建笔记名（清洗非法字符；空则回退默认值）。 */
+    suspend fun setDefaultNoteName(name: String) = edit {
+        val cleaned = name.trim().take(60)
+        it[Keys.DEFAULT_NOTE_NAME] = cleaned.ifBlank { "新建笔记" }
+    }
 
     private suspend fun edit(block: (androidx.datastore.preferences.core.MutablePreferences) -> Unit) {
         dataStore.edit(block)
