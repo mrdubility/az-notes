@@ -349,7 +349,8 @@ class SyncEngine @Inject constructor(
         var moved = 0
         var failed = 0
         val failedPaths = HashSet<String>()
-        // 上传成功的路径：远端属性已变，提交基线时需逐个 Depth:0 刷新
+        // 上传成功的路径 + 成功改名的远端新路径：远端属性已变（后者不在扫描快照中），
+        // 提交基线时需逐个 Depth:0 刷新
         val uploadedPaths = HashSet<String>()
         // 执行成功的冲突副本：全部操作完成后统一计算指纹写入 conflict_record（§4.2）
         val conflictOps = ArrayList<SyncOp>()
@@ -401,7 +402,12 @@ class SyncEngine @Inject constructor(
                         conflictCopies++
                         conflictOps += op
                     }
-                    SyncOpType.MOVE_LOCAL, SyncOpType.MOVE_REMOTE -> moved++
+                    SyncOpType.MOVE_LOCAL -> moved++
+                    SyncOpType.MOVE_REMOTE -> {
+                        moved++
+                        // 远端路径已变且不在 plan 扫描快照中：提交基线时重新 stat 新路径
+                        uploadedPaths += op.path
+                    }
                 }
             } else {
                 failed++

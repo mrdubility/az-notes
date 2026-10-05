@@ -95,7 +95,7 @@ data class SyncOp(
     val type: SyncOpType,
     /** 目标相对路径（'/' 分隔，无前导斜杠）；MOVE 类为目标路径 */
     val path: String,
-    /** 附加说明：如冲突副本的保留方向（local=保留本地旧版 / remote=保留远端旧版） */
+    /** 附加说明：如冲突副本的胜方（local=保留本地版本 / remote=保留云端版本） */
     val detail: String? = null,
     /** MOVE_LOCAL / MOVE_REMOTE：源相对路径（[path] 为目标路径） */
     val moveFrom: String? = null,
