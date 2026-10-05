@@ -122,6 +122,8 @@ dependencies {
     // --- Markdown 渲染 ---
     implementation(libs.markdown.renderer)
     implementation(libs.markdown.renderer.m3)
+    // AST 解析（大纲/块锚点）：与渲染库同一解析链
+    implementation(libs.jetbrains.markdown)
 
     // --- 同步（M3：WebDAV / OkHttp）---
     implementation(libs.okhttp)

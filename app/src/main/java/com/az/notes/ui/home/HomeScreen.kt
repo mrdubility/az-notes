@@ -2,6 +2,7 @@ package com.az.notes.ui.home
 
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -26,11 +27,13 @@ import androidx.compose.material.icons.automirrored.outlined.Sort
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.CreateNewFolder
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material.icons.outlined.RestoreFromTrash
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Sync
@@ -51,6 +54,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.NavigationDrawerItem
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -70,7 +74,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -109,6 +117,7 @@ import java.util.Locale
 fun HomeScreen(
     onOpenFile: (String) -> Unit,
     onOpenEditor: (path: String, fresh: Boolean) -> Unit,
+    onOpenTrash: () -> Unit,
     onSettings: () -> Unit,
     viewModel: NotesViewModel = hiltViewModel(),
     syncViewModel: SyncViewModel = hiltViewModel()
@@ -116,6 +125,8 @@ fun HomeScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     val syncState by syncViewModel.state.collectAsStateWithLifecycle()
     val conflicts by syncViewModel.conflicts.collectAsStateWithLifecycle()
+    val syncRunning by viewModel.syncRunning.collectAsStateWithLifecycle()
+    val syncCompletedAt by viewModel.syncCompletedAt.collectAsStateWithLifecycle()
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -125,6 +136,8 @@ fun HomeScreen(
     var actionTarget by remember { mutableStateOf<NoteListItem?>(null) }
     var renameTarget by remember { mutableStateOf<NoteListItem?>(null) }
     var deleteTarget by remember { mutableStateOf<NoteListItem?>(null) }
+    var fabMenuOpen by remember { mutableStateOf(false) }
+    var newFolderDialog by remember { mutableStateOf(false) }
 
     // 首次进入 / 从阅读、编辑页返回时静默重读当前目录，保证修改时间与预览最新
     LaunchedEffect(Unit) { viewModel.onScreenEntered() }
@@ -144,9 +157,9 @@ fun HomeScreen(
         syncViewModel.clearTestMessage()
     }
 
-    // 同步完成后静默重读当前目录（可能从云端拉下了新文件）
-    LaunchedEffect(syncState.phase) {
-        if (syncState.phase == SyncPhase.DONE) viewModel.onScreenEntered()
+    // 同步（手动或自动）完成后静默重读当前目录（可能从云端拉下了新文件）
+    LaunchedEffect(syncCompletedAt) {
+        if (syncCompletedAt > 0L) viewModel.onScreenEntered()
     }
 
     // 系统返回：优先退出搜索，其次返回上一级目录
@@ -163,6 +176,10 @@ fun HomeScreen(
             ModalDrawerSheet(modifier = Modifier.fillMaxWidth(0.72f)) {
                 DrawerContent(
                     vaultPath = state.vaultPath,
+                    onTrash = {
+                        scope.launch { drawerState.close() }
+                        onOpenTrash()
+                    },
                     onSettings = {
                         scope.launch { drawerState.close() }
                         onSettings()
@@ -191,16 +208,41 @@ fun HomeScreen(
                     onSearchQueryChange = viewModel::onSearchQueryChange,
                     onSortSelected = viewModel::setSortOrder,
                     onSync = { syncViewModel.startSync() },
-                    conflictCount = conflicts.size
+                    conflictCount = conflicts.size,
+                    syncActive = syncRunning
                 )
             },
             floatingActionButton = {
-                FloatingActionButton(
-                    onClick = { viewModel.createNote { path -> onOpenEditor(path, true) } },
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    contentColor = MaterialTheme.colorScheme.onPrimary
-                ) {
-                    Icon(Icons.Filled.Add, stringResource(R.string.home_new_note))
+                Box {
+                    FloatingActionButton(
+                        onClick = { fabMenuOpen = true },
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary
+                    ) {
+                        Icon(Icons.Filled.Add, stringResource(R.string.home_new_note))
+                    }
+                    // FAB 菜单：新建笔记 / 新建文件夹（底部空间不足时自动向上展开）
+                    DropdownMenu(
+                        expanded = fabMenuOpen,
+                        onDismissRequest = { fabMenuOpen = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.home_new_note)) },
+                            leadingIcon = { Icon(Icons.Outlined.Edit, null) },
+                            onClick = {
+                                fabMenuOpen = false
+                                viewModel.createNote { path -> onOpenEditor(path, true) }
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.home_new_folder)) },
+                            leadingIcon = { Icon(Icons.Outlined.CreateNewFolder, null) },
+                            onClick = {
+                                fabMenuOpen = false
+                                newFolderDialog = true
+                            }
+                        )
+                    }
                 }
             },
             snackbarHost = { SnackbarHost(snackbarHostState) }
@@ -260,6 +302,16 @@ fun HomeScreen(
         )
     }
 
+    if (newFolderDialog) {
+        NewFolderDialog(
+            onDismiss = { newFolderDialog = false },
+            onConfirm = { name ->
+                viewModel.createFolder(name)
+                newFolderDialog = false
+            }
+        )
+    }
+
     // —— 立即同步：进度 → 变更清单确认 → 结果，三段弹窗均不离开本页 ——
     when (syncState.phase) {
         SyncPhase.SCANNING -> SyncProgressDialog(
@@ -312,7 +364,9 @@ private fun HomeTopBar(
     onSortSelected: (NoteSortOrder) -> Unit,
     onSync: () -> Unit,
     /** 未处理的冲突记录数：> 0 时同步图标显示角标（§5.7）。 */
-    conflictCount: Int
+    conflictCount: Int,
+    /** 是否有同步正在执行：执行中把同步图标替换为环形进度指示。 */
+    syncActive: Boolean
 ) {
     var sortMenuOpen by remember { mutableStateOf(false) }
 
@@ -366,7 +420,7 @@ private fun HomeTopBar(
                     }
                 }
             } else {
-                IconButton(onClick = onSync) {
+                IconButton(onClick = onSync, enabled = !syncActive) {
                     BadgedBox(
                         badge = {
                             if (conflictCount > 0) {
@@ -374,7 +428,14 @@ private fun HomeTopBar(
                             }
                         }
                     ) {
-                        Icon(Icons.Outlined.Sync, stringResource(R.string.action_sync_now))
+                        if (syncActive) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(20.dp),
+                                strokeWidth = 2.dp
+                            )
+                        } else {
+                            Icon(Icons.Outlined.Sync, stringResource(R.string.action_sync_now))
+                        }
                     }
                 }
                 IconButton(onClick = onSearchOpen) {
@@ -411,10 +472,11 @@ private fun HomeTopBar(
     )
 }
 
-/** 抽屉内容：Vault 信息 + 设置入口（后续可扩展更多条目）。 */
+/** 抽屉内容：Vault 信息 + 回收站 / 设置入口。 */
 @Composable
 private fun DrawerContent(
     vaultPath: String?,
+    onTrash: () -> Unit,
     onSettings: () -> Unit
 ) {
     Column(Modifier.fillMaxWidth().padding(vertical = 16.dp)) {
@@ -438,6 +500,13 @@ private fun DrawerContent(
         Spacer(Modifier.height(8.dp))
         HorizontalDivider()
         Spacer(Modifier.height(8.dp))
+        NavigationDrawerItem(
+            label = { Text(stringResource(R.string.trash_title)) },
+            icon = { Icon(Icons.Outlined.RestoreFromTrash, null) },
+            selected = false,
+            onClick = onTrash,
+            modifier = Modifier.padding(horizontal = 12.dp)
+        )
         NavigationDrawerItem(
             label = { Text(stringResource(R.string.action_settings)) },
             icon = { Icon(Icons.Outlined.Settings, null) },
@@ -600,6 +669,10 @@ private fun NoteRow(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f)
                 )
+                item.progress?.let { percent ->
+                    ReadingProgressDot(progress = percent)
+                    Spacer(Modifier.width(6.dp))
+                }
                 IconButton(onClick = onMore) {
                     Icon(
                         imageVector = Icons.Outlined.MoreVert,
@@ -716,6 +789,68 @@ private fun DeleteDialog(
             }
         }
     )
+}
+
+/** 新建文件夹对话框（在当前目录创建；名称清洗由 ViewModel 负责）。 */
+@Composable
+private fun NewFolderDialog(
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit
+) {
+    var text by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.home_new_folder)) },
+        text = {
+            OutlinedTextField(
+                value = text,
+                onValueChange = { text = it },
+                singleLine = true,
+                label = { Text(stringResource(R.string.rename_hint)) }
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(text) }) {
+                Text(stringResource(R.string.action_confirm))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.action_cancel))
+            }
+        }
+    )
+}
+
+/** 阅读进度小圆点：环形弧长表示 1–99% 的阅读进度。 */
+@Composable
+private fun ReadingProgressDot(progress: Int) {
+    val active = MaterialTheme.colorScheme.primary
+    val track = MaterialTheme.colorScheme.surfaceVariant
+    val strokeWidth = 2.dp
+    Canvas(modifier = Modifier.size(16.dp)) {
+        val strokePx = strokeWidth.toPx()
+        val inset = strokePx / 2f
+        val arcSize = Size(size.width - strokePx, size.height - strokePx)
+        drawArc(
+            color = track,
+            startAngle = 0f,
+            sweepAngle = 360f,
+            useCenter = false,
+            topLeft = Offset(inset, inset),
+            size = arcSize,
+            style = Stroke(strokePx)
+        )
+        drawArc(
+            color = active,
+            startAngle = -90f,
+            sweepAngle = progress / 100f * 360f,
+            useCenter = false,
+            topLeft = Offset(inset, inset),
+            size = arcSize,
+            style = Stroke(strokePx, cap = StrokeCap.Round)
+        )
+    }
 }
 
 private fun NoteSortOrder.label(): String = when (this) {

@@ -33,6 +33,7 @@
     <string name="home_search_empty">未找到匹配的笔记</string>
     <string name="home_search_tip">输入关键字，跨目录搜索全部笔记</string>
     <string name="home_new_note">新建笔记</string>
+    <string name="home_new_folder">新建文件夹</string>
     <string name="home_no_vault">未选择 Vault 目录</string>
     <string name="home_folder">文件夹</string>
     <string name="action_menu">菜单</string>
@@ -145,4 +146,15 @@
     <string name="sync_conflict_clear">清除全部</string>
     <string name="sync_conflict_desc">以下文件曾发生冲突，败方版本已另存为冲突副本，请人工合并后清除记录。</string>
     <string name="sync_mb_unit">%1$d MB</string>
+
+    <!-- 回收站（恢复被云端删除波及的本地文件） -->
+    <string name="trash_title">回收站</string>
+    <string name="trash_empty">回收站为空</string>
+    <string name="trash_empty_hint">同步时被云端删除的本地文件会暂存在这里，保留 30 天，可随时恢复。</string>
+    <string name="trash_restore">恢复</string>
+    <string name="trash_delete">删除</string>
+    <string name="trash_purge">清空回收站</string>
+    <string name="trash_purge_confirm">将清空回收站内的全部文件，此操作不可撤销。</string>
+    <string name="trash_delete_confirm">将永久删除「%1$s」，此操作不可撤销。</string>
+    <string name="trash_batch_summary">%1$d 个文件</string>
 </resources>

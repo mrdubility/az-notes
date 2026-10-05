@@ -11,6 +11,9 @@ object Routes {
     /** 同步设置页（服务器 / 账号 / 策略 / 手动同步 / 日志）；从设置 → 同步进入。 */
     const val SYNC = "sync"
 
+    /** 回收站：同步时被远端删除波及的本地文件（保留 30 天）；从抽屉进入。 */
+    const val TRASH = "trash"
+
     private const val READER_BASE = "reader"
     private const val EDITOR_BASE = "editor"
 

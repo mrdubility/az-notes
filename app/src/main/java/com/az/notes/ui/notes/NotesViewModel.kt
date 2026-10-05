@@ -2,9 +2,11 @@ package com.az.notes.ui.notes
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.az.notes.data.local.ProgressRepository
 import com.az.notes.data.settings.SettingsRepository
 import com.az.notes.data.storage.VaultRepository
 import com.az.notes.data.sync.SyncEngine
+import com.az.notes.data.sync.SyncRunNotifier
 import com.az.notes.domain.model.AppSettings
 import com.az.notes.domain.model.FileNode
 import com.az.notes.domain.model.NoteSortOrder
@@ -20,12 +22,17 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import javax.inject.Inject
+import kotlin.math.roundToInt
 
-/** 主页列表条目：文件夹仅展示名称；笔记附带正文预览与（搜索时的）所在目录。 */
+/**
+ * 主页列表条目：文件夹仅展示名称；笔记附带正文预览、（搜索时的）所在目录
+ * 与阅读进度（仅 1–99 时显示小圆点，其它情况为 null）。
+ */
 data class NoteListItem(
     val node: FileNode,
     val preview: String = "",
-    val subtitle: String? = null
+    val subtitle: String? = null,
+    val progress: Int? = null
 )
 
 data class NotesUiState(
@@ -51,19 +58,28 @@ data class NotesUiState(
 
 /**
  * 主页笔记列表 ViewModel：单层列目录（隐藏 '.' 开头项）、
- * 排序（修改时间/名称）、递归搜索、重命名、删除、新建笔记。
+ * 排序（修改时间/名称）、递归搜索、重命名、删除、新建笔记/文件夹。
  * 所有文件操作在 `Dispatchers.IO` 执行；偏好变化（Vault / 排序 / 预览字符数）自动重载。
  * 重命名成功后额外把改名同步到云端（MOVE），避免下次同步退化为删除 + 重传。
+ * 同步运行状态来自 [SyncRunNotifier]：顶栏“同步中”指示与同步完成后刷新。
  */
 @HiltViewModel
 class NotesViewModel @Inject constructor(
     private val vaultRepository: VaultRepository,
     private val settingsRepository: SettingsRepository,
-    private val syncEngine: SyncEngine
+    private val syncEngine: SyncEngine,
+    private val progressRepository: ProgressRepository,
+    syncRunNotifier: SyncRunNotifier
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(NotesUiState())
     val state: StateFlow<NotesUiState> = _state.asStateFlow()
+
+    /** 是否有同步（手动/自动）正在执行：主页顶栏“同步中”指示。 */
+    val syncRunning: StateFlow<Boolean> = syncRunNotifier.running
+
+    /** 最近一次同步完成时间戳（0 = 进程内尚未完成过）：据此在同步完成后静默刷新列表。 */
+    val syncCompletedAt: StateFlow<Long> = syncRunNotifier.lastCompletedAt
 
     private var currentSettings = AppSettings()
     private var initialized = false
@@ -160,11 +176,13 @@ class NotesViewModel @Inject constructor(
                 runCatching {
                     withContext(Dispatchers.IO) {
                         val previewChars = currentSettings.previewChars
+                        val progress = progressByPath()
                         vaultRepository.searchNotes(vault, trimmed).map { node ->
                             NoteListItem(
                                 node = node,
                                 preview = vaultRepository.readPreview(node.absolutePath, previewChars),
-                                subtitle = node.relativePath.substringBeforeLast('/', "").ifEmpty { null }
+                                subtitle = node.relativePath.substringBeforeLast('/', "").ifEmpty { null },
+                                progress = progress[node.absolutePath]
                             )
                         }
                     }
@@ -248,6 +266,31 @@ class NotesViewModel @Inject constructor(
             }
             reloadItems(pullRefresh = false)
             onCreated(createdPath)
+        }
+    }
+
+    /** 在当前目录新建文件夹并刷新列表（名称经 [VaultRepository.sanitizeEntryName] 清洗）。 */
+    fun createFolder(input: String) {
+        viewModelScope.launch {
+            val vault = currentSettings.vaultPath
+            if (vault.isNullOrBlank()) {
+                _state.update { it.copy(message = "未选择 Vault 目录") }
+                return@launch
+            }
+            val name = VaultRepository.sanitizeEntryName(input)
+            if (name == null) {
+                _state.update { it.copy(message = "名称无效") }
+                return@launch
+            }
+            val dir = _state.value.currentDir ?: vault
+            val target = File(dir, name)
+            val ok = withContext(Dispatchers.IO) {
+                !target.exists() && vaultRepository.createDirectory(target.absolutePath)
+            }
+            _state.update {
+                it.copy(message = if (ok) "已新建文件夹「$name」" else "新建文件夹失败（可能存在同名项）")
+            }
+            if (ok) reloadItems(pullRefresh = false)
         }
     }
 
@@ -353,12 +396,26 @@ class NotesViewModel @Inject constructor(
         pending.clear()
     }
 
-    private fun loadListing(dirPath: String, vaultPath: String): List<NoteListItem> {
+    private suspend fun loadListing(dirPath: String, vaultPath: String): List<NoteListItem> {
         val nodes = vaultRepository.listChildren(dirPath, vaultPath)
         val folders = nodes.filter { it.isDirectory }.sortedBy { it.name.lowercase() }
         val notes = sortNotes(nodes.filter { it.isMarkdown }, currentSettings.sortOrder)
-        return folders.map { NoteListItem(it) } + notes.map { NoteListItem(it) }
+        val progress = progressByPath()
+        return folders.map { NoteListItem(it) } + notes.map {
+            NoteListItem(it, progress = progress[it.absolutePath])
+        }
     }
+
+    /**
+     * 读取全部阅读进度 → 绝对路径映射；0%（未读）与 ≥99%（已读完）不显示小圆点，
+     * 取整后钳制在 1–99，保证圆点弧长可见。
+     */
+    private suspend fun progressByPath(): Map<String, Int> =
+        runCatching {
+            progressRepository.all()
+                .filter { it.percent > 0.01f && it.percent < 0.99f }
+                .associate { it.path to (it.percent * 100).roundToInt().coerceIn(1, 99) }
+        }.getOrDefault(emptyMap())
 
     private fun sortNotes(notes: List<FileNode>, order: NoteSortOrder): List<FileNode> = when (order) {
         NoteSortOrder.MODIFIED_DESC -> notes.sortedByDescending { it.lastModified }

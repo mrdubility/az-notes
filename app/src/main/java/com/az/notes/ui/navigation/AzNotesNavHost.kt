@@ -15,6 +15,7 @@ import com.az.notes.ui.home.HomeScreen
 import com.az.notes.ui.reader.ReaderScreen
 import com.az.notes.ui.settings.SettingsScreen
 import com.az.notes.ui.sync.SyncScreen
+import com.az.notes.ui.trash.TrashScreen
 
 /** 全局导航图（§5.7）。path 参数以 URL 编码存放绝对路径。 */
 @Composable
@@ -38,6 +39,7 @@ fun AzNotesNavHost(
             HomeScreen(
                 onOpenFile = { navController.navigate(Routes.reader(it)) },
                 onOpenEditor = { path, fresh -> navController.navigate(Routes.editor(path, fresh)) },
+                onOpenTrash = { navController.navigate(Routes.TRASH) },
                 // 主页右上角“立即同步”在本页以弹窗完成（扫描 → 确认 → 执行），无需导航；
                 // 同步配置从抽屉 → 设置 → 同步进入
                 onSettings = { navController.navigate(Routes.SETTINGS) }
@@ -83,6 +85,13 @@ fun AzNotesNavHost(
                         popUpTo(Routes.HOME) { inclusive = true }
                     }
                 }
+            )
+        }
+
+        composable(Routes.TRASH) {
+            TrashScreen(
+                viewModel = hiltViewModel(),
+                onBack = { navController.popBackStack() }
             )
         }
 

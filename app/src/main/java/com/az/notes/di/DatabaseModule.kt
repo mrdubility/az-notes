@@ -4,7 +4,6 @@ import android.content.Context
 import androidx.room.Room
 import com.az.notes.data.local.AppDatabase
 import com.az.notes.data.local.ConflictRecordDao
-import com.az.notes.data.local.FileIndexDao
 import com.az.notes.data.local.ReadProgressDao
 import com.az.notes.data.local.SyncBaselineDao
 import com.az.notes.data.local.SyncLogDao
@@ -26,9 +25,6 @@ object DatabaseModule {
         Room.databaseBuilder(context, AppDatabase::class.java, AppDatabase.NAME)
             .fallbackToDestructiveMigration(dropAllTables = true)
             .build()
-
-    @Provides
-    fun provideFileIndexDao(db: AppDatabase): FileIndexDao = db.fileIndexDao()
 
     @Provides
     fun provideReadProgressDao(db: AppDatabase): ReadProgressDao = db.readProgressDao()

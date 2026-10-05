@@ -1,0 +1,93 @@
+package com.az.notes.ui.trash
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.az.notes.data.settings.SettingsRepository
+import com.az.notes.data.storage.TrashBatch
+import com.az.notes.data.storage.TrashItem
+import com.az.notes.data.storage.TrashRepository
+import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import javax.inject.Inject
+
+data class TrashUiState(
+    val vaultPath: String? = null,
+    val loading: Boolean = true,
+    val batches: List<TrashBatch> = emptyList(),
+    /** 一次性提示（Snackbar），消费后清空 */
+    val message: String? = null
+)
+
+/** 回收站 ViewModel：列表 / 恢复 / 删除 / 清空；文件操作在 IO 上执行。 */
+@HiltViewModel
+class TrashViewModel @Inject constructor(
+    private val trashRepository: TrashRepository,
+    private val settingsRepository: SettingsRepository
+) : ViewModel() {
+
+    private val _state = MutableStateFlow(TrashUiState())
+    val state: StateFlow<TrashUiState> = _state.asStateFlow()
+
+    init {
+        reload()
+    }
+
+    /** 重新读取回收站目录。 */
+    fun reload() {
+        viewModelScope.launch {
+            val vault = runCatching { settingsRepository.settings.first().vaultPath }.getOrNull()
+            val batches = withContext(Dispatchers.IO) { trashRepository.batches() }
+            _state.update { it.copy(vaultPath = vault, loading = false, batches = batches) }
+        }
+    }
+
+    /** 恢复到 Vault 原路径（目标同名时由仓库自动加 (restored) 后缀）。 */
+    fun restore(item: TrashItem) {
+        viewModelScope.launch {
+            val vault = _state.value.vaultPath
+            if (vault.isNullOrBlank()) {
+                _state.update { it.copy(message = "未选择 Vault 目录") }
+                return@launch
+            }
+            val ok = withContext(Dispatchers.IO) { trashRepository.restore(vault, item) }
+            _state.update {
+                it.copy(message = if (ok) "已恢复「${item.relativePath}」" else "恢复失败")
+            }
+            if (ok) refreshBatches()
+        }
+    }
+
+    /** 永久删除单条（UI 已二次确认）。 */
+    fun delete(item: TrashItem) {
+        viewModelScope.launch {
+            val ok = withContext(Dispatchers.IO) { trashRepository.delete(item) }
+            _state.update { it.copy(message = if (ok) "已删除「${item.relativePath}」" else "删除失败") }
+            if (ok) refreshBatches()
+        }
+    }
+
+    /** 清空回收站（UI 已二次确认）。 */
+    fun purgeAll() {
+        viewModelScope.launch {
+            val ok = withContext(Dispatchers.IO) { trashRepository.purgeAll() }
+            _state.update { it.copy(message = if (ok) "回收站已清空" else "清空失败") }
+            if (ok) refreshBatches()
+        }
+    }
+
+    fun consumeMessage() {
+        _state.update { it.copy(message = null) }
+    }
+
+    private suspend fun refreshBatches() {
+        val batches = withContext(Dispatchers.IO) { trashRepository.batches() }
+        _state.update { it.copy(batches = batches) }
+    }
+}

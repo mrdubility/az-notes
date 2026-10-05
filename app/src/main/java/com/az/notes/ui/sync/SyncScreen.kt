@@ -257,7 +257,8 @@ fun SyncScreen(
                         modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)
                     )
                 }
-                items(conflicts, key = { it.id }) { record -> ConflictRow(record) }
+                // key 加前缀：两张表自增 id 均从 1 开始，裸 id 会在同一 LazyColumn 内重复导致崩溃
+                items(conflicts, key = { "conflict-${it.id}" }) { record -> ConflictRow(record) }
                 item {
                     TextButton(
                         onClick = viewModel::clearConflicts,
@@ -280,7 +281,7 @@ fun SyncScreen(
                     )
                 }
             } else {
-                items(logs, key = { it.id }) { log -> LogRow(log = log) }
+                items(logs, key = { "log-${it.id}" }) { log -> LogRow(log = log) }
             }
         }
     }

@@ -2,8 +2,8 @@ package com.az.notes.domain.markdown
 
 /**
  * 大纲节点（§5.4）。
- * [blockIndex] 为近似锚点：Demo 阶段以“可见块序号”近似定位，
- * 后续接 mikepenz renderer 的 AST 块可无缝替换为真实块序号。
+ * [blockIndex] 为 Markdown AST 顶层块序号，与预览页 LazyColumn 的块下标一一对应
+ * （与渲染库同一 GFM 解析链），大纲跳转与高亮均按真实锚点工作。
  */
 data class Heading(
     val level: Int,          // 1..6

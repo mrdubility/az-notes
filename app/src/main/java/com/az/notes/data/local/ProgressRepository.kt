@@ -14,6 +14,9 @@ class ProgressRepository @Inject constructor(
 ) {
     fun observe(path: String): Flow<ReadProgressEntity?> = dao.observeProgress(path)
 
+    /** 全量进度（主页列表阅读进度小圆点用）。 */
+    suspend fun all(): List<ReadProgressEntity> = dao.getAll()
+
     suspend fun load(path: String): ReadProgressEntity? = dao.getProgress(path)
 
     suspend fun save(path: String, scrollIndex: Int, scrollOffset: Int, percent: Float) {
