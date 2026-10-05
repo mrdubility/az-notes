@@ -7,10 +7,12 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.floatPreferencesKey
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.az.notes.domain.model.AppSettings
 import com.az.notes.domain.model.FontFamilyPreference
+import com.az.notes.domain.model.NoteSortOrder
 import com.az.notes.domain.model.ThemeMode
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
@@ -37,6 +39,8 @@ class SettingsRepository @Inject constructor(
         val LINE_HEIGHT = floatPreferencesKey("line_height")
         val VAULT_PATH = stringPreferencesKey("vault_path")
         val DYNAMIC_COLOR = booleanPreferencesKey("dynamic_color")
+        val PREVIEW_CHARS = intPreferencesKey("preview_chars")
+        val SORT_ORDER = stringPreferencesKey("note_sort_order")
     }
 
     private val dataStore = context.dataStore
@@ -54,7 +58,11 @@ class SettingsRepository @Inject constructor(
                 fontSizeSp = prefs[Keys.FONT_SIZE] ?: 16f,
                 lineHeightRatio = prefs[Keys.LINE_HEIGHT] ?: 1.5f,
                 vaultPath = prefs[Keys.VAULT_PATH],
-                dynamicColor = prefs[Keys.DYNAMIC_COLOR] ?: true
+                dynamicColor = prefs[Keys.DYNAMIC_COLOR] ?: true,
+                previewChars = prefs[Keys.PREVIEW_CHARS] ?: 100,
+                sortOrder = prefs[Keys.SORT_ORDER]
+                    ?.let { runCatching { NoteSortOrder.valueOf(it) }.getOrNull() }
+                    ?: NoteSortOrder.MODIFIED_DESC
             )
         }
 
@@ -66,6 +74,8 @@ class SettingsRepository @Inject constructor(
         if (path == null) it.remove(Keys.VAULT_PATH) else it[Keys.VAULT_PATH] = path
     }
     suspend fun setDynamicColor(enabled: Boolean) = edit { it[Keys.DYNAMIC_COLOR] = enabled }
+    suspend fun setPreviewChars(chars: Int) = edit { it[Keys.PREVIEW_CHARS] = chars.coerceIn(20, 300) }
+    suspend fun setSortOrder(order: NoteSortOrder) = edit { it[Keys.SORT_ORDER] = order.name }
 
     private suspend fun edit(block: (androidx.datastore.preferences.core.MutablePreferences) -> Unit) {
         dataStore.edit(block)

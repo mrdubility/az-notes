@@ -24,6 +24,34 @@
     <string name="action_back">返回</string>
     <string name="action_save">保存</string>
 
+    <!-- 主页笔记列表 -->
+    <string name="home_search_hint">搜索全部笔记</string>
+    <string name="home_search_empty">未找到匹配的笔记</string>
+    <string name="home_search_tip">输入关键字，跨目录搜索全部笔记</string>
+    <string name="home_new_note">新建笔记</string>
+    <string name="home_no_vault">未选择 Vault 目录</string>
+    <string name="home_folder">文件夹</string>
+    <string name="action_menu">菜单</string>
+    <string name="action_close">关闭</string>
+    <string name="action_more">更多操作</string>
+    <string name="action_rename">重命名</string>
+    <string name="action_delete">删除</string>
+    <string name="action_confirm">确定</string>
+    <string name="action_cancel">取消</string>
+    <string name="rename_hint">名称</string>
+    <string name="delete_note_message">将删除「%1$s」，此操作不可撤销。</string>
+    <string name="delete_folder_message">将删除文件夹「%1$s」及其全部内容，此操作不可撤销。</string>
+    <string name="sort_by">排序方式</string>
+    <string name="sort_modified_desc">修改时间（新 → 旧）</string>
+    <string name="sort_modified_asc">修改时间（旧 → 新）</string>
+    <string name="sort_name_asc">名称（A → Z）</string>
+    <string name="sort_name_desc">名称（Z → A）</string>
+
+    <!-- 编辑页 -->
+    <string name="editor_search_hint">查找正文</string>
+    <string name="editor_search_empty">无匹配</string>
+    <string name="editor_search_matches">共 %1$d 处</string>
+
     <!-- 设置 -->
     <string name="settings_theme">主题</string>
     <string name="settings_theme_system">跟随系统</string>
@@ -35,6 +63,30 @@
     <string name="settings_font_mono">等宽</string>
     <string name="settings_font_size">字号</string>
     <string name="settings_line_height">行高</string>
+
+    <!-- 设置（重设计） -->
+    <string name="settings_appearance">外观</string>
+    <string name="settings_dynamic_color">Material You 动态取色</string>
+    <string name="settings_dynamic_color_subtitle">基于壁纸自动生成配色（Android 12+）</string>
+    <string name="settings_editor_viewer">编辑器和查看器</string>
+    <string name="settings_editor_viewer_subtitle">字体大小 / 行间距</string>
+    <string name="settings_font_size_value">%1$d sp</string>
+    <string name="settings_line_height_value">%.1f 倍</string>
+    <string name="settings_notes_list">笔记列表</string>
+    <string name="settings_notes_list_subtitle">更改笔记在主屏幕上的显示方式</string>
+    <string name="settings_preview_chars">预览字符数</string>
+    <string name="settings_preview_chars_value">%1$d 字符</string>
+    <string name="settings_preview_range_hint">正文预览在列表中的截取长度（20～300）</string>
+    <string name="settings_sort_order">默认排序方式</string>
+    <string name="settings_sort_subtitle">主页右上角可随时切换</string>
+    <string name="settings_sync">同步</string>
+    <string name="settings_sync_subtitle">配置后台同步（M3 里程碑接入）</string>
+    <string name="settings_vault">Vault 目录</string>
+    <string name="settings_vault_unset">未设置</string>
+    <string name="settings_change_vault">更换目录</string>
+    <string name="settings_vault_subtitle_current">正在使用：%1$s</string>
+    <string name="settings_about">关于</string>
+    <string name="settings_about_subtitle">Az Notes · 本地 Markdown 笔记 · 数据不离开设备</string>
 
     <!-- 同步（占位） -->
     <string name="sync_title">WebDAV 同步</string>

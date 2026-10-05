@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.az.notes.data.settings.SettingsRepository
 import com.az.notes.domain.model.AppSettings
 import com.az.notes.domain.model.FontFamilyPreference
+import com.az.notes.domain.model.NoteSortOrder
 import com.az.notes.domain.model.ThemeMode
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
@@ -29,6 +30,14 @@ class SettingsViewModel @Inject constructor(
     fun setLineHeight(ratio: Float) = viewModelScope.launch { settingsRepository.setLineHeight(ratio) }
     fun setDynamicColor(enabled: Boolean) =
         viewModelScope.launch { settingsRepository.setDynamicColor(enabled) }
+
+    /** 列表正文预览字符数（20～300，越界由仓库收敛）。 */
+    fun setPreviewChars(chars: Int) =
+        viewModelScope.launch { settingsRepository.setPreviewChars(chars) }
+
+    /** 列表默认排序方式。 */
+    fun setSortOrder(order: NoteSortOrder) =
+        viewModelScope.launch { settingsRepository.setSortOrder(order) }
 
     fun resetVault() = viewModelScope.launch { settingsRepository.setVaultPath(null) }
 }

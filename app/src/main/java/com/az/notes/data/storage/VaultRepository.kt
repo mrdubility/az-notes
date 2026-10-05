@@ -1,5 +1,6 @@
 package com.az.notes.data.storage
 
+import com.az.notes.domain.markdown.PreviewExtractor
 import com.az.notes.domain.model.FileNode
 import java.io.File
 import java.nio.charset.StandardCharsets
@@ -82,10 +83,64 @@ class VaultRepository @Inject constructor() {
         )
     }
 
+    /**
+     * 单层列出目录内容（主页笔记列表）：仅返回子目录与 Markdown 笔记，
+     * 过滤名称以 '.' 开头的隐藏文件/文件夹（含 [IGNORED_DIRS]）。
+     * [rootPath] 用于计算相对路径；排序由调用方按用户偏好执行。
+     */
+    fun listChildren(dirPath: String, rootPath: String): List<FileNode> {
+        val dir = File(dirPath)
+        if (!dir.isDirectory) return emptyList()
+        val children = dir.listFiles() ?: return emptyList()
+        return children
+            .filter { it.isVisibleEntry() }
+            .filter { it.isDirectory || isMarkdownName(it.name) }
+            .map { toNode(it, relativize(rootPath, it.absolutePath), rootPath, depth = 0) }
+    }
+
+    /**
+     * 递归搜索 Vault 中的 Markdown 笔记（主页搜索），
+     * 按文件名不区分大小写包含 [query]，最多返回 [limit] 条。
+     */
+    fun searchNotes(rootPath: String, query: String, limit: Int = 100): List<FileNode> {
+        val root = File(rootPath)
+        if (!root.isDirectory || query.isBlank()) return emptyList()
+        val out = ArrayList<FileNode>()
+        searchWalk(root, rootPath, query.trim(), limit, out)
+        return out
+    }
+
+    private fun searchWalk(dir: File, rootPath: String, query: String, limit: Int, out: MutableList<FileNode>) {
+        if (out.size >= limit) return
+        val children = dir.listFiles() ?: return
+        for (f in children) {
+            if (out.size >= limit) return
+            if (!f.isVisibleEntry()) continue
+            if (f.isDirectory) {
+                searchWalk(f, rootPath, query, limit, out)
+            } else if (isMarkdownName(f.name) && f.name.contains(query, ignoreCase = true)) {
+                out += toNode(f, relativize(rootPath, f.absolutePath), rootPath, depth = 0)
+            }
+        }
+    }
+
+    /** 隐藏项判定：'.' 开头的名字与 [IGNORED_DIRS]。 */
+    private fun File.isVisibleEntry(): Boolean =
+        !name.startsWith(".") && name !in IGNORED_DIRS
+
     /** 读取文本文件内容（UTF-8 无 BOM，§5.3）。 */
     fun readText(absolutePath: String): String {
         val text = File(absolutePath).readText(StandardCharsets.UTF_8)
         return stripBom(text).normalizeToLf()
+    }
+
+    /**
+     * 读取列表预览：剥离 Markdown 标记后截取前 [maxChars] 个字符。
+     * 读取失败（编码异常等）时返回空串，不影响列表渲染。
+     */
+    fun readPreview(absolutePath: String, maxChars: Int): String {
+        val text = runCatching { readText(absolutePath) }.getOrElse { return "" }
+        return PreviewExtractor.extract(text, maxChars)
     }
 
     /**
@@ -112,6 +167,20 @@ class VaultRepository @Inject constructor() {
         if (f.exists()) return false
         return runCatching { writeTextAtomically(absolutePath, initialContent); true }
             .getOrDefault(false)
+    }
+
+    /**
+     * 生成不与现有文件冲突的新笔记绝对路径：
+     * `新建笔记.md` → `新建笔记 2.md` → `新建笔记 3.md` …
+     */
+    fun uniqueNotePath(dirPath: String, baseName: String = "新建笔记"): String {
+        var candidate = File(dirPath, "$baseName.md")
+        var index = 2
+        while (candidate.exists()) {
+            candidate = File(dirPath, "$baseName $index.md")
+            index++
+        }
+        return candidate.absolutePath
     }
 
     /** 新建目录。 */

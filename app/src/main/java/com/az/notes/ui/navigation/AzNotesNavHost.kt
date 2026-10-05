@@ -37,8 +37,8 @@ fun AzNotesNavHost(
         composable(Routes.HOME) {
             HomeScreen(
                 onOpenFile = { navController.navigate(Routes.reader(it)) },
-                onSettings = { navController.navigate(Routes.SETTINGS) },
-                onSync = { navController.navigate(Routes.SYNC) }
+                onOpenEditor = { navController.navigate(Routes.editor(it)) },
+                onSettings = { navController.navigate(Routes.SETTINGS) }
             )
         }
 
@@ -59,14 +59,22 @@ fun AzNotesNavHost(
         ) {
             EditorScreen(
                 viewModel = hiltViewModel(),
-                onBack = { navController.popBackStack() }
+                onBack = { navController.popBackStack() },
+                onPreview = { path -> navController.navigate(Routes.reader(path)) }
             )
         }
 
         composable(Routes.SETTINGS) {
             SettingsScreen(
                 viewModel = hiltViewModel(),
-                onBack = { navController.popBackStack() }
+                onBack = { navController.popBackStack() },
+                onSync = { navController.navigate(Routes.SYNC) },
+                onChangeVault = {
+                    // 清掉主界面与设置页，回到门禁重新选择 Vault
+                    navController.navigate(Routes.GATE) {
+                        popUpTo(Routes.HOME) { inclusive = true }
+                    }
+                }
             )
         }
 

@@ -137,7 +137,7 @@ private fun Header() {
             style = MaterialTheme.typography.headlineMedium
         )
         Text(
-            text = "读取 Obsidian 库 · 标准 Markdown 显示/编辑 · 目录树与大纲",
+            text = "读取 Obsidian 库 · 标准 Markdown 显示/编辑 · 笔记列表与大纲",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
