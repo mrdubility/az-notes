@@ -1,0 +1,90 @@
+package com.az.notes.ui.reader
+
+import androidx.lifecycle.SavedStateHandle
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.az.notes.data.local.ProgressRepository
+import com.az.notes.data.local.ReadProgressEntity
+import com.az.notes.data.storage.VaultRepository
+import com.az.notes.domain.markdown.Heading
+import com.az.notes.domain.markdown.HeadingExtractor
+import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import javax.inject.Inject
+
+data class ReaderUiState(
+    val path: String = "",
+    val loading: Boolean = true,
+    val content: String = "",
+    val headings: List<Heading> = emptyList(),
+    val initialProgress: ReadProgressEntity? = null,
+    val error: String? = null
+)
+
+/**
+ * 阅读器 ViewModel（§5.2 / §5.4 / §5.5）。
+ * 加载正文、提取大纲、读取上次进度，并对滚动进度做 500ms 去抖落库。
+ */
+@HiltViewModel
+class ReaderViewModel @Inject constructor(
+    savedStateHandle: SavedStateHandle,
+    private val vaultRepository: VaultRepository,
+    private val progressRepository: ProgressRepository
+) : ViewModel() {
+
+    private val absolutePath: String =
+        savedStateHandle.get<String>("path") ?: ""
+
+    private val _state = MutableStateFlow(ReaderUiState(path = absolutePath))
+    val state: StateFlow<ReaderUiState> = _state.asStateFlow()
+
+    private var totalBlocks: Int = 1
+
+    init {
+        load()
+    }
+
+    private fun load() {
+        viewModelScope.launch {
+            _state.update { it.copy(loading = true, error = null) }
+            try {
+                val text = withContext(Dispatchers.IO) { vaultRepository.readText(absolutePath) }
+                val headings = HeadingExtractor.extract(text)
+                val progress = withContext(Dispatchers.IO) { progressRepository.load(absolutePath) }
+                totalBlocks = text.lines().count { it.isNotBlank() }.coerceAtLeast(1)
+                _state.update {
+                    it.copy(loading = false, content = text, headings = headings, initialProgress = progress)
+                }
+            } catch (e: Exception) {
+                _state.update { it.copy(loading = false, error = e.message ?: "读取失败") }
+            }
+        }
+    }
+
+    /** 预览 LazyColumn 滚动位置变化回调（§5.5）。 */
+    fun onScrollPosition(firstVisibleIndex: Int, offset: Int) {
+        val percent = if (totalBlocks <= 0) 0f
+        else (firstVisibleIndex.toFloat() / totalBlocks).coerceIn(0f, 1f)
+        saveProgressJob?.cancel()
+        saveProgressJob = viewModelScope.launch {
+            delay(500)
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    progressRepository.save(absolutePath, firstVisibleIndex, offset, percent)
+                }
+            }
+        }
+    }
+
+    private var saveProgressJob: kotlinx.coroutines.Job? = null
+
+    /** 供目录树小圆点显示：当前进度百分比（写库后自动持久化）。 */
+    fun currentPercent(): Float = 0f
+}

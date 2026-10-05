@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 应用主主题：Compose 负责真正的配色（Material 3 Day/Night），
+         这里仅提供无系统 ActionBar 的窗口基底。 -->
+    <style name="Theme.AzNotes" parent="@android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowBackground">@color/splash_background</item>
+    </style>
+
+    <!-- 冷启动 Splash（androidx.core:core-splashscreen），过渡到主主题 -->
+    <style name="Theme.AzNotes.Splash" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/splash_background</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_launcher_foreground</item>
+        <item name="postSplashScreenTheme">@style/Theme.AzNotes</item>
+    </style>
+</resources>

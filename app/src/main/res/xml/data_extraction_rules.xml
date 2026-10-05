@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+  Android 12+ 数据提取 / 传输规则：凭据不进云备份、不进设备迁移。
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="sharedpref" path="az_notes_webdav_prefs.xml" />
+        <exclude domain="file" path="data/local/webdav" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="sharedpref" path="az_notes_webdav_prefs.xml" />
+        <exclude domain="file" path="data/local/webdav" />
+    </device-transfer>
+</data-extraction-rules>

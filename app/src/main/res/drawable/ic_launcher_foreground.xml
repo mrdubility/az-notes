@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 自适应图标前景：抽象的“笔记文档 + 折角”矢量图形，Material Symbols 风格 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <group android:scaleX="0.5"
+        android:scaleY="0.5"
+        android:pivotX="54"
+        android:pivotY="54">
+        <!-- 文档主体 -->
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:pathData="M34,26 L66,26 L74,34 L74,82 L34,82 Z" />
+        <!-- 折角 -->
+        <path
+            android:fillColor="#FFB0BEC5"
+            android:pathData="M66,26 L66,34 L74,34 Z" />
+        <!-- 文本行 -->
+        <path
+            android:fillColor="#FF37474F"
+            android:pathData="M42,44 L66,44 L66,49 L42,49 Z" />
+        <path
+            android:fillColor="#FF37474F"
+            android:pathData="M42,55 L66,55 L66,60 L42,60 Z" />
+        <path
+            android:fillColor="#FF37474F"
+            android:pathData="M42,66 L58,66 L58,71 L42,71 Z" />
+    </group>
+</vector>

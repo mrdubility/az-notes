@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+  Android 12 及以下的全备份规则：排除 WebDAV 凭据等敏感数据。
+-->
+<full-backup-content>
+    <exclude domain="sharedpref" path="az_notes_webdav_prefs.xml" />
+    <exclude domain="file" path="data/local/webdav" />
+</full-backup-content>

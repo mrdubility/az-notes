@@ -1,0 +1,23 @@
+# Gradle
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+app/build/
+
+# Android / IntelliJ / Android Studio
+*.iml
+.idea/
+.kotlin/
+local.properties
+captures/
+.externalNativeBuild/
+.cxx/
+
+# 签名密钥（切勿提交）
+*.jks
+*.keystore
+keystore.properties
+
+# 系统文件
+.DS_Store
+*.log

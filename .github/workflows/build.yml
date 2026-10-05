@@ -1,0 +1,49 @@
+name: Build Android APK
+
+# 纯云端编译：本机无需 Android 环境，推送到 GitHub 即自动构建 Debug APK。
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Assemble Debug APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # setup-gradle 直接安装指定版本 Gradle，因此本仓库无需提交 gradle-wrapper.jar
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.13"
+
+      - name: Print toolchain versions
+        run: |
+          java -version
+          gradle --version
+
+      - name: Assemble Debug APK
+        run: gradle :app:assembleDebug --no-daemon --stacktrace
+
+      - name: Upload Debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: az-notes-debug-apk
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
