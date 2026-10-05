@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -18,6 +19,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -28,8 +30,10 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -50,8 +54,11 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.az.notes.R
+import com.az.notes.data.local.ConflictRecordEntity
 import com.az.notes.data.local.SyncLogEntity
+import com.az.notes.domain.model.ConflictStrategy
 import com.az.notes.domain.model.SyncConfig
+import com.az.notes.domain.model.SyncInterval
 import com.az.notes.domain.model.SyncMode
 import com.az.notes.domain.model.SyncOpType
 import com.az.notes.domain.model.SyncSummary
@@ -76,7 +83,12 @@ fun SyncScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val logs by viewModel.logs.collectAsStateWithLifecycle()
+    val conflicts by viewModel.conflicts.collectAsStateWithLifecycle()
     var modeSheet by remember { mutableStateOf(false) }
+    var strategySheet by remember { mutableStateOf(false) }
+    var intervalSheet by remember { mutableStateOf(false) }
+    var maxSizeSheet by remember { mutableStateOf(false) }
+    var filterEditOpen by remember { mutableStateOf(false) }
 
     // 连接测试结果用 Toast 弹出；展示后立即消费，避免重组 / 重建时重复提示
     val context = LocalContext.current
@@ -116,6 +128,64 @@ fun SyncScreen(
                     title = stringResource(R.string.sync_mode_row),
                     value = state.config.mode.label(),
                     onClick = { modeSheet = true }
+                )
+            }
+            item {
+                ClickableRow(
+                    title = stringResource(R.string.sync_conflict_strategy_row),
+                    value = state.config.conflictStrategy.label(),
+                    onClick = { strategySheet = true }
+                )
+            }
+            item {
+                ClickableRow(
+                    title = stringResource(R.string.sync_max_file_size_row),
+                    value = fileSizeLabel(state.config.maxFileSizeMb),
+                    onClick = { maxSizeSheet = true }
+                )
+            }
+
+            // —— 过滤规则（§6.3） ——
+            item { SectionHeader(stringResource(R.string.sync_section_filter)) }
+            item {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 4.dp)
+                ) {
+                    Text(
+                        text = stringResource(R.string.sync_filter_subtitle),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    OutlinedButton(onClick = { filterEditOpen = true }) {
+                        Text(stringResource(R.string.sync_filter_edit))
+                    }
+                }
+            }
+
+            // —— 自动同步（§6.4） ——
+            item { SectionHeader(stringResource(R.string.sync_section_auto)) }
+            item {
+                SwitchRow(
+                    title = stringResource(R.string.sync_auto_on_start),
+                    subtitle = stringResource(R.string.sync_auto_on_start_desc),
+                    checked = state.config.autoSyncOnStart,
+                    onCheckedChange = viewModel::updateAutoSyncOnStart
+                )
+            }
+            item {
+                ClickableRow(
+                    title = stringResource(R.string.sync_auto_periodic),
+                    value = state.config.periodicInterval.label(),
+                    onClick = { intervalSheet = true }
+                )
+            }
+            item {
+                SwitchRow(
+                    title = stringResource(R.string.sync_auto_after_save),
+                    subtitle = stringResource(R.string.sync_auto_after_save_desc),
+                    checked = state.config.syncAfterSave,
+                    onCheckedChange = viewModel::updateSyncAfterSave
                 )
             }
 
@@ -167,6 +237,37 @@ fun SyncScreen(
                 SyncPhase.IDLE -> Unit
             }
 
+            // —— 冲突记录（§6.2）：有记录时展示，人工合并后手动清除 ——
+            item { SectionHeader(stringResource(R.string.sync_conflict_title)) }
+            if (conflicts.isEmpty()) {
+                item {
+                    Text(
+                        text = stringResource(R.string.sync_conflict_empty),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
+                    )
+                }
+            } else {
+                item {
+                    Text(
+                        text = stringResource(R.string.sync_conflict_desc),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)
+                    )
+                }
+                items(conflicts, key = { it.id }) { record -> ConflictRow(record) }
+                item {
+                    TextButton(
+                        onClick = viewModel::clearConflicts,
+                        modifier = Modifier.padding(horizontal = 12.dp)
+                    ) {
+                        Text(stringResource(R.string.sync_conflict_clear))
+                    }
+                }
+            }
+
             // —— 同步日志 ——
             item { SectionHeader(stringResource(R.string.sync_log_title)) }
             if (logs.isEmpty()) {
@@ -205,6 +306,56 @@ fun SyncScreen(
                 modeSheet = false
             },
             onDismiss = { modeSheet = false }
+        )
+    }
+
+    if (strategySheet) {
+        ChoiceSheet(
+            title = stringResource(R.string.sync_conflict_strategy_row),
+            options = ConflictStrategy.entries.map { it to it.label() },
+            selected = state.config.conflictStrategy,
+            onSelect = {
+                viewModel.updateConflictStrategy(it)
+                strategySheet = false
+            },
+            onDismiss = { strategySheet = false }
+        )
+    }
+
+    if (intervalSheet) {
+        ChoiceSheet(
+            title = stringResource(R.string.sync_auto_periodic),
+            options = SyncInterval.entries.map { it to it.label() },
+            selected = state.config.periodicInterval,
+            onSelect = {
+                viewModel.updatePeriodicInterval(it)
+                intervalSheet = false
+            },
+            onDismiss = { intervalSheet = false }
+        )
+    }
+
+    if (maxSizeSheet) {
+        ChoiceSheet(
+            title = stringResource(R.string.sync_max_file_size_row),
+            options = MAX_FILE_SIZE_OPTIONS.map { it to fileSizeLabel(it) },
+            selected = state.config.maxFileSizeMb,
+            onSelect = {
+                viewModel.updateMaxFileSizeMb(it)
+                maxSizeSheet = false
+            },
+            onDismiss = { maxSizeSheet = false }
+        )
+    }
+
+    if (filterEditOpen) {
+        FilterEditDialog(
+            initial = state.config.ignoreRules,
+            onSave = {
+                viewModel.updateIgnoreRules(it)
+                filterEditOpen = false
+            },
+            onDismiss = { filterEditOpen = false }
         )
     }
 }
@@ -363,6 +514,17 @@ private fun SummaryCard(summary: SyncSummary, onDismiss: () -> Unit) {
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            if (summary.moved > 0 || summary.skippedLarge > 0) {
+                Text(
+                    text = stringResource(
+                        R.string.sync_counts_extra,
+                        summary.moved,
+                        summary.skippedLarge
+                    ),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
             if (summary.failed > 0) {
                 Text(
                     text = stringResource(R.string.sync_summary_failed, summary.failed),
@@ -415,6 +577,7 @@ private fun LogRow(log: SyncLogEntity) {
             when (log.op) {
                 "BASELINE" -> "同步基线"
                 "REMOTE_MOVE" -> "云端重命名"
+                "AUTO_SYNC" -> "自动同步"
                 else -> log.op
             }
         )
@@ -462,6 +625,57 @@ private fun LogRow(log: SyncLogEntity) {
             )
         }
     }
+}
+
+// ---------------------------------------------------------------- 冲突记录
+
+/** 单条冲突记录：文件、解决方式与败方副本路径（§6.2）。 */
+@Composable
+private fun ConflictRow(record: ConflictRecordEntity) {
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = record.path,
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.weight(1f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(
+                text = formatLogTime(record.createdAt),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.outline
+            )
+        }
+        Spacer(Modifier.height(2.dp))
+        Text(
+            text = resolutionLabel(record.resolvedBy),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.tertiary
+        )
+        if (record.backupPath.isNotEmpty()) {
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = record.backupPath,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
+/** 冲突解决方式的可读文案（resolved_by 形如「策略:胜方」）。 */
+private fun resolutionLabel(resolvedBy: String): String = when {
+    resolvedBy.startsWith("CONFLICT_COPY") ->
+        if (resolvedBy.endsWith(":local")) "冲突副本 · 保留本地版本" else "冲突副本 · 保留云端版本"
+    resolvedBy.startsWith("LOCAL_FIRST") -> "本地优先"
+    resolvedBy.startsWith("REMOTE_FIRST") -> "云端优先"
+    else -> resolvedBy
 }
 
 // ---------------------------------------------------------------- 通用小组件
@@ -539,6 +753,79 @@ private fun <T> ChoiceSheet(
         }
     }
 }
+
+/** 带副标题的开关行（自动同步选项）。 */
+@Composable
+private fun SwitchRow(
+    title: String,
+    subtitle: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(text = title, style = MaterialTheme.typography.titleMedium)
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Switch(checked = checked, onCheckedChange = onCheckedChange)
+    }
+}
+
+/** 过滤规则编辑对话框（§6.3）：多行编辑 + 恢复默认。 */
+@Composable
+private fun FilterEditDialog(
+    initial: String,
+    onSave: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var draft by remember(initial) { mutableStateOf(initial) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.sync_filter_dialog_title)) },
+        text = {
+            Column {
+                Text(
+                    text = stringResource(R.string.sync_filter_dialog_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = draft,
+                    onValueChange = { draft = it },
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 180.dp),
+                    textStyle = MaterialTheme.typography.bodySmall
+                )
+                TextButton(onClick = { draft = SyncConfig.DEFAULT_IGNORE_RULES }) {
+                    Text(stringResource(R.string.sync_filter_reset))
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onSave(draft) }) {
+                Text(stringResource(R.string.action_save))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.action_cancel))
+            }
+        }
+    )
+}
+
+/** 大文件上限选项（MB）与展示文案。 */
+private val MAX_FILE_SIZE_OPTIONS = listOf(10, 20, 50, 100, 200, 500, 1024)
+
+private fun fileSizeLabel(mb: Int): String =
+    if (mb >= 1024) "${mb / 1024} GB" else "$mb MB"
 
 private fun formatLogTime(millis: Long): String =
     SimpleDateFormat("MM-dd HH:mm:ss", Locale.getDefault()).format(Date(millis))

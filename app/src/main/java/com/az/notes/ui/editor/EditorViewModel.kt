@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.az.notes.data.settings.SettingsRepository
 import com.az.notes.data.storage.VaultRepository
 import com.az.notes.data.sync.SyncEngine
+import com.az.notes.work.SyncScheduler
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -41,7 +42,8 @@ class EditorViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
     private val vaultRepository: VaultRepository,
     private val settingsRepository: SettingsRepository,
-    private val syncEngine: SyncEngine
+    private val syncEngine: SyncEngine,
+    private val syncScheduler: SyncScheduler
 ) : ViewModel() {
 
     private var absolutePath: String =
@@ -87,7 +89,10 @@ class EditorViewModel @Inject constructor(
                 }
             }
             result.fold(
-                onSuccess = { _state.update { it.copy(saving = false, dirty = false, savedAt = System.currentTimeMillis()) } },
+                onSuccess = {
+                    _state.update { it.copy(saving = false, dirty = false, savedAt = System.currentTimeMillis()) }
+                    schedulePostSaveSync()
+                },
                 onFailure = { e -> _state.update { it.copy(saving = false, error = e.message ?: "保存失败") } }
             )
         }
@@ -104,13 +109,15 @@ class EditorViewModel @Inject constructor(
         autoSaveJob?.cancel()
         val path = absolutePath
         val discardFresh = fresh && current.text.isBlank()
+        var flushed = false
         withContext(Dispatchers.IO) {
             if (discardFresh) {
                 vaultRepository.delete(path)
             } else if (current.dirty) {
-                runCatching { vaultRepository.writeTextAtomically(path, current.text) }
+                flushed = runCatching { vaultRepository.writeTextAtomically(path, current.text) }.isSuccess
             }
         }
+        if (flushed) schedulePostSaveSync()
         if (discardFresh) {
             _state.update { it.copy(dirty = false) }
         }
@@ -188,6 +195,14 @@ class EditorViewModel @Inject constructor(
             if (vault.isNullOrBlank()) return@launch
             runCatching { syncEngine.applyRemoteRename(vault, oldAbsPath, newAbsPath) }
         }
+    }
+
+    /**
+     * 保存成功后 30s 防抖触发一次自动同步（§6.4）。后台执行、不阻塞编辑；
+     * 未配置同步或用户关闭该选项时由 [SyncScheduler] 自行忽略。
+     */
+    private fun schedulePostSaveSync() {
+        viewModelScope.launch { runCatching { syncScheduler.scheduleSaveSync() } }
     }
 
     fun consumeMessage() {

@@ -35,6 +35,8 @@ import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Sync
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.DropdownMenu
@@ -113,6 +115,7 @@ fun HomeScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val syncState by syncViewModel.state.collectAsStateWithLifecycle()
+    val conflicts by syncViewModel.conflicts.collectAsStateWithLifecycle()
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -187,7 +190,8 @@ fun HomeScreen(
                     },
                     onSearchQueryChange = viewModel::onSearchQueryChange,
                     onSortSelected = viewModel::setSortOrder,
-                    onSync = { syncViewModel.startSync() }
+                    onSync = { syncViewModel.startSync() },
+                    conflictCount = conflicts.size
                 )
             },
             floatingActionButton = {
@@ -306,7 +310,9 @@ private fun HomeTopBar(
     onSearchClose: () -> Unit,
     onSearchQueryChange: (String) -> Unit,
     onSortSelected: (NoteSortOrder) -> Unit,
-    onSync: () -> Unit
+    onSync: () -> Unit,
+    /** 未处理的冲突记录数：> 0 时同步图标显示角标（§5.7）。 */
+    conflictCount: Int
 ) {
     var sortMenuOpen by remember { mutableStateOf(false) }
 
@@ -361,7 +367,15 @@ private fun HomeTopBar(
                 }
             } else {
                 IconButton(onClick = onSync) {
-                    Icon(Icons.Outlined.Sync, stringResource(R.string.action_sync_now))
+                    BadgedBox(
+                        badge = {
+                            if (conflictCount > 0) {
+                                Badge { Text(conflictCount.toString()) }
+                            }
+                        }
+                    ) {
+                        Icon(Icons.Outlined.Sync, stringResource(R.string.action_sync_now))
+                    }
                 }
                 IconButton(onClick = onSearchOpen) {
                     Icon(Icons.Outlined.Search, stringResource(R.string.home_search_hint))

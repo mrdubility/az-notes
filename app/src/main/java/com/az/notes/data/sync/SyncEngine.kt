@@ -1,26 +1,32 @@
 package com.az.notes.data.sync
 
 import android.content.Context
+import com.az.notes.data.local.ConflictRecordDao
+import com.az.notes.data.local.ConflictRecordEntity
 import com.az.notes.data.local.SyncBaselineDao
 import com.az.notes.data.local.SyncBaselineEntity
 import com.az.notes.data.local.SyncLogDao
 import com.az.notes.data.local.SyncLogEntity
 import com.az.notes.data.settings.SettingsRepository
 import com.az.notes.data.webdav.WebDavClient
+import com.az.notes.domain.model.ConflictStrategy
 import com.az.notes.domain.model.SyncConfig
 import com.az.notes.domain.model.SyncMode
 import com.az.notes.domain.model.SyncOp
 import com.az.notes.domain.model.SyncOpType
 import com.az.notes.domain.model.SyncPlan
 import com.az.notes.domain.model.SyncSummary
+import com.az.notes.domain.model.displayPath
 import com.az.notes.domain.model.label
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.IOException
+import java.security.MessageDigest
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -33,10 +39,11 @@ import javax.inject.Singleton
  * 单次会话流程：Scan → LoadBaseline → Diff/Decide（三方对比）→ Plan（给 UI 预览确认）
  * → Execute → CommitBaseline（重新快照两端一致状态）。
  *
- * M3 范围：双向 + 仅发送 + 仅接收三种策略、手动同步、操作预览确认、日志与基线；
+ * 能力：五种同步模式（含两种镜像）、冲突副本/优先策略、重命名启发式（MOVE）、
+ * Gitignore 风格过滤、大文件上限、回收站（30 天）、操作预览确认、日志与基线。
  * 差异判定采用宽松模式（本地 size+mtime、远端 size+etag 短路）。
  * 安全阀（§6.5）：远端为空而基线存在中止；本地被删文件进 App 私有 trash/ 不物理删除；
- * 失败路径不写基线，下一轮重新决策。
+ * 删除量达阈值时自动同步转人工确认；失败路径不写基线，下一轮重新决策。
  */
 @Singleton
 class SyncEngine @Inject constructor(
@@ -45,7 +52,8 @@ class SyncEngine @Inject constructor(
     private val syncConfigRepository: SyncConfigRepository,
     private val credentialStore: CredentialStore,
     private val baselineDao: SyncBaselineDao,
-    private val syncLogDao: SyncLogDao
+    private val syncLogDao: SyncLogDao,
+    private val conflictRecordDao: ConflictRecordDao
 ) {
 
     private data class LocalStat(val size: Long, val mtime: Long)
@@ -59,6 +67,23 @@ class SyncEngine @Inject constructor(
 
     @Volatile
     private var lastSnapshot: ScanSnapshot? = null
+
+    /** 同步会话互斥：手动与自动同步不能并发（并发会双写基线、重复传输）。 */
+    private val sessionMutex = Mutex()
+
+    /**
+     * 独占发起一次同步会话；已有会话（手动 / 自动）进行中时返回 false。
+     * 调用方在 [block] 内自行调用 plan / execute。
+     */
+    suspend fun runExclusive(block: suspend () -> Unit): Boolean {
+        if (!sessionMutex.tryLock()) return false
+        try {
+            block()
+        } finally {
+            sessionMutex.unlock()
+        }
+        return true
+    }
 
     // ---------------------------------------------------------------- 连接测试
 
@@ -80,22 +105,26 @@ class SyncEngine @Inject constructor(
     /** 扫描两端并与基线三方对比，产出待执行操作计划。 */
     suspend fun plan(config: SyncConfig, onStatus: (String) -> Unit): SyncPlan {
         val vault = requireVault()
+        val ignore = IgnoreRules(config.ignoreRules)
         val client = buildClient(config) { attempt ->
             onStatus("触发服务端限流，自动等待重试（第 $attempt 次）…")
         }
+
+        // 回收站保留 30 天（§6.5-3）：同步前顺手清理过期批次
+        purgeTrash()
 
         // 上一次同步若异常中止，快照可能残留；本轮重新扫描后才有可信快照
         lastSnapshot = null
 
         onStatus("正在扫描本地文件…")
-        val local = withContext(Dispatchers.IO) { scanLocal(vault) }
+        val local = withContext(Dispatchers.IO) { scanLocal(vault, ignore) }
 
         onStatus("正在扫描远端目录…")
         val scan = client.listAll { scanned, discoveredFiles ->
             onStatus("正在扫描远端目录（已扫描 $scanned 个目录，发现 $discoveredFiles 个文件）…")
         }
         val remote = scan.entries
-            .filter { !it.isDirectory && !isIgnoredPath(it.path) }
+            .filter { !it.isDirectory && !ignore.isIgnored(it.path, false) }
             .associateBy { it.path }
         // 条目数达到服务端单次返回上限的目录，其远端列表可能被分页截断而不完整
         val untrustedDirs = scan.truncatedDirs
@@ -107,17 +136,46 @@ class SyncEngine @Inject constructor(
             throw IOException("远端目录为空而本地已有同步基线，疑似凭据或远端目录配置错误，已中止本次同步")
         }
 
-        val allowUpload = config.mode != SyncMode.DOWNLOAD_ONLY
-        val allowDownload = config.mode != SyncMode.UPLOAD_ONLY
-        // 冲突副本需要读写双向能力（保留败方旧版本），仅双向模式下启用
-        val keepConflictCopies = config.mode == SyncMode.BIDIRECTIONAL
+        val allowUpload = config.mode != SyncMode.DOWNLOAD_ONLY && config.mode != SyncMode.DOWNLOAD_RESTORE
+        val allowDownload = config.mode != SyncMode.UPLOAD_ONLY && config.mode != SyncMode.UPLOAD_OVERWRITE
+        // 镜像模式（§6.3）：以单侧为唯一真相，不参与三方对比
+        val mirrorToRemote = config.mode == SyncMode.UPLOAD_OVERWRITE
+        val mirrorToLocal = config.mode == SyncMode.DOWNLOAD_RESTORE
+        // 冲突处理（副本 / 优先策略）只在双向模式下有意义：单侧模式不存在“双改冲突”
+        val handleConflicts = config.mode == SyncMode.BIDIRECTIONAL
+        val strategy = config.conflictStrategy
+        val maxBytes = config.maxFileSizeBytes
 
         val ops = ArrayList<SyncOp>()
         val carryOver = ArrayList<SyncBaselineEntity>()
         var unsafeSkipped = 0
+        var skippedLarge = 0
         // 不可信判定：路径落在被截断的目录内（根目录 "" 被截断时全库不可信）
         fun untrusted(path: String): Boolean =
             untrustedDirs.any { it.isEmpty() || path.startsWith("$it/") }
+        fun tooLarge(size: Long): Boolean = size > maxBytes
+
+        /**
+         * 冲突处理（§6.2）：按策略决定胜方，再以胜方覆盖另一端。
+         * 文本类文件先把败方另存冲突副本；二进制/图片不生成副本、直接覆盖（与插件一致）。
+         * 两者都在执行阶段写入 conflict_record（§4.2）供同步页查看。
+         */
+        fun addConflict(path: String) {
+            val localWins = when (strategy) {
+                ConflictStrategy.LOCAL_FIRST -> true
+                ConflictStrategy.REMOTE_FIRST -> false
+                ConflictStrategy.CONFLICT_COPY ->
+                    (local[path]?.mtime ?: 0L) >= (remote[path]?.lastModified ?: 0L)
+            }
+            val winner = if (localWins) "local" else "remote"
+            val backup = if (isTextLike(path)) conflictRelativePath(vault, path) else null
+            ops += SyncOp(SyncOpType.CONFLICT_COPY, path, detail = winner, backupPath = backup)
+            if (localWins) {
+                if (allowUpload) ops += SyncOp(SyncOpType.UPLOAD, path)
+            } else {
+                if (allowDownload) ops += SyncOp(SyncOpType.DOWNLOAD, path)
+            }
+        }
 
         val paths = (local.keys + remote.keys + baseline.keys).toSortedSet()
         for (path in paths) {
@@ -125,30 +183,42 @@ class SyncEngine @Inject constructor(
             val r = remote[path]
             val b = baseline[path]
 
+            // —— 镜像模式（§6.3）：以单侧为唯一真相，不参与三方对比 ——
+            if (mirrorToRemote) {
+                when {
+                    l != null -> if (tooLarge(l.size)) skippedLarge++ else ops += SyncOp(SyncOpType.UPLOAD, path)
+                    r != null -> if (!untrusted(path)) ops += SyncOp(SyncOpType.DELETE_REMOTE, path)
+                }
+                continue
+            }
+            if (mirrorToLocal) {
+                when {
+                    r != null -> if (tooLarge(r.size)) skippedLarge++ else ops += SyncOp(SyncOpType.DOWNLOAD, path)
+                    l != null -> if (untrusted(path)) unsafeSkipped++ else ops += SyncOp(SyncOpType.TRASH_LOCAL, path)
+                }
+                continue
+            }
+
             if (b == null) {
                 // —— 无基线：新增 / 首次共存 ——
                 when {
-                    l != null && r == null -> if (allowUpload) ops += SyncOp(SyncOpType.UPLOAD, path)
-                    l == null && r != null -> if (allowDownload) ops += SyncOp(SyncOpType.DOWNLOAD, path)
+                    l != null && r == null -> if (allowUpload) {
+                        if (tooLarge(l.size)) skippedLarge++ else ops += SyncOp(SyncOpType.UPLOAD, path)
+                    }
+                    l == null && r != null -> if (allowDownload) {
+                        if (tooLarge(r.size)) skippedLarge++ else ops += SyncOp(SyncOpType.DOWNLOAD, path)
+                    }
                     l != null && r != null -> {
+                        // size 相同视为一致（宽松模式），跳过；否则按冲突处理
                         if (l.size != r.size) {
-                            if (l.mtime >= r.lastModified) {
-                                // 本地较新：上传；远端旧版本保留为本地冲突副本
+                            if (handleConflicts) {
+                                addConflict(path)
+                            } else if (l.mtime >= r.lastModified) {
                                 if (allowUpload) ops += SyncOp(SyncOpType.UPLOAD, path)
-                                if (keepConflictCopies) {
-                                    ops += SyncOp(SyncOpType.CONFLICT_COPY, path, detail = "remote")
-                                }
                             } else {
-                                // 远端较新：本地旧版本先存冲突副本，再下载覆盖
-                                if (allowDownload) {
-                                    if (keepConflictCopies) {
-                                        ops += SyncOp(SyncOpType.CONFLICT_COPY, path, detail = "local")
-                                    }
-                                    ops += SyncOp(SyncOpType.DOWNLOAD, path)
-                                }
+                                if (allowDownload) ops += SyncOp(SyncOpType.DOWNLOAD, path)
                             }
                         }
-                        // size 相同视为一致（宽松模式），跳过
                     }
                 }
                 continue
@@ -177,14 +247,15 @@ class SyncEngine @Inject constructor(
                     if (lChanged) {
                         // 本地修改 + 远端已删除 → 重新上传保留本地版本
                         if (allowUpload) {
-                            ops += SyncOp(SyncOpType.UPLOAD, path, detail = "远端已删除，本地修改已保留")
+                            if (tooLarge(l.size)) skippedLarge++
+                            else ops += SyncOp(SyncOpType.UPLOAD, path, detail = "远端已删除，本地修改已保留")
                         }
                     } else if (allowDownload) {
                         if (untrusted(path)) {
                             // “没列出”不等于“已删除”（可能只是分页截断），跳过以免误删本地文件；
                             // 同时保留其基线条目，避免下一轮把它当成新文件重新上传
                             unsafeSkipped++
-                            b?.let { carryOver += it }
+                            carryOver += b
                         } else {
                             // 远端删除传播到本地：移入 App 私有回收站（§6.5-3），不物理删除
                             ops += SyncOp(SyncOpType.TRASH_LOCAL, path)
@@ -192,47 +263,71 @@ class SyncEngine @Inject constructor(
                     }
                 }
                 l != null && r != null -> when {
-                    lChanged && !rChanged -> if (allowUpload) ops += SyncOp(SyncOpType.UPLOAD, path)
-                    !lChanged && rChanged -> if (allowDownload) ops += SyncOp(SyncOpType.DOWNLOAD, path)
+                    lChanged && !rChanged -> if (allowUpload) {
+                        if (tooLarge(l.size)) skippedLarge++ else ops += SyncOp(SyncOpType.UPLOAD, path)
+                    }
+                    !lChanged && rChanged -> if (allowDownload) {
+                        if (tooLarge(r.size)) skippedLarge++ else ops += SyncOp(SyncOpType.DOWNLOAD, path)
+                    }
                     lChanged && rChanged -> {
+                        // size 相同视为等价（宽松模式），跳过；否则按冲突处理
                         if (l.size != r.size) {
-                            if (l.mtime >= r.lastModified) {
+                            if (handleConflicts) {
+                                addConflict(path)
+                            } else if (l.mtime >= r.lastModified) {
                                 if (allowUpload) ops += SyncOp(SyncOpType.UPLOAD, path)
-                                if (keepConflictCopies) {
-                                    ops += SyncOp(SyncOpType.CONFLICT_COPY, path, detail = "remote")
-                                }
                             } else {
-                                if (allowDownload) {
-                                    if (keepConflictCopies) {
-                                        ops += SyncOp(SyncOpType.CONFLICT_COPY, path, detail = "local")
-                                    }
-                                    ops += SyncOp(SyncOpType.DOWNLOAD, path)
-                                }
+                                if (allowDownload) ops += SyncOp(SyncOpType.DOWNLOAD, path)
                             }
                         }
-                        // size 相同视为等价（宽松模式），跳过
                     }
                     else -> Unit // 两端均未变化
                 }
             }
         }
 
-        // 执行顺序：写入类在前、删除类在后；冲突副本（保留旧版）必须先于同路径的下载覆盖
+        // —— 重命名识别（§6.1）：把“一侧改名”还原为 MOVE 指令，避免“删除 + 重传” ——
+        // 判据：一侧的旧路径消失且新路径出现、两者内容大小一致且各自唯一（歧义时保守放弃）。
+        if (config.mode == SyncMode.BIDIRECTIONAL) {
+            // ① 远端改名（桌面端 Obsidian 改名）：本地仍是旧路径 → 本地改名对齐
+            val goneRemote = ops.filter { it.type == SyncOpType.TRASH_LOCAL }
+                .mapNotNull { op -> local[op.path]?.let { op.path to it.size } }
+            val addedRemote = ops.filter {
+                it.type == SyncOpType.DOWNLOAD && baseline[it.path] == null && local[it.path] == null
+            }.mapNotNull { op -> remote[op.path]?.let { op.path to it.size } }
+            for ((oldPath, newPath) in pairBySize(goneRemote, addedRemote)) {
+                ops.removeAll {
+                    (it.type == SyncOpType.TRASH_LOCAL && it.path == oldPath) ||
+                        (it.type == SyncOpType.DOWNLOAD && it.path == newPath)
+                }
+                ops += SyncOp(SyncOpType.MOVE_LOCAL, newPath, detail = oldPath, moveFrom = oldPath)
+            }
+            // ② 本地改名（在 App 之外改的名）：远端仍是旧路径 → 远端 MOVE 对齐
+            val goneLocal = ops.filter { it.type == SyncOpType.DELETE_REMOTE }
+                .mapNotNull { op -> remote[op.path]?.let { op.path to it.size } }
+            val addedLocal = ops.filter {
+                it.type == SyncOpType.UPLOAD && baseline[it.path] == null && remote[it.path] == null
+            }.mapNotNull { op -> local[op.path]?.let { op.path to it.size } }
+            for ((oldPath, newPath) in pairBySize(goneLocal, addedLocal)) {
+                ops.removeAll {
+                    (it.type == SyncOpType.DELETE_REMOTE && it.path == oldPath) ||
+                        (it.type == SyncOpType.UPLOAD && it.path == newPath)
+                }
+                ops += SyncOp(SyncOpType.MOVE_REMOTE, newPath, detail = oldPath, moveFrom = oldPath)
+            }
+        }
+
+        // 执行顺序：改名先于其他操作（后续操作以新路径为准）；冲突副本先于同路径的覆盖
         val ordered = ops.sortedBy { opPriority(it.type) }
         // 快照留给 commitBaseline 复用：同一次同步不再把远端全树扫第二遍
         lastSnapshot = ScanSnapshot(remote, carryOver)
-        val warning = if (untrustedDirs.isNotEmpty()) {
-            val sample = untrustedDirs.first().ifEmpty { "/" }
-            "目录「$sample」等 ${untrustedDirs.size} 个目录的条目数已达服务端单次返回上限（750 个），" +
-                "远端列表可能不完整；本次已跳过 $unsafeSkipped 项本地删除以避免误删，建议将大目录拆分为子目录。"
-        } else {
-            null
-        }
+        val warning = buildWarning(untrustedDirs, unsafeSkipped, skippedLarge)
         return SyncPlan(
             ops = ordered,
             scannedLocal = local.size,
             scannedRemote = remote.size,
-            warning = warning
+            warning = warning,
+            skippedLarge = skippedLarge
         )
     }
 
@@ -251,10 +346,15 @@ class SyncEngine @Inject constructor(
         var deletedRemote = 0
         var trashedLocal = 0
         var conflictCopies = 0
+        var moved = 0
         var failed = 0
         val failedPaths = HashSet<String>()
         // 上传成功的路径：远端属性已变，提交基线时需逐个 Depth:0 刷新
         val uploadedPaths = HashSet<String>()
+        // 执行成功的冲突副本：全部操作完成后统一计算指纹写入 conflict_record（§4.2）
+        val conflictOps = ArrayList<SyncOp>()
+        // 冲突副本（败方备份）失败的路径：同路径的覆盖操作必须跳过，避免丢失版本
+        val unprotectedConflict = HashSet<String>()
         val logs = ArrayList<SyncLogEntity>()
         val total = plan.ops.size
         var progressIndex = 0
@@ -264,7 +364,20 @@ class SyncEngine @Inject constructor(
 
         plan.ops.forEachIndexed { index, op ->
             progressIndex = index
-            onProgress(index, total, "${op.type.label()} ${op.path}")
+            onProgress(index, total, "${op.type.label()} ${op.displayPath}")
+            // 前置冲突副本失败时跳过同路径覆盖（§6.2）：宁可整条留到下轮，也不在未备份败方时丢失版本
+            if ((op.type == SyncOpType.UPLOAD || op.type == SyncOpType.DOWNLOAD) && op.path in unprotectedConflict) {
+                failed++
+                failedPaths += op.path
+                logs += SyncLogEntity(
+                    ts = System.currentTimeMillis(),
+                    op = op.type.name,
+                    path = op.displayPath,
+                    result = "SKIP",
+                    detail = "冲突副本未成功，已跳过覆盖以防丢失版本"
+                )
+                return@forEachIndexed
+            }
             var ok = false
             var error: String? = null
             try {
@@ -284,16 +397,24 @@ class SyncEngine @Inject constructor(
                     SyncOpType.DOWNLOAD -> downloaded++
                     SyncOpType.DELETE_REMOTE -> deletedRemote++
                     SyncOpType.TRASH_LOCAL -> trashedLocal++
-                    SyncOpType.CONFLICT_COPY -> conflictCopies++
+                    SyncOpType.CONFLICT_COPY -> {
+                        conflictCopies++
+                        conflictOps += op
+                    }
+                    SyncOpType.MOVE_LOCAL, SyncOpType.MOVE_REMOTE -> moved++
                 }
             } else {
                 failed++
                 failedPaths += op.path
+                // 败方备份未成功：同路径的覆盖操作在后续循环中一并跳过
+                if (op.type == SyncOpType.CONFLICT_COPY && op.backupPath != null) {
+                    unprotectedConflict += op.path
+                }
             }
             logs += SyncLogEntity(
                 ts = System.currentTimeMillis(),
                 op = op.type.name,
-                path = op.path,
+                path = op.displayPath,
                 result = if (ok) "OK" else "FAIL",
                 detail = error ?: op.detail
             )
@@ -304,13 +425,36 @@ class SyncEngine @Inject constructor(
             syncLogDao.insertAll(logs)
             syncLogDao.trimTo(500)
         }
+        // 冲突记录（§6.2）：记录冲突双方指纹与解决方式，供同步页人工合并追踪
+        if (conflictOps.isNotEmpty()) {
+            withContext(Dispatchers.IO) {
+                val now = System.currentTimeMillis()
+                for (op in conflictOps) {
+                    // 胜方内容在 path（覆盖成功后），败方内容在副本（二进制冲突无副本，记 null）
+                    val winHash = if (op.path in failedPaths) null else sha1(File(vault, op.path))
+                    val loseHash = sha1(op.backupPath?.takeIf { it.isNotEmpty() }?.let { File(vault, it) })
+                    conflictRecordDao.insert(
+                        ConflictRecordEntity(
+                            path = op.path,
+                            baseSha1 = null,
+                            localSha1 = if (op.detail == "local") winHash else loseHash,
+                            remoteSha1 = if (op.detail == "local") loseHash else winHash,
+                            resolvedBy = "${config.conflictStrategy.name}:${op.detail}",
+                            backupPath = op.backupPath.orEmpty(),
+                            createdAt = now
+                        )
+                    )
+                }
+                conflictRecordDao.trimTo(200)
+            }
+        }
         // CommitBaseline：重新快照两端状态；失败路径不写基线，下一轮重新决策
         var baselineError: String? = null
         try {
             val snapshot = lastSnapshot
             lastSnapshot = null // 用完即弃，避免跨会话复用陈旧快照
             withContext(Dispatchers.IO) {
-                commitBaseline(vault, client, failedPaths, uploadedPaths, snapshot)
+                commitBaseline(vault, client, IgnoreRules(config.ignoreRules), failedPaths, uploadedPaths, snapshot)
             }
         } catch (ce: CancellationException) {
             throw ce
@@ -340,6 +484,8 @@ class SyncEngine @Inject constructor(
             deletedRemote = deletedRemote,
             trashedLocal = trashedLocal,
             conflictCopies = conflictCopies,
+            moved = moved,
+            skippedLarge = plan.skippedLarge,
             failed = failed
         )
     }
@@ -354,17 +500,39 @@ class SyncEngine @Inject constructor(
             SyncOpType.DELETE_REMOTE -> client.delete(op.path)
             SyncOpType.TRASH_LOCAL -> moveToTrash(vaultRoot, op.path)
             SyncOpType.CONFLICT_COPY -> {
-                val target = conflictTarget(vaultRoot, op.path)
-                if (op.detail == "local") {
-                    val source = File(vaultRoot, op.path)
-                    source.isFile && runCatching {
-                        target.parentFile?.mkdirs()
-                        source.copyTo(target, overwrite = false)
-                        true
-                    }.getOrDefault(false)
+                val backupRel = op.backupPath
+                if (backupRel.isNullOrEmpty()) {
+                    // 二进制/图片冲突：不落盘副本，仅由 conflict_record 记录（§6.2）
+                    true
                 } else {
-                    client.download(op.path, target)
+                    val backup = File(vaultRoot, backupRel)
+                    if (op.detail == "local") {
+                        // 本地胜：远端是败方，先把远端旧版下载为副本
+                        client.download(op.path, backup)
+                    } else {
+                        // 远端胜：本地是败方，先把本地旧版复制为副本
+                        val source = File(vaultRoot, op.path)
+                        source.isFile && runCatching {
+                            backup.parentFile?.mkdirs()
+                            source.copyTo(backup, overwrite = false)
+                            true
+                        }.getOrDefault(false)
+                    }
                 }
+            }
+            SyncOpType.MOVE_LOCAL -> {
+                // 远端已改名：本地旧路径 → 新路径（远端无需操作）
+                val source = op.moveFrom?.let { File(vaultRoot, it) }
+                val target = File(vaultRoot, op.path)
+                source != null && source.isFile && runCatching {
+                    target.parentFile?.mkdirs()
+                    source.renameTo(target)
+                }.getOrDefault(false)
+            }
+            SyncOpType.MOVE_REMOTE -> {
+                // 本地已改名：远端旧路径 → 新路径（MOVE，仅文件）
+                val from = op.moveFrom
+                from != null && client.move(from, op.path, isDirectory = false)
             }
         }
 
@@ -380,11 +548,12 @@ class SyncEngine @Inject constructor(
     private suspend fun commitBaseline(
         vaultRoot: String,
         client: WebDavClient,
+        ignore: IgnoreRules,
         excludePaths: Set<String>,
         uploadedPaths: Set<String>,
         snapshot: ScanSnapshot?
     ) {
-        val local = scanLocal(vaultRoot)
+        val local = scanLocal(vaultRoot, ignore)
         val carryOver = snapshot?.carryOver.orEmpty()
         val remote: Map<String, WebDavClient.RemoteEntry> = if (snapshot != null) {
             val merged = snapshot.remote.toMutableMap()
@@ -395,7 +564,7 @@ class SyncEngine @Inject constructor(
             merged
         } else {
             client.listAll().entries
-                .filter { !it.isDirectory && !isIgnoredPath(it.path) }
+                .filter { !it.isDirectory && !ignore.isIgnored(it.path, false) }
                 .associateBy { it.path }
         }
         val now = System.currentTimeMillis()
@@ -482,7 +651,7 @@ class SyncEngine @Inject constructor(
 
     // ---------------------------------------------------------------- 文件系统辅助
 
-    private fun scanLocal(vaultRoot: String): Map<String, LocalStat> {
+    private fun scanLocal(vaultRoot: String, ignore: IgnoreRules): Map<String, LocalStat> {
         val root = File(vaultRoot)
         if (!root.isDirectory) throw IOException("Vault 目录不存在或不可读")
         val out = HashMap<String, LocalStat>()
@@ -492,11 +661,13 @@ class SyncEngine @Inject constructor(
             val (dir, prefix) = stack.removeLast()
             val children = dir.listFiles() ?: continue
             for (f in children) {
-                if (isIgnoredName(f.name)) continue
                 val rel = if (prefix.isEmpty()) f.name else "$prefix/${f.name}"
                 if (f.isDirectory) {
+                    // 命中忽略规则的目录整树剪枝；存在否定规则时继续下探，避免漏掉重新包含项
+                    if (ignore.isIgnored(rel, true) && !ignore.hasNegations) continue
                     stack += f to rel
                 } else if (f.isFile) {
+                    if (ignore.isIgnored(rel, false)) continue
                     out[rel] = LocalStat(f.length(), f.lastModified())
                 }
             }
@@ -504,12 +675,35 @@ class SyncEngine @Inject constructor(
         return out
     }
 
-    /** 同步过滤（§6.3 默认模板）：'.' 开头（.obsidian/.trash/.git 等）与 *.tmp 不参与同步。 */
-    private fun isIgnoredName(name: String): Boolean =
-        name.startsWith(".") || name.endsWith(".tmp", ignoreCase = true)
+    /** 回收站保留 30 天（§6.5-3）：同步前清理过期批次目录。 */
+    private suspend fun purgeTrash() = withContext(Dispatchers.IO) {
+        val root = File(context.filesDir, "trash")
+        val cutoff = System.currentTimeMillis() - TRASH_RETENTION_MS
+        root.listFiles()?.forEach { batch ->
+            if (batch.isDirectory && batch.lastModified() < cutoff) batch.deleteRecursively()
+        }
+    }
 
-    private fun isIgnoredPath(path: String): Boolean =
-        path.split('/').any { isIgnoredName(it) }
+    /** 计算文件 SHA-1（冲突记录指纹，尽力而为；读取失败返回 null）。 */
+    private fun sha1(file: File?): String? {
+        if (file == null || !file.isFile) return null
+        return runCatching {
+            val digest = MessageDigest.getInstance("SHA-1")
+            file.inputStream().use { input ->
+                val buffer = ByteArray(64 * 1024)
+                while (true) {
+                    val read = input.read(buffer)
+                    if (read <= 0) break
+                    digest.update(buffer, 0, read)
+                }
+            }
+            digest.digest().joinToString("") { "%02x".format(it) }
+        }.getOrNull()
+    }
+
+    /** 文本类文件（可人工合并）：冲突时生成冲突副本；图片/二进制按优先策略直接覆盖（§6.2）。 */
+    private fun isTextLike(path: String): Boolean =
+        path.substringAfterLast('.', "").lowercase(Locale.ROOT) in TEXT_EXTENSIONS
 
     /** 被远端删除波及的本地文件移入 App 私有 trash/（§6.5-3），不物理删除。 */
     private fun moveToTrash(vaultRoot: String, relativePath: String): Boolean {
@@ -523,8 +717,8 @@ class SyncEngine @Inject constructor(
         }.getOrDefault(false)
     }
 
-    /** 冲突副本路径：`名称 (conflict yyyy-MM-dd HHmmss).md`，重名自动加序号。 */
-    private fun conflictTarget(vaultRoot: String, relativePath: String): File {
+    /** 冲突副本相对路径：`名称 (conflict yyyy-MM-dd HHmmss).md`，重名自动加序号。 */
+    private fun conflictRelativePath(vaultRoot: String, relativePath: String): String {
         val parent = relativePath.substringBeforeLast('/', "")
         val name = relativePath.substringAfterLast('/')
         val dot = name.lastIndexOf('.')
@@ -537,18 +731,58 @@ class SyncEngine @Inject constructor(
             candidate = File(dir, "$base (conflict ${conflictStamp()} $index)$ext")
             index++
         }
-        return candidate
+        return if (parent.isEmpty()) candidate.name else "$parent/${candidate.name}"
+    }
+
+    /**
+     * 重命名启发式配对（§6.1）：把“一侧消失的旧路径”与“另一侧出现的新路径”按大小配对。
+     * 远端拿不到内容 hash（需额外下载），改用 size 相等 + 两侧各自唯一做保守推断；
+     * 任何一侧存在同大小歧义（多个候选）时放弃该条，避免误配出错误 MOVE。
+     */
+    private fun pairBySize(
+        gone: List<Pair<String, Long>>,
+        added: List<Pair<String, Long>>
+    ): List<Pair<String, String>> {
+        // 0 字节文件（新建占位）不参与配对，避免高概率误配
+        val goneBySize = gone.filter { it.second > 0 }.groupBy { it.second }
+        val addedBySize = added.filter { it.second > 0 }.groupBy { it.second }
+        val pairs = ArrayList<Pair<String, String>>()
+        for ((size, olds) in goneBySize) {
+            if (olds.size != 1) continue
+            val news = addedBySize[size] ?: continue
+            if (news.size != 1) continue
+            pairs += olds.first().first to news.first().first
+        }
+        return pairs
+    }
+
+    /** 汇总扫描限制提醒：分页截断导致的跳过项 / 大文件跳过（§6.3 / §6.5）。 */
+    private fun buildWarning(
+        untrustedDirs: Set<String>,
+        unsafeSkipped: Int,
+        skippedLarge: Int
+    ): String? {
+        val parts = ArrayList<String>()
+        if (untrustedDirs.isNotEmpty() && unsafeSkipped > 0) {
+            parts += "有 $unsafeSkipped 个文件位于云端目录列表被截断的位置，已跳过对它们的删除判断，将在下次同步重新核对"
+        }
+        if (skippedLarge > 0) {
+            parts += "有 $skippedLarge 个文件超过大文件上限，本次已跳过"
+        }
+        return parts.takeIf { it.isNotEmpty() }?.joinToString("；")
     }
 
     private fun conflictStamp(): String =
         SimpleDateFormat("yyyy-MM-dd HHmmss", Locale.getDefault()).format(Date())
 
+    /** 执行顺序：先改名，再备冲突副本（覆盖前完成败方备份），随后上传/下载，最后删除类操作。 */
     private fun opPriority(type: SyncOpType): Int = when (type) {
-        SyncOpType.UPLOAD -> 0
+        SyncOpType.MOVE_LOCAL, SyncOpType.MOVE_REMOTE -> 0
         SyncOpType.CONFLICT_COPY -> 1
-        SyncOpType.DOWNLOAD -> 2
-        SyncOpType.TRASH_LOCAL -> 3
-        SyncOpType.DELETE_REMOTE -> 4
+        SyncOpType.UPLOAD -> 2
+        SyncOpType.DOWNLOAD -> 3
+        SyncOpType.TRASH_LOCAL -> 4
+        SyncOpType.DELETE_REMOTE -> 5
     }
 
     // ---------------------------------------------------------------- 基础依赖
@@ -575,5 +809,12 @@ class SyncEngine @Inject constructor(
     private companion object {
         /** 日志中的“云端重命名”操作名（不属于 [SyncOpType]，仅用于展示）。 */
         const val LOG_OP_REMOTE_MOVE = "REMOTE_MOVE"
+
+        /** 回收站保留时长（§6.5-3）：30 天。 */
+        const val TRASH_RETENTION_MS = 30L * 24 * 60 * 60 * 1000
+
+        /** 冲突时按“文本可人工合并”处理的扩展名（其余走优先策略直接覆盖，§6.2）。 */
+        val TEXT_EXTENSIONS =
+            setOf("md", "markdown", "txt", "text", "json", "yaml", "yml", "csv", "canvas", "html")
     }
 }

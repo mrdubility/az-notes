@@ -123,4 +123,26 @@
     <string name="sync_log_title">同步日志</string>
     <string name="sync_log_empty">暂无同步记录</string>
     <string name="sync_result_dismiss">收起</string>
+
+    <!-- M4 同步完善：冲突策略 / 过滤规则 / 大文件 / 自动同步 / 冲突记录 -->
+    <string name="sync_counts_extra">改名 %1$d · 跳过大文件 %2$d</string>
+    <string name="sync_conflict_strategy_row">冲突处理</string>
+    <string name="sync_max_file_size_row">大文件上限</string>
+    <string name="sync_section_filter">过滤规则</string>
+    <string name="sync_filter_edit">编辑过滤规则</string>
+    <string name="sync_filter_subtitle">Gitignore 风格，最后一条匹配规则生效</string>
+    <string name="sync_filter_dialog_title">过滤规则</string>
+    <string name="sync_filter_dialog_hint">每行一条规则：# 开头为注释，! 前缀重新包含，/ 结尾仅匹配目录，* 不跨层级、** 跨层级</string>
+    <string name="sync_filter_reset">恢复默认</string>
+    <string name="sync_section_auto">自动同步</string>
+    <string name="sync_auto_on_start">启动后自动同步</string>
+    <string name="sync_auto_on_start_desc">启动约 10 秒后自动同步一次</string>
+    <string name="sync_auto_periodic">周期同步</string>
+    <string name="sync_auto_after_save">保存后自动同步</string>
+    <string name="sync_auto_after_save_desc">编辑保存约 30 秒后自动同步（防抖）</string>
+    <string name="sync_conflict_title">冲突记录</string>
+    <string name="sync_conflict_empty">暂无冲突记录</string>
+    <string name="sync_conflict_clear">清除全部</string>
+    <string name="sync_conflict_desc">以下文件曾发生冲突，败方版本已另存为冲突副本，请人工合并后清除记录。</string>
+    <string name="sync_mb_unit">%1$d MB</string>
 </resources>

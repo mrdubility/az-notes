@@ -3,6 +3,7 @@ package com.az.notes.di
 import android.content.Context
 import androidx.room.Room
 import com.az.notes.data.local.AppDatabase
+import com.az.notes.data.local.ConflictRecordDao
 import com.az.notes.data.local.FileIndexDao
 import com.az.notes.data.local.ReadProgressDao
 import com.az.notes.data.local.SyncBaselineDao
@@ -37,4 +38,7 @@ object DatabaseModule {
 
     @Provides
     fun provideSyncLogDao(db: AppDatabase): SyncLogDao = db.syncLogDao()
+
+    @Provides
+    fun provideConflictRecordDao(db: AppDatabase): ConflictRecordDao = db.conflictRecordDao()
 }

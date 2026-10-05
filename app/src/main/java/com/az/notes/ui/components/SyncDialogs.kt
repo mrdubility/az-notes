@@ -32,6 +32,7 @@ import com.az.notes.domain.model.SyncOp
 import com.az.notes.domain.model.SyncOpType
 import com.az.notes.domain.model.SyncPlan
 import com.az.notes.domain.model.SyncSummary
+import com.az.notes.domain.model.displayPath
 import com.az.notes.domain.model.label
 
 /** 确认弹窗最多展示的操作条数（更多时仅提示数量）。 */
@@ -145,6 +146,14 @@ fun SyncConfirmSheet(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 24.dp)
             )
+            if (plan.moveCount > 0 || plan.skippedLarge > 0) {
+                Text(
+                    text = stringResource(R.string.sync_counts_extra, plan.moveCount, plan.skippedLarge),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 24.dp)
+                )
+            }
             plan.warning?.let { warning ->
                 Spacer(Modifier.height(8.dp))
                 Text(
@@ -189,13 +198,14 @@ fun SyncConfirmSheet(
     }
 }
 
-/** 单条计划操作：类型（按语义着色）+ 相对路径。 */
+/** 单条计划操作：类型（按语义着色）+ 相对路径（改名显示「旧 → 新」）。 */
 @Composable
 fun SyncOpRow(op: SyncOp) {
     val labelColor = when (op.type) {
         SyncOpType.DELETE_REMOTE, SyncOpType.TRASH_LOCAL -> MaterialTheme.colorScheme.error
         SyncOpType.CONFLICT_COPY -> MaterialTheme.colorScheme.tertiary
         SyncOpType.UPLOAD, SyncOpType.DOWNLOAD -> MaterialTheme.colorScheme.primary
+        SyncOpType.MOVE_LOCAL, SyncOpType.MOVE_REMOTE -> MaterialTheme.colorScheme.secondary
     }
     Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 6.dp),
@@ -208,7 +218,7 @@ fun SyncOpRow(op: SyncOp) {
         )
         Spacer(Modifier.width(10.dp))
         Text(
-            text = op.path,
+            text = op.displayPath,
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1,
@@ -253,6 +263,17 @@ fun SyncResultDialog(
                         ),
                         style = MaterialTheme.typography.bodyMedium
                     )
+                    if (summary.moved > 0 || summary.skippedLarge > 0) {
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            text = stringResource(
+                                R.string.sync_counts_extra,
+                                summary.moved,
+                                summary.skippedLarge
+                            ),
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
                     if (summary.failed > 0) {
                         Spacer(Modifier.height(6.dp))
                         Text(

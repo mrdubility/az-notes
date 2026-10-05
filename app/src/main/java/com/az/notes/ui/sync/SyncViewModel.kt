@@ -2,16 +2,21 @@ package com.az.notes.ui.sync
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.az.notes.data.local.ConflictRecordDao
+import com.az.notes.data.local.ConflictRecordEntity
 import com.az.notes.data.local.SyncLogDao
 import com.az.notes.data.local.SyncLogEntity
 import com.az.notes.data.settings.SettingsRepository
 import com.az.notes.data.sync.CredentialStore
 import com.az.notes.data.sync.SyncConfigRepository
 import com.az.notes.data.sync.SyncEngine
+import com.az.notes.domain.model.ConflictStrategy
 import com.az.notes.domain.model.SyncConfig
+import com.az.notes.domain.model.SyncInterval
 import com.az.notes.domain.model.SyncMode
 import com.az.notes.domain.model.SyncPlan
 import com.az.notes.domain.model.SyncSummary
+import com.az.notes.work.SyncScheduler
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -55,8 +60,8 @@ data class SyncUiState(
 }
 
 /**
- * 同步页 ViewModel（§6）：配置编辑（地址/账号/密码/远端目录/策略）、
- * 连接测试、手动同步（Scan → Plan 预览确认 → Execute）、日志展示。
+ * 同步页 ViewModel（§6）：配置编辑（地址/账号/密码/远端目录/策略/过滤规则/自动同步）、
+ * 连接测试、手动同步（Scan → Plan 预览确认 → Execute）、冲突记录与日志展示。
  */
 @HiltViewModel
 class SyncViewModel @Inject constructor(
@@ -64,13 +69,19 @@ class SyncViewModel @Inject constructor(
     private val syncConfigRepository: SyncConfigRepository,
     private val credentialStore: CredentialStore,
     private val settingsRepository: SettingsRepository,
-    syncLogDao: SyncLogDao
+    private val syncScheduler: SyncScheduler,
+    syncLogDao: SyncLogDao,
+    private val conflictRecordDao: ConflictRecordDao
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(SyncUiState())
     val state: StateFlow<SyncUiState> = _state.asStateFlow()
 
     val logs: StateFlow<List<SyncLogEntity>> = syncLogDao.recent(100)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** 冲突记录（最近 50 条）：供人工合并后清除（§6.2）。 */
+    val conflicts: StateFlow<List<ConflictRecordEntity>> = conflictRecordDao.recent(50)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     init {
@@ -97,6 +108,32 @@ class SyncViewModel @Inject constructor(
     fun updateUsername(name: String) = viewModelScope.launch { syncConfigRepository.setUsername(name) }
     fun updateRemoteDir(dir: String) = viewModelScope.launch { syncConfigRepository.setRemoteDir(dir) }
     fun updateMode(mode: SyncMode) = viewModelScope.launch { syncConfigRepository.setMode(mode) }
+
+    fun updateConflictStrategy(strategy: ConflictStrategy) =
+        viewModelScope.launch { syncConfigRepository.setConflictStrategy(strategy) }
+
+    fun updateIgnoreRules(rules: String) =
+        viewModelScope.launch { syncConfigRepository.setIgnoreRules(rules) }
+
+    fun updateMaxFileSizeMb(mb: Int) =
+        viewModelScope.launch { syncConfigRepository.setMaxFileSizeMb(mb) }
+
+    fun updateAutoSyncOnStart(enabled: Boolean) = viewModelScope.launch {
+        syncConfigRepository.setAutoSyncOnStart(enabled)
+    }
+
+    fun updatePeriodicInterval(interval: SyncInterval) = viewModelScope.launch {
+        syncConfigRepository.setPeriodicInterval(interval)
+        // 周期任务随即与配置对齐（选“关闭”则撤销已有任务）
+        syncScheduler.reschedulePeriodic()
+    }
+
+    fun updateSyncAfterSave(enabled: Boolean) = viewModelScope.launch {
+        syncConfigRepository.setSyncAfterSave(enabled)
+    }
+
+    /** 人工合并完成后清除全部冲突记录（顶栏角标随之消失）。 */
+    fun clearConflicts() = viewModelScope.launch { conflictRecordDao.clear() }
 
     fun updatePassword(password: String) {
         _state.update { it.copy(password = password) }
@@ -190,10 +227,24 @@ class SyncViewModel @Inject constructor(
                 return@launch
             }
             try {
-                val plan = syncEngine.plan(snapshot.config) { status ->
-                    _state.update { it.copy(statusText = status) }
+                // 与自动同步互斥：拿不到会话锁说明后台同步正在进行，放弃本次
+                var planResult: SyncPlan? = null
+                val ran = syncEngine.runExclusive {
+                    planResult = syncEngine.plan(snapshot.config) { status ->
+                        _state.update { it.copy(statusText = status) }
+                    }
                 }
-                _state.update { it.copy(phase = SyncPhase.AWAIT_CONFIRM, plan = plan, statusText = "") }
+                if (!ran) {
+                    _state.update {
+                        it.copy(
+                            phase = SyncPhase.IDLE,
+                            statusText = "",
+                            testMessage = "其他同步正在进行中，请稍后再试"
+                        )
+                    }
+                    return@launch
+                }
+                _state.update { it.copy(phase = SyncPhase.AWAIT_CONFIRM, plan = planResult, statusText = "") }
             } catch (ce: CancellationException) {
                 throw ce
             } catch (t: Exception) {
@@ -212,13 +263,27 @@ class SyncViewModel @Inject constructor(
                 it.copy(phase = SyncPhase.EXECUTING, progressDone = 0, progressTotal = plan.ops.size)
             }
             try {
-                val summary = syncEngine.execute(snapshot.config, plan) { done, total, label ->
-                    _state.update {
-                        it.copy(progressDone = done, progressTotal = total, statusText = label)
+                var result: SyncSummary? = null
+                val ran = syncEngine.runExclusive {
+                    result = syncEngine.execute(snapshot.config, plan) { done, total, label ->
+                        _state.update {
+                            it.copy(progressDone = done, progressTotal = total, statusText = label)
+                        }
                     }
                 }
+                if (!ran) {
+                    _state.update {
+                        it.copy(
+                            phase = SyncPhase.IDLE,
+                            plan = null,
+                            statusText = "",
+                            testMessage = "其他同步正在进行中，请稍后再试"
+                        )
+                    }
+                    return@launch
+                }
                 _state.update {
-                    it.copy(phase = SyncPhase.DONE, summary = summary, plan = null, statusText = "")
+                    it.copy(phase = SyncPhase.DONE, summary = result, plan = null, statusText = "")
                 }
             } catch (ce: CancellationException) {
                 throw ce
