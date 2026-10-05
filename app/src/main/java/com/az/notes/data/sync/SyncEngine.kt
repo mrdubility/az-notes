@@ -97,7 +97,7 @@ class SyncEngine @Inject constructor(
                     l == null && r != null -> if (allowDownload) ops += SyncOp(SyncOpType.DOWNLOAD, path)
                     l != null && r != null -> {
                         if (l.size != r.size) {
-                            if (l.mtime >= r.mtime) {
+                            if (l.mtime >= r.lastModified) {
                                 // 本地较新：上传；远端旧版本保留为本地冲突副本
                                 if (allowUpload) ops += SyncOp(SyncOpType.UPLOAD, path)
                                 if (keepConflictCopies) {
@@ -154,7 +154,7 @@ class SyncEngine @Inject constructor(
                     !lChanged && rChanged -> if (allowDownload) ops += SyncOp(SyncOpType.DOWNLOAD, path)
                     lChanged && rChanged -> {
                         if (l.size != r.size) {
-                            if (l.mtime >= r.mtime) {
+                            if (l.mtime >= r.lastModified) {
                                 if (allowUpload) ops += SyncOp(SyncOpType.UPLOAD, path)
                                 if (keepConflictCopies) {
                                     ops += SyncOp(SyncOpType.CONFLICT_COPY, path, detail = "remote")
