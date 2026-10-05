@@ -11,7 +11,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Bold
+import androidx.compose.material.icons.filled.FormatBold
 import androidx.compose.material.icons.filled.FormatAlignLeft
 import androidx.compose.material.icons.filled.FormatListBulleted
 import androidx.compose.material.icons.filled.FormatQuote
@@ -114,7 +114,7 @@ private fun Toolbar(viewModel: EditorViewModel) {
         modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        ToolButton(Icons.Filled.Bold, "粗体") { viewModel.applyDecoration("**") }
+        ToolButton(Icons.Filled.FormatBold, "粗体") { viewModel.applyDecoration("**") }
         ToolButton(Icons.Filled.Title, "斜体标记占位") { viewModel.applyDecoration("*") }
         ToolButton(Icons.Filled.FormatAlignLeft, "一级标题") { viewModel.insertLinePrefix("# ") }
         ToolButton(Icons.Filled.FormatListBulleted, "无序列表") { viewModel.insertLinePrefix("- ") }

@@ -29,6 +29,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -44,6 +45,7 @@ import com.az.notes.domain.markdown.Heading
 import com.az.notes.ui.theme.LocalReadingStyle
 import com.mikepenz.markdown.m3.Markdown
 import kotlin.math.roundToInt
+import kotlinx.coroutines.launch
 
 /**
  * 预览页（§5.2 / §5.4 / §5.5）：Markdown 渲染 + 大纲底部弹窗 + 进度恢复。
@@ -64,6 +66,7 @@ fun ReaderScreen(
     val scrollState = rememberScrollState()
     var showOutline by rememberSaveable { mutableStateOf(false) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val scope = rememberCoroutineScope()
 
     // 每块近似像素高度（字号 × 行高 × 3 行/块 估算），用于块序号 <-> 像素换算
     val density = LocalDensity.current
@@ -73,8 +76,9 @@ fun ReaderScreen(
 
     // 恢复上次滚动位置
     LaunchedEffect(state.loading, state.initialProgress) {
-        if (!state.loading && state.initialProgress != null) {
-            val target = state.initialProgress.scrollIndex * pxPerBlock
+        val prog = state.initialProgress
+        if (!state.loading && prog != null) {
+            val target = prog.scrollIndex * pxPerBlock
             scrollState.scrollTo(target.coerceIn(0, scrollState.maxValue))
         }
     }
@@ -125,8 +129,8 @@ fun ReaderScreen(
                     .padding(horizontal = 16.dp, vertical = 12.dp)
             ) {
                 Markdown(
-                    state.content,
-                    Modifier.fillMaxWidth()
+                    content = state.content,
+                    modifier = Modifier.fillMaxWidth()
                 )
             }
         }
@@ -151,9 +155,11 @@ fun ReaderScreen(
                     state.headings.forEach { h ->
                         OutlineItem(h = h, onClick = {
                             showOutline = false
-                            scrollState.animateScrollTo(
-                                (h.blockIndex * pxPerBlock).coerceIn(0, scrollState.maxValue)
-                            )
+                            scope.launch {
+                                scrollState.animateScrollTo(
+                                    (h.blockIndex * pxPerBlock).coerceIn(0, scrollState.maxValue)
+                                )
+                            }
                         })
                     }
                 }
@@ -187,5 +193,5 @@ private fun OutlineItem(h: Heading, onClick: () -> Unit) {
 
 @Composable
 private fun CenterBox(content: @Composable () -> Unit) {
-    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center, content = content)
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { content() }
 }
