@@ -6,7 +6,8 @@
 
 [versions]
 # --- 构建工具链 ---
-# 兼容性说明: markdown 渲染库 0.39.0 基于 Compose 1.8.x / Kotlin 2.1.x 构建，
+# 兼容性说明: markdown 渲染库锁定 0.35.0，其 kotlin-stdlib 恰为 2.1.21，与本项目 Kotlin 工具链精确对齐
+# (0.39.0 会把 stdlib 顶到 2.3.0，2.1.21 编译器无法读取其元数据，故不采用)。
 # 因此本文件整体对齐一套 2025 年中期的稳定组合。
 agp = "8.11.1"
 kotlin = "2.1.21"
@@ -30,7 +31,7 @@ splashscreen = "1.0.1"
 
 # --- 三方库 ---
 coil = "3.2.0"
-markdownRenderer = "0.39.0"
+markdownRenderer = "0.35.0"
 # 同步引擎 (M3) 引入时启用: dav4jvm 需要 core library desugaring
 # dav4jvm = "4.1.1"
 # okhttp = "4.12.0"
