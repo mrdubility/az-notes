@@ -61,14 +61,16 @@ class SyncEngine @Inject constructor(
     /** 扫描两端并与基线三方对比，产出待执行操作计划。 */
     suspend fun plan(config: SyncConfig, onStatus: (String) -> Unit): SyncPlan {
         val vault = requireVault()
-        val client = buildClient(config)
+        val client = buildClient(config) { attempt ->
+            onStatus("触发服务端限流，自动等待重试（第 $attempt 次）…")
+        }
 
         onStatus("正在扫描本地文件…")
         val local = withContext(Dispatchers.IO) { scanLocal(vault) }
 
         onStatus("正在扫描远端目录…")
-        val remote = client.listAll { scanned ->
-            onStatus("正在扫描远端目录（已扫描 $scanned 个目录）…")
+        val remote = client.listAll { scanned, discoveredFiles ->
+            onStatus("正在扫描远端目录（已扫描 $scanned 个目录，发现 $discoveredFiles 个文件）…")
         }.filter { !it.isDirectory && !isIgnoredPath(it.path) }.associateBy { it.path }
 
         val baseline = withContext(Dispatchers.IO) { baselineDao.getAll() }.associateBy { it.path }
@@ -189,7 +191,6 @@ class SyncEngine @Inject constructor(
         onProgress: (done: Int, total: Int, label: String) -> Unit
     ): SyncSummary {
         val vault = requireVault()
-        val client = buildClient(config)
 
         var uploaded = 0
         var downloaded = 0
@@ -200,8 +201,13 @@ class SyncEngine @Inject constructor(
         val failedPaths = HashSet<String>()
         val logs = ArrayList<SyncLogEntity>()
         val total = plan.ops.size
+        var progressIndex = 0
+        val client = buildClient(config) { attempt ->
+            onProgress(progressIndex, total, "触发服务端限流，自动等待重试（第 $attempt 次）…")
+        }
 
         plan.ops.forEachIndexed { index, op ->
+            progressIndex = index
             onProgress(index, total, "${op.type.label()} ${op.path}")
             var ok = false
             var error: String? = null
@@ -407,8 +413,16 @@ class SyncEngine @Inject constructor(
         return vault
     }
 
-    private fun buildClient(config: SyncConfig): WebDavClient {
+    private fun buildClient(
+        config: SyncConfig,
+        onRateLimited: (attempt: Int) -> Unit = {}
+    ): WebDavClient {
         if (!config.configured) throw IOException("请先填写服务器地址与账号")
-        return WebDavClient(config.baseUrl, config.username, credentialStore.getPassword())
+        return WebDavClient(
+            config.baseUrl,
+            config.username,
+            credentialStore.getPassword(),
+            onRateLimited
+        )
     }
 }

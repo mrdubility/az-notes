@@ -1,5 +1,6 @@
 package com.az.notes.ui.sync
 
+import android.widget.Toast
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -35,11 +36,13 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -76,6 +79,14 @@ fun SyncScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     val logs by viewModel.logs.collectAsStateWithLifecycle()
     var modeSheet by remember { mutableStateOf(false) }
+
+    // 连接测试结果用 Toast 弹出；展示后立即消费，避免重组 / 重建时重复提示
+    val context = LocalContext.current
+    LaunchedEffect(state.testMessage) {
+        val message = state.testMessage ?: return@LaunchedEffect
+        Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+        viewModel.clearTestMessage()
+    }
 
     Scaffold(
         topBar = {
@@ -297,13 +308,6 @@ private fun ServerSection(
             ) {
                 Text(stringResource(R.string.sync_test))
             }
-        }
-        state.testMessage?.let { message ->
-            Text(
-                text = message,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
         }
     }
 }

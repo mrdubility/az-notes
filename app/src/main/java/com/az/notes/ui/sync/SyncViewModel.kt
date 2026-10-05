@@ -123,7 +123,7 @@ class SyncViewModel @Inject constructor(
                 },
                 onFailure = { e ->
                     _state.update {
-                        it.copy(phase = SyncPhase.IDLE, testMessage = "连接失败：${e.message ?: "未知错误"}")
+                        it.copy(phase = SyncPhase.IDLE, testMessage = e.message ?: "连接失败：未知错误")
                     }
                 }
             )
@@ -193,5 +193,10 @@ class SyncViewModel @Inject constructor(
     /** 收起完成 / 失败提示。 */
     fun dismissResult() {
         _state.update { it.copy(phase = SyncPhase.IDLE, summary = null, error = null) }
+    }
+
+    /** Toast 展示后清除连接测试结果，防止重组 / 重建时重复弹出。 */
+    fun clearTestMessage() {
+        _state.update { it.copy(testMessage = null) }
     }
 }

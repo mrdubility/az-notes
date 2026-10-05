@@ -3,7 +3,7 @@
 
     <!-- 权限引导 -->
     <string name="permission_title">授予所有文件访问权限</string>
-    <string name="permission_subtitle">Az Notes 直接读取你的 Obsidian 库（Vault）文件夹，需要“所有文件访问权限”。本应用不上架 Google Play，仅在本机读写你的笔记。</string>
+    <string name="permission_subtitle">Az Notes 直接读取你的笔记库（Vault）文件夹，需要“所有文件访问权限”。本应用不上架 Google Play，仅在本机读写你的笔记。</string>
     <string name="permission_grant">去系统设置授权</string>
     <string name="permission_opened_hint">授权完成后返回本应用，选择你的 Vault 目录即可开始。</string>
     <string name="permission_granted">已授权，进入选择目录</string>
@@ -11,7 +11,7 @@
     <!-- Vault 选择 -->
     <string name="vault_title">选择 Vault 目录</string>
     <string name="vault_path_hint">Vault 绝对路径</string>
-    <string name="vault_pick_hint">点击下方按钮，从系统选择器中挑选你的 Obsidian 仓库（Vault）文件夹。</string>
+    <string name="vault_pick_hint">点击下方按钮，从系统选择器中挑选你的笔记仓库（Vault）文件夹。</string>
     <string name="vault_pick_empty">尚未选择目录</string>
     <string name="vault_pick_button">选择文件夹</string>
     <string name="vault_pick_common">常用目录</string>
