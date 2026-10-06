@@ -9,8 +9,8 @@ enum class FontFamilyPreference { SANS, SERIF, MONO }
 /** 笔记列表排序方式（主页右上角可切换） */
 enum class NoteSortOrder { MODIFIED_DESC, MODIFIED_ASC, NAME_ASC, NAME_DESC }
 
-/** 右下角加号：点击时执行的默认行为（长按始终弹出全部选项） */
-enum class FabAction { NEW_NOTE, NEW_FOLDER, NEW_TASK, SHOW_MENU }
+/** 右下角加号：点击时执行的默认行为（长按始终弹出全部选项）；顺序与加号弹出菜单一致。 */
+enum class FabAction { NEW_NOTE, NEW_TASK, NEW_FOLDER, SHOW_MENU }
 
 /** 应用语言：跟随系统 / 简体中文 / English；[tag] 为 Locale 标签（null = 跟随系统）。 */
 enum class AppLanguage(val tag: String?) { SYSTEM(null), ZH("zh"), EN("en") }

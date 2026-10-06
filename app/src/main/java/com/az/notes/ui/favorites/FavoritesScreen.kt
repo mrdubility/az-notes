@@ -27,8 +27,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -38,6 +40,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -63,14 +66,19 @@ fun FavoritesScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
+    val context = LocalContext.current
 
-    // 一次性提示（取消收藏等）
-    val stateMessage = state.message?.resolve()
+    // 一次性提示（取消收藏等）；可撤销操作显示长横幅与「撤销」按钮
+    val undoLabel = stringResource(R.string.action_undo)
     LaunchedEffect(state.message) {
-        stateMessage?.let {
-            snackbarHostState.showSnackbar(it)
-            viewModel.consumeMessage()
-        }
+        val msg = state.message ?: return@LaunchedEffect
+        val result = snackbarHostState.showSnackbar(
+            message = msg.text.resolve(context),
+            actionLabel = if (msg.undo != null) undoLabel else null,
+            duration = if (msg.undo != null) SnackbarDuration.Long else SnackbarDuration.Short
+        )
+        if (result == SnackbarResult.ActionPerformed) msg.undo?.invoke()
+        viewModel.consumeMessage()
     }
 
     Scaffold(

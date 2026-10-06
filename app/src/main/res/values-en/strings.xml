@@ -29,6 +29,7 @@
     <string name="action_outline">Outline</string>
     <string name="action_back">Back</string>
     <string name="action_save">Save</string>
+    <string name="action_undo">Undo</string>
 
     <!-- Home note list -->
     <string name="home_search_hint">Search all notes</string>
@@ -173,7 +174,7 @@
     <string name="settings_fab_action_new_folder">New folder</string>
     <string name="settings_fab_action_menu">Show options menu</string>
     <string name="settings_fab_action_new_task">New task</string>
-    <string name="settings_share_folder">Share folder</string>
+    <string name="settings_share_folder">Location for shared notes</string>
     <string name="settings_share_folder_current">Current: %1$s</string>
     <string name="settings_share_folder_root">Default: vault root</string>
     <string name="settings_trash_retention">Auto-clean Trash</string>

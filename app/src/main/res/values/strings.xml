@@ -29,6 +29,7 @@
     <string name="action_outline">大纲</string>
     <string name="action_back">返回</string>
     <string name="action_save">保存</string>
+    <string name="action_undo">撤销</string>
 
     <!-- 主页笔记列表 -->
     <string name="home_search_hint">搜索全部笔记</string>
@@ -173,7 +174,7 @@
     <string name="settings_fab_action_new_folder">新建文件夹</string>
     <string name="settings_fab_action_menu">弹出选项菜单</string>
     <string name="settings_fab_action_new_task">新建待办</string>
-    <string name="settings_share_folder">分享文件夹</string>
+    <string name="settings_share_folder">接收分享的笔记位置</string>
     <string name="settings_share_folder_current">当前：%1$s</string>
     <string name="settings_share_folder_root">默认：Vault 根目录</string>
     <string name="settings_trash_retention">回收站自动清理</string>

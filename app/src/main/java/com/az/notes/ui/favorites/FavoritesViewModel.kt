@@ -6,6 +6,7 @@ import com.az.notes.R
 import com.az.notes.data.settings.SettingsRepository
 import com.az.notes.data.storage.VaultRepository
 import com.az.notes.domain.model.FileNode
+import com.az.notes.ui.common.UiMessage
 import com.az.notes.ui.common.UiText
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
@@ -22,8 +23,8 @@ data class FavoritesUiState(
     val loading: Boolean = true,
     /** 收藏笔记列表（按修改时间倒序；跨文件夹、不区分层级） */
     val items: List<FileNode> = emptyList(),
-    /** 一次性提示（Snackbar），消费后清空 */
-    val message: UiText? = null
+    /** 一次性提示（Snackbar），消费后清空；携带撤销动作时横幅右侧显示「撤销」按钮 */
+    val message: UiMessage? = null
 )
 
 /**
@@ -73,11 +74,19 @@ class FavoritesViewModel @Inject constructor(
         }
     }
 
-    /** 取消收藏（列表中直接操作）；设置变化驱动列表自动收敛。 */
+    /** 取消收藏（列表中直接操作）；横幅可撤销恢复收藏，设置变化驱动列表自动收敛。 */
     fun removeFavorite(node: FileNode) {
         viewModelScope.launch {
-            settingsRepository.removeFavorite(node.relativePath)
-            _state.update { it.copy(message = UiText.of(R.string.msg_unfavorited, node.name)) }
+            val rel = node.relativePath
+            settingsRepository.removeFavorite(rel)
+            _state.update {
+                it.copy(
+                    message = UiMessage(
+                        text = UiText.of(R.string.msg_unfavorited, node.name),
+                        undo = { viewModelScope.launch { settingsRepository.addFavorite(rel) } }
+                    )
+                )
+            }
         }
     }
 

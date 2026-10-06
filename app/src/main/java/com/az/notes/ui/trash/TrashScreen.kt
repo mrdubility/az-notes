@@ -30,8 +30,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -74,11 +76,17 @@ fun TrashScreen(
     var purgeConfirm by remember { mutableStateOf(false) }
     val context = LocalContext.current
 
+    // 一次性提示（恢复/永久删除/清空结果）；可撤销操作显示长横幅与「撤销」按钮
+    val undoLabel = stringResource(R.string.action_undo)
     LaunchedEffect(state.message) {
-        state.message?.let {
-            snackbarHostState.showSnackbar(it.resolve(context))
-            viewModel.consumeMessage()
-        }
+        val msg = state.message ?: return@LaunchedEffect
+        val result = snackbarHostState.showSnackbar(
+            message = msg.text.resolve(context),
+            actionLabel = if (msg.undo != null) undoLabel else null,
+            duration = if (msg.undo != null) SnackbarDuration.Long else SnackbarDuration.Short
+        )
+        if (result == SnackbarResult.ActionPerformed) msg.undo?.invoke()
+        viewModel.consumeMessage()
     }
 
     Scaffold(

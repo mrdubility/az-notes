@@ -49,7 +49,9 @@ class MainActivity : ComponentActivity() {
         }
         super.onCreate(savedInstanceState)
 
-        handleShareIntent(intent)
+        // 仅在全新启动时处理分享 intent：配置变化 / 进程重建时 savedInstanceState 非空，
+        // 跳过可避免分享内容重放（重复建笔记并跳进编辑页）
+        if (savedInstanceState == null) handleShareIntent(intent)
 
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.auto(
@@ -89,7 +91,11 @@ class MainActivity : ComponentActivity() {
                 intent.getCharSequenceExtra(Intent.EXTRA_PROCESS_TEXT)?.toString()
             else -> null
         }
-        if (!text.isNullOrBlank()) mainViewModel.setSharedText(text)
+        if (!text.isNullOrBlank()) {
+            mainViewModel.setSharedText(text)
+            // 消费后清掉启动 intent：Activity 重建时 getIntent() 不再包含分享文本
+            setIntent(Intent())
+        }
     }
 
     private companion object {

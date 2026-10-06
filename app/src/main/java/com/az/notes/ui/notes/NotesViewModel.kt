@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.az.notes.R
 import com.az.notes.data.local.ProgressRepository
 import com.az.notes.data.settings.SettingsRepository
+import com.az.notes.data.storage.TrashItem
 import com.az.notes.data.storage.TrashRepository
 import com.az.notes.data.storage.VaultRepository
 import com.az.notes.data.sync.SyncEngine
@@ -13,6 +14,7 @@ import com.az.notes.domain.model.AppSettings
 import com.az.notes.domain.model.FabAction
 import com.az.notes.domain.model.FileNode
 import com.az.notes.domain.model.NoteSortOrder
+import com.az.notes.ui.common.UiMessage
 import com.az.notes.ui.common.UiText
 import com.az.notes.ui.common.toUiText
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -70,8 +72,8 @@ data class NotesUiState(
     /** 批量移动对话框的目标文件夹列表（null = 尚未加载） */
     val moveTargets: List<FileNode>? = null,
     val error: UiText? = null,
-    /** 一次性提示（Snackbar），消费后清空 */
-    val message: UiText? = null
+    /** 一次性提示（Snackbar），消费后清空；携带撤销动作时横幅右侧显示「撤销」按钮 */
+    val message: UiMessage? = null
 ) {
     val currentDir: String? get() = dirStack.lastOrNull()
     val atRoot: Boolean get() = dirStack.isEmpty()
@@ -244,21 +246,23 @@ class NotesViewModel @Inject constructor(
         viewModelScope.launch {
             val newName = resolveNewName(node, input)
             if (newName == null) {
-                _state.update { it.copy(message = UiText.of(R.string.msg_invalid_name)) }
+                _state.update { it.copy(message = UiMessage(UiText.of(R.string.msg_invalid_name))) }
                 return@launch
             }
             if (newName == node.name) return@launch
             val parent = File(node.absolutePath).parent
             if (parent == null) {
-                _state.update { it.copy(message = UiText.of(R.string.msg_rename_failed)) }
+                _state.update { it.copy(message = UiMessage(UiText.of(R.string.msg_rename_failed))) }
                 return@launch
             }
             val target = File(parent, newName).absolutePath
             val ok = withContext(Dispatchers.IO) { vaultRepository.rename(node.absolutePath, target) }
             _state.update {
                 it.copy(
-                    message = UiText.of(
-                        if (ok) R.string.msg_renamed else R.string.msg_rename_failed_exists
+                    message = UiMessage(
+                        UiText.of(
+                            if (ok) R.string.msg_renamed else R.string.msg_rename_failed_exists
+                        )
                     )
                 )
             }
@@ -283,29 +287,41 @@ class NotesViewModel @Inject constructor(
         }
     }
 
-    /** 删除：启用回收站时移入回收站（可恢复）；关闭时直接物理删除（设置页有警示确认）。 */
+    /** 删除：启用回收站时移入回收站（横幅可撤销恢复）；关闭时直接物理删除（设置页有警示确认）。 */
     fun delete(node: FileNode) {
         viewModelScope.launch {
             val vault = currentSettings.vaultPath
             if (vault.isNullOrBlank()) {
-                _state.update { it.copy(message = UiText.of(R.string.home_no_vault)) }
+                _state.update { it.copy(message = UiMessage(UiText.of(R.string.home_no_vault))) }
                 return@launch
             }
             val toTrash = currentSettings.trashEnabled
-            val ok = withContext(Dispatchers.IO) {
-                if (toTrash) trashRepository.moveToTrash(vault, node.absolutePath)
-                else vaultRepository.delete(node.absolutePath)
-            }
+            val trashed = if (toTrash) {
+                withContext(Dispatchers.IO) { trashRepository.moveToTrash(vault, node.absolutePath) }
+            } else null
+            val ok = if (toTrash) trashed != null
+            else withContext(Dispatchers.IO) { vaultRepository.delete(node.absolutePath) }
             _state.update {
                 it.copy(
                     message = when {
-                        !ok -> UiText.of(R.string.msg_delete_failed)
-                        toTrash -> UiText.of(R.string.msg_moved_to_trash, node.name)
-                        else -> UiText.of(R.string.msg_deleted, node.name)
+                        !ok -> UiMessage(UiText.of(R.string.msg_delete_failed))
+                        trashed != null -> UiMessage(
+                            text = UiText.of(R.string.msg_moved_to_trash, node.name),
+                            undo = undoRestoreFromTrash(vault, trashed)
+                        )
+                        else -> UiMessage(UiText.of(R.string.msg_deleted, node.name))
                     }
                 )
             }
             if (ok) reloadItems(pullRefresh = false)
+        }
+    }
+
+    /** 撤销入口：把刚移入回收站的条目恢复到 Vault 原路径并刷新列表。 */
+    private fun undoRestoreFromTrash(vault: String, item: TrashItem): () -> Unit = {
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { trashRepository.restore(vault, item) }
+            reloadItems(pullRefresh = false)
         }
     }
 
@@ -320,7 +336,7 @@ class NotesViewModel @Inject constructor(
             val snapshot = runCatching { settingsRepository.settings.first() }.getOrNull()
             val vault = snapshot?.vaultPath ?: currentSettings.vaultPath
             if (vault.isNullOrBlank()) {
-                _state.update { it.copy(message = UiText.of(R.string.home_no_vault)) }
+                _state.update { it.copy(message = UiMessage(UiText.of(R.string.home_no_vault))) }
                 return@launch
             }
             // 分享笔记默认保存文件夹：设置页可配置（相对 Vault 根），留空时存入当前目录
@@ -337,7 +353,7 @@ class NotesViewModel @Inject constructor(
                 }
             }.getOrNull()
             if (createdPath == null) {
-                _state.update { it.copy(message = UiText.of(R.string.msg_share_note_failed)) }
+                _state.update { it.copy(message = UiMessage(UiText.of(R.string.msg_share_note_failed))) }
                 return@launch
             }
             reloadItems(pullRefresh = false)
@@ -350,7 +366,7 @@ class NotesViewModel @Inject constructor(
         viewModelScope.launch {
             val vault = currentSettings.vaultPath
             if (vault.isNullOrBlank()) {
-                _state.update { it.copy(message = UiText.of(R.string.home_no_vault)) }
+                _state.update { it.copy(message = UiMessage(UiText.of(R.string.home_no_vault))) }
                 return@launch
             }
             val dir = _state.value.currentDir ?: vault
@@ -363,7 +379,7 @@ class NotesViewModel @Inject constructor(
                 }
             }.getOrNull()
             if (createdPath == null) {
-                _state.update { it.copy(message = UiText.of(R.string.msg_note_create_failed)) }
+                _state.update { it.copy(message = UiMessage(UiText.of(R.string.msg_note_create_failed))) }
                 return@launch
             }
             reloadItems(pullRefresh = false)
@@ -376,7 +392,7 @@ class NotesViewModel @Inject constructor(
         viewModelScope.launch {
             val vault = currentSettings.vaultPath
             if (vault.isNullOrBlank()) {
-                _state.update { it.copy(message = UiText.of(R.string.home_no_vault)) }
+                _state.update { it.copy(message = UiMessage(UiText.of(R.string.home_no_vault))) }
                 return@launch
             }
             val dir = _state.value.currentDir ?: vault
@@ -388,7 +404,7 @@ class NotesViewModel @Inject constructor(
                 }
             }.getOrNull()
             if (createdPath == null) {
-                _state.update { it.copy(message = UiText.of(R.string.msg_note_create_failed)) }
+                _state.update { it.copy(message = UiMessage(UiText.of(R.string.msg_note_create_failed))) }
                 return@launch
             }
             reloadItems(pullRefresh = false)
@@ -401,12 +417,12 @@ class NotesViewModel @Inject constructor(
         viewModelScope.launch {
             val vault = currentSettings.vaultPath
             if (vault.isNullOrBlank()) {
-                _state.update { it.copy(message = UiText.of(R.string.home_no_vault)) }
+                _state.update { it.copy(message = UiMessage(UiText.of(R.string.home_no_vault))) }
                 return@launch
             }
             val name = VaultRepository.sanitizeEntryName(input)
             if (name == null) {
-                _state.update { it.copy(message = UiText.of(R.string.msg_invalid_name)) }
+                _state.update { it.copy(message = UiMessage(UiText.of(R.string.msg_invalid_name))) }
                 return@launch
             }
             val dir = _state.value.currentDir ?: vault
@@ -416,8 +432,8 @@ class NotesViewModel @Inject constructor(
             }
             _state.update {
                 it.copy(
-                    message = if (ok) UiText.of(R.string.msg_folder_created, name)
-                    else UiText.of(R.string.msg_folder_create_failed)
+                    message = if (ok) UiMessage(UiText.of(R.string.msg_folder_created, name))
+                    else UiMessage(UiText.of(R.string.msg_folder_create_failed))
                 )
             }
             if (ok) reloadItems(pullRefresh = false)
@@ -503,8 +519,8 @@ class NotesViewModel @Inject constructor(
             val failed = paths.size - moved - skipped
             _state.update {
                 it.copy(
-                    message = if (failed == 0) UiText.of(R.string.home_moved_count, moved)
-                    else UiText.of(R.string.home_move_partial, moved, failed)
+                    message = if (failed == 0) UiMessage(UiText.of(R.string.home_moved_count, moved))
+                    else UiMessage(UiText.of(R.string.home_move_partial, moved, failed))
                 )
             }
             exitSelectMode()
@@ -525,8 +541,17 @@ class NotesViewModel @Inject constructor(
             else settingsRepository.removeFavorite(rel)
             _state.update {
                 it.copy(
-                    message = if (adding) UiText.of(R.string.msg_favorited, node.name)
-                    else UiText.of(R.string.msg_unfavorited, node.name)
+                    // 收藏 / 取消收藏均可撤销：横幅右侧「撤销」执行反向操作
+                    message = UiMessage(
+                        text = if (adding) UiText.of(R.string.msg_favorited, node.name)
+                        else UiText.of(R.string.msg_unfavorited, node.name),
+                        undo = {
+                            viewModelScope.launch {
+                                if (adding) settingsRepository.removeFavorite(rel)
+                                else settingsRepository.addFavorite(rel)
+                            }
+                        }
+                    )
                 )
             }
         }
@@ -537,7 +562,7 @@ class NotesViewModel @Inject constructor(
         viewModelScope.launch {
             val vault = currentSettings.vaultPath
             if (vault.isNullOrBlank()) {
-                _state.update { it.copy(message = UiText.of(R.string.home_no_vault)) }
+                _state.update { it.copy(message = UiMessage(UiText.of(R.string.home_no_vault))) }
                 return@launch
             }
             val rels = _state.value.selectedPaths
@@ -546,7 +571,19 @@ class NotesViewModel @Inject constructor(
                 .toSet()
             if (rels.isEmpty()) return@launch
             settingsRepository.addFavorites(rels)
-            _state.update { it.copy(message = UiText.of(R.string.msg_favorited_count, rels.size)) }
+            _state.update {
+                it.copy(
+                    message = UiMessage(
+                        text = UiText.of(R.string.msg_favorited_count, rels.size),
+                        // 撤销批量收藏：只移除本次新增的路径，保留原有收藏
+                        undo = {
+                            viewModelScope.launch {
+                                settingsRepository.setFavorites(_state.value.favoritePaths - rels)
+                            }
+                        }
+                    )
+                )
+            }
             exitSelectMode()
         }
     }

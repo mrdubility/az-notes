@@ -43,12 +43,13 @@ class TrashRepository @Inject constructor(
      * 把 Vault 内的文件 / 目录移入回收站（删除的唯一入口，不物理删除）。
      * [absolutePath] 必须严格位于 [vaultPath] 内；批次名取当前时刻（同秒合并），
      * 先复制后删源；同批次出现同名副本时自动加序号，不覆盖已有回收内容。
+     * 返回入站后的条目（失败为 null），供调用方定位与撤销恢复。
      */
-    fun moveToTrash(vaultPath: String, absolutePath: String): Boolean {
+    fun moveToTrash(vaultPath: String, absolutePath: String): TrashItem? {
         val vault = File(vaultPath).absoluteFile
         val source = File(absolutePath).absoluteFile
-        val relativePath = relativeToVault(vault, source) ?: return false
-        if (!source.exists()) return false
+        val relativePath = relativeToVault(vault, source) ?: return null
+        if (!source.exists()) return null
         return runCatching {
             val batch = File(root(), stampNow())
             val target = uniqueMoveTarget(batch, relativePath)
@@ -60,8 +61,15 @@ class TrashRepository @Inject constructor(
                 source.copyTo(target, overwrite = false)
                 source.delete()
             }
-            true
-        }.getOrDefault(false)
+            TrashItem(
+                relativePath = target.absolutePath
+                    .removePrefix(batch.absolutePath)
+                    .trimStart('/', '\\'),
+                file = target,
+                size = if (target.isFile) target.length() else 0L,
+                isDirectory = target.isDirectory
+            )
+        }.getOrNull()
     }
 
     /**
@@ -102,8 +110,9 @@ class TrashRepository @Inject constructor(
     /**
      * 恢复到 Vault 原相对路径；目标已存在时自动加 ` (restored)` 后缀，绝不覆盖现有文件。
      * 目录条目仅重建空目录；恢复后清理批次内的空骨架目录与空批次。
+     * 返回实际恢复到的目标（失败为 null），供调用方定位与撤销。
      */
-    fun restore(vaultPath: String, item: TrashItem): Boolean = runCatching {
+    fun restore(vaultPath: String, item: TrashItem): File? = runCatching {
         val target = uniqueRestoreTarget(File(vaultPath, item.relativePath))
         if (item.isDirectory) {
             target.mkdirs()
@@ -114,8 +123,8 @@ class TrashRepository @Inject constructor(
             item.file.delete()
         }
         cleanupAfterRemove(item.file)
-        true
-    }.getOrDefault(false)
+        target
+    }.getOrNull()
 
     /** 永久删除单个条目（二次确认由 UI 负责）；顺带清理空骨架与空批次。 */
     fun delete(item: TrashItem): Boolean = runCatching {

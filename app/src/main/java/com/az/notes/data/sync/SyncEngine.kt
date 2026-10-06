@@ -566,7 +566,7 @@ class SyncEngine @Inject constructor(
             SyncOpType.DOWNLOAD -> client.download(op.path, File(vaultRoot, op.path))
             SyncOpType.DELETE_REMOTE -> client.delete(op.path)
             SyncOpType.TRASH_LOCAL ->
-                trashRepository.moveToTrash(vaultRoot, File(vaultRoot, op.path).absolutePath)
+                trashRepository.moveToTrash(vaultRoot, File(vaultRoot, op.path).absolutePath) != null
             SyncOpType.CONFLICT_COPY -> {
                 val backupRel = op.backupPath
                 if (backupRel.isNullOrEmpty()) {
