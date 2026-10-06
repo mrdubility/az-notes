@@ -92,6 +92,9 @@ class ReaderViewModel @Inject constructor(
 
     private var saveProgressJob: Job? = null
 
+    /** 退出清理防重入（读盘 / 删除为异步，双击返回时避免重复执行）。 */
+    private var exiting = false
+
     init {
         load(showLoading = true)
     }
@@ -183,6 +186,31 @@ class ReaderViewModel @Inject constructor(
     /** 重排待办（拖动排序）：[lineOrder] 为任务行号的期望顺序，仅调整这些行之间的相对顺序。 */
     fun reorderTasks(lineOrder: List<Int>) {
         mutateBody { body -> TaskExtractor.reorder(body, lineOrder) }
+    }
+
+    /**
+     * 新建待办（fresh）退出清理：正文为空（无条目）时删除占位文件（与空笔记 fresh 清理一致）。
+     * 读盘判断不依赖内存状态；随后执行 [onDone]（导航返回）。
+     */
+    fun exitWithTaskCleanup(fresh: Boolean, onDone: () -> Unit) {
+        if (!fresh) {
+            onDone()
+            return
+        }
+        if (exiting) return
+        exiting = true
+        viewModelScope.launch {
+            val empty = withContext(Dispatchers.IO) {
+                runCatching {
+                    val split = FrontmatterParser.split(vaultRepository.readText(absolutePath))
+                    split.value("note_type")?.trim()?.lowercase() == "task" && split.body.isBlank()
+                }.getOrDefault(false)
+            }
+            if (empty) {
+                withContext(Dispatchers.IO) { runCatching { vaultRepository.delete(absolutePath) } }
+            }
+            onDone()
+        }
     }
 
     /** 清除已展示的一次性提示。 */

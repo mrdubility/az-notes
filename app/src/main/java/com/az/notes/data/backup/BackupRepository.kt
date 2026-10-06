@@ -83,9 +83,10 @@ class BackupRepository @Inject constructor(
     /** 序列化为 JSON 文本（导出文件内容）。 */
     fun encode(payload: BackupPayload): String = json.encodeToString(payload)
 
-    /** 建议的导出文件名（系统「另存为」默认名）。 */
+    /** 建议的导出文件名（系统「另存为」默认名；config 段标识这是配置备份）。 */
     fun suggestedFileName(): String =
-        "az-notes-backup-" + SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date()) + ".json"
+        "az-notes-config-backup-" +
+            SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date()) + ".json"
 
     /** 当前语言（导入前后对比，判断是否需要重建界面）。 */
     suspend fun currentLanguage(): AppLanguage = settingsRepository.settings.first().language

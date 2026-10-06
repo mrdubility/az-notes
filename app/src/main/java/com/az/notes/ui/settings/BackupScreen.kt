@@ -115,7 +115,8 @@ fun BackupScreen(
                     icon = Icons.Outlined.Download,
                     title = stringResource(R.string.backup_import),
                     subtitle = stringResource(R.string.backup_import_subtitle),
-                    onClick = { if (!state.busy) importLauncher.launch(arrayOf("*/*")) }
+                    // 按 mime 过滤：文件选择器仅列出 json（“最近”列表同样只显示 json）
+                    onClick = { if (!state.busy) importLauncher.launch(arrayOf("application/json")) }
                 )
             }
             item(key = "hint") {

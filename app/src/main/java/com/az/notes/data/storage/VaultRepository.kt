@@ -343,8 +343,27 @@ class VaultRepository @Inject constructor() {
         if (!isSafeTarget(oldPath) || !isSafeTarget(newPath)) return false
         val src = File(oldPath)
         if (!src.exists()) return false
-        if (File(newPath).exists()) return false
-        return src.renameTo(File(newPath))
+        val dest = File(newPath)
+        if (dest.exists()) return false
+        if (src.renameTo(dest)) return true
+        // 跨文件系统回退：renameTo 底层是 rename(2)，跨挂载点（如 外部存储 ↔ 默认仓库
+        // App 私有目录）返回 EXDEV 必然失败。改为“先完整复制、成功后再删除源”：
+        // 复制失败不删源（优先防数据丢失），并清理可能残留的半成品副本。
+        val copied = runCatching {
+            if (src.isDirectory) {
+                src.copyRecursively(dest, overwrite = false)
+            } else {
+                val mtime = src.lastModified()
+                src.copyTo(dest, overwrite = false)
+                if (mtime > 0) dest.setLastModified(mtime)
+                true
+            }
+        }.getOrDefault(false)
+        if (!copied) {
+            runCatching { if (dest.exists()) dest.deleteRecursively() }
+            return false
+        }
+        return runCatching { src.deleteRecursively() }.getOrDefault(false)
     }
 
     /**

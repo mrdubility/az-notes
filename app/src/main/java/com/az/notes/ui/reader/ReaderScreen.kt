@@ -1,5 +1,6 @@
 package com.az.notes.ui.reader
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
@@ -68,7 +69,9 @@ import kotlinx.coroutines.launch
 fun ReaderScreen(
     viewModel: ReaderViewModel,
     onBack: () -> Unit,
-    onEdit: (String) -> Unit
+    onEdit: (String) -> Unit,
+    /** 刚从“新建待办”进入：退出（顶栏返回 / 系统返回键）时若无条目则清理占位文件 */
+    fresh: Boolean = false
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val listState = rememberLazyListState()
@@ -77,6 +80,11 @@ fun ReaderScreen(
     var restoredOnce by rememberSaveable { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
+
+    // 新建待办（fresh）退出清理：无条目（正文为空）时删除占位文件（与空笔记 fresh 清理一致）；
+    // 顶栏返回按钮与系统返回键走同一路径
+    val exit = { viewModel.exitWithTaskCleanup(fresh, onBack) }
+    BackHandler(enabled = fresh) { exit() }
 
     // 笔记属性面板：frontmatter 中除 note_type 外的属性（默认展开，可折叠）
     var attrsExpanded by rememberSaveable { mutableStateOf(true) }
@@ -190,7 +198,8 @@ fun ReaderScreen(
             TopAppBar(
                 title = { Text(stringResource(R.string.action_preview)) },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
+                    // 返回前先做 fresh 清理（无条目时删除占位文件）
+                    IconButton(onClick = exit) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.action_back))
                     }
                 },

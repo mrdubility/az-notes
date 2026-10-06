@@ -55,6 +55,8 @@ fun AzNotesNavHost(
             val sharedText by mainViewModel.sharedText.collectAsStateWithLifecycle()
             HomeScreen(
                 onOpenFile = { navController.navigate(Routes.reader(it)) },
+                // 新建待办：直接进待办预览页（fresh=true → 退出时无条目则清理占位文件）
+                onOpenTask = { navController.navigate(Routes.reader(it, fresh = true)) },
                 onOpenEditor = { path, fresh, fromShare ->
                     navController.navigate(Routes.editor(path, fresh, fromShare))
                 },
@@ -74,7 +76,13 @@ fun AzNotesNavHost(
 
         composable(
             route = Routes.READER,
-            arguments = listOf(navArgument("path") { type = NavType.StringType })
+            arguments = listOf(
+                navArgument("path") { type = NavType.StringType },
+                navArgument("fresh") {
+                    type = NavType.BoolType
+                    defaultValue = false
+                }
+            )
         ) { entry ->
             ReaderScreen(
                 viewModel = hiltViewModel(),
@@ -82,7 +90,8 @@ fun AzNotesNavHost(
                 onEdit = { path ->
                     // 去重：编辑页已是栈顶时直接回退复用，避免反复入栈
                     navController.navigateOrBack(entry, Routes.EDITOR_BASE, path, Routes.editor(path))
-                }
+                },
+                fresh = entry.arguments?.getBoolean("fresh") ?: false
             )
         }
 

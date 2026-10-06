@@ -80,6 +80,8 @@ import kotlinx.coroutines.withTimeoutOrNull
 @Composable
 fun HomeScreen(
     onOpenFile: (String) -> Unit,
+    /** 新建待办后直接进入待办预览页（fresh=true：退出时无条目则清理占位文件） */
+    onOpenTask: (String) -> Unit,
     onOpenEditor: (path: String, fresh: Boolean, fromShare: Boolean) -> Unit,
     onOpenTrash: () -> Unit,
     onOpenFavorites: () -> Unit,
@@ -288,7 +290,7 @@ fun HomeScreen(
                                         }
                                         FabAction.NEW_TASK -> viewModel.createTaskNote { path ->
                                             // 新建待办直接进入待办预览页（而非文本编辑页）
-                                            onOpenFile(path)
+                                            onOpenTask(path)
                                         }
                                         FabAction.NEW_FOLDER -> newFolderDialog = true
                                         FabAction.SHOW_MENU -> fabMenuOpen = true
@@ -324,7 +326,7 @@ fun HomeScreen(
                             onClick = {
                                 fabMenuOpen = false
                                 // 新建待办直接进入待办预览页（而非文本编辑页）
-                                viewModel.createTaskNote { path -> onOpenFile(path) }
+                                viewModel.createTaskNote { path -> onOpenTask(path) }
                             }
                         )
                         DropdownMenuItem(
