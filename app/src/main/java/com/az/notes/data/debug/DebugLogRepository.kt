@@ -56,9 +56,8 @@ data class DebugLogConfig(
 
 /** 存储占用状态（设置页展示）。 */
 data class DebugLogStatus(
+    val segmentCount: Int = 0,
     val totalBytes: Long = 0,
-    /** 单文件总量上限（超过即裁剪保留最新一半）。 */
-    val maxBytes: Long = DebugLogRepository.MAX_FILE_BYTES,
     val dirPath: String = ""
 )
 
@@ -68,8 +67,8 @@ private val Context.debugDataStore: DataStore<Preferences> by preferencesDataSto
  * Debug 日志收集（排查同步等问题用，默认关闭）。
  *
  * 格式：JSON Lines——每行一条独立 JSON（ts/level/type/msg/extra），便于 AI 与脚本解析。
- * 单文件存储：`debug.jsonl` 超过 [MAX_FILE_BYTES]（2 MB）即裁剪保留最新一半（对齐行边界、
- * tmp + rename 原子替换），总量恒定受限且永远能看到最近的日志。
+ * 分片：单片超过 [SEGMENT_MAX_BYTES] 即切换新片，最多保留 [SEGMENT_LIMIT] 片（超出删最旧），
+ * 总占用上限约 2 MB。
  * 写入路径全部同步落盘（synchronized + appendText）：崩溃捕获处理器等非协程上下文无法挂起，
  * 且单行追加耗时极低；配置经内存缓存同步读取（DataStore 仅异步持久化配置本身）。
  */
@@ -113,10 +112,6 @@ class DebugLogRepository @Inject constructor(
         // 应用启动即跟踪配置变化：开关调整后无需重启即刻生效
         scope.launch {
             runCatching { config.collect { snapshot = it } }
-        }
-        // 旧版多分片文件一次性并入单文件（升级后日志不丢、目录不残留）
-        scope.launch {
-            runCatching { migrateLegacySegments() }
         }
     }
 
@@ -168,31 +163,31 @@ class DebugLogRepository @Inject constructor(
 
     /** 存储占用状态（设置页展示）。 */
     fun status(): DebugLogStatus = synchronized(lock) {
+        val segments = listSegments()
         DebugLogStatus(
-            totalBytes = logFile().length(),
-            maxBytes = MAX_FILE_BYTES,
+            segmentCount = segments.size,
+            totalBytes = segments.sumOf { it.length() },
             dirPath = logDir.absolutePath
         )
     }
 
-    /** 读取全部日志行（按写入序；未启用过则为空）。 */
+    /** 读取全部日志行（按分片时间序 + 片内写入序；未启用过则为空）。 */
     fun readAllLines(): List<String> = synchronized(lock) {
         runCatching {
-            logFile().takeIf { it.isFile }
-                ?.readLines(Charsets.UTF_8)
-                ?.filter { it.isNotBlank() }
-                ?: emptyList()
+            listSegments().flatMap { seg ->
+                seg.readLines(Charsets.UTF_8).filter { it.isNotBlank() }
+            }
         }.getOrDefault(emptyList())
     }
 
-    /** 清空日志文件（含裁剪用临时文件）。 */
+    /** 清空全部分片。 */
     fun clearAll() {
         synchronized(lock) {
             runCatching { logDir.listFiles()?.forEach { it.delete() } }
         }
     }
 
-    /** 导出为单个 JSONL 文件到 SAF 目标；返回导出行数。 */
+    /** 导出为单个 JSONL 文件到 SAF 目标（合并全部现有分片）；返回导出行数。 */
     suspend fun exportTo(target: Uri): Int = withContext(Dispatchers.IO) {
         val lines = readAllLines()
         val out = context.contentResolver.openOutputStream(target, "wt")
@@ -207,63 +202,32 @@ class DebugLogRepository @Inject constructor(
 
     // ---------------------------------------------------------------- 内部
 
-    /** 日志文件（单文件；超限裁剪保留最新一半）。 */
-    private fun logFile(): File = File(logDir, FILE_NAME)
-
     private fun write(line: String) {
         synchronized(lock) {
             runCatching {
                 logDir.mkdirs()
-                logFile().appendText(line + "\n", Charsets.UTF_8)
-                trimIfNeeded()
+                currentSegment().appendText(line + "\n", Charsets.UTF_8)
+                trimSegments()
             }
         }
     }
 
-    /**
-     * 超限裁剪：文件 > [MAX_FILE_BYTES] 时保留最新 [KEEP_FILE_BYTES]（起点对齐到行首，
-     * 不切半行）；先写 tmp 再 rename 原子替换，常规写入路径仍为纯追加。
-     */
-    private fun trimIfNeeded() {
-        val file = logFile()
-        if (file.length() <= MAX_FILE_BYTES) return
-        val bytes = file.readBytes()
-        val start = lineStartAfter(bytes, (bytes.size - KEEP_FILE_BYTES).coerceAtLeast(0L).toInt())
-        // 越界 = 整段无换行（理论不可能）：放弃本次裁剪，不影响写入
-        if (start >= bytes.size) return
-        val kept = bytes.copyOfRange(start, bytes.size)
-        val tmp = File(logDir, "$FILE_NAME.tmp")
-        tmp.writeBytes(kept)
-        if (!tmp.renameTo(file)) {
-            file.writeBytes(kept)
-            tmp.delete()
-        }
+    /** 当前待写分片：最新一片未超限则续写，否则新建（文件名内嵌时间戳，文件名序即时间序）。 */
+    private fun currentSegment(): File {
+        val latest = listSegments().lastOrNull()
+        return if (latest != null && latest.length() < SEGMENT_MAX_BYTES) latest
+        else File(logDir, "$SEGMENT_PREFIX${fileStampFormat.format(Date())}.jsonl")
     }
 
-    /** [from] 之后第一个换行符的下一字节（行首）；找不到返回数组长度。 */
-    private fun lineStartAfter(bytes: ByteArray, from: Int): Int {
-        val newline = '\n'.code.toByte()
-        for (i in from until bytes.size) if (bytes[i] == newline) return i + 1
-        return bytes.size
-    }
+    private fun listSegments(): List<File> =
+        logDir.listFiles { f -> f.isFile && f.name.startsWith(SEGMENT_PREFIX) && f.name.endsWith(".jsonl") }
+            ?.sortedBy { it.name }
+            ?: emptyList()
 
-    /**
-     * 升级迁移：把旧版多分片（`debug-*.jsonl`）按文件名序并入单文件后删除。
-     * 无旧分片时只有一次目录列举，零写入。
-     */
-    private fun migrateLegacySegments() {
-        synchronized(lock) {
-            runCatching {
-                val legacy = logDir.listFiles { f ->
-                    f.isFile && f.name.startsWith(LEGACY_PREFIX) && f.name.endsWith(".jsonl")
-                }?.sortedBy { it.name } ?: return
-                if (legacy.isEmpty()) return
-                for (seg in legacy) {
-                    logFile().appendBytes(seg.readBytes())
-                    seg.delete()
-                }
-                trimIfNeeded()
-            }
+    private fun trimSegments() {
+        val segments = listSegments()
+        if (segments.size > SEGMENT_LIMIT) {
+            segments.take(segments.size - SEGMENT_LIMIT).forEach { it.delete() }
         }
     }
 
@@ -288,17 +252,16 @@ class DebugLogRepository @Inject constructor(
         return sb.toString()
     }
 
-    companion object {
-        /** 单文件总量上限（2 MB）：超过即裁剪，保留最新一半。 */
-        const val MAX_FILE_BYTES = 2 * 1024 * 1024L
+    private companion object {
+        const val DIR_NAME = "debug_logs"
+        const val SEGMENT_PREFIX = "debug-"
 
-        private const val DIR_NAME = "debug_logs"
-        private const val FILE_NAME = "debug.jsonl"
+        /** 单分片大小上限（256 KB）。 */
+        const val SEGMENT_MAX_BYTES = 256 * 1024L
 
-        /** 旧版分片文件名前缀（debug-<时间戳>.jsonl）。 */
-        private const val LEGACY_PREFIX = "debug-"
+        /** 分片数量上限（超出删最旧；8 片 × 256 KB ≈ 2 MB 总量上限）。 */
+        const val SEGMENT_LIMIT = 8
 
-        /** 裁剪后保留的尾段大小（1 MB）。 */
-        private const val KEEP_FILE_BYTES = 1024 * 1024L
+        val fileStampFormat = SimpleDateFormat("yyyyMMdd-HHmmss-SSS", Locale.US)
     }
 }

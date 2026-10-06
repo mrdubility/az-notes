@@ -278,8 +278,8 @@ fun DebugLogScreen(
                     Text(
                         text = stringResource(
                             R.string.debug_logs_storage_value,
-                            formatBytes(viewModel.status.totalBytes),
-                            formatBytes(viewModel.status.maxBytes)
+                            viewModel.status.segmentCount,
+                            formatBytes(viewModel.status.totalBytes)
                         ),
                         style = MaterialTheme.typography.bodyMedium
                     )
