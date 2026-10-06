@@ -4,8 +4,6 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.az.notes.data.local.ConflictRecordDao
 import com.az.notes.data.local.ConflictRecordEntity
-import com.az.notes.data.local.SyncLogDao
-import com.az.notes.data.local.SyncLogEntity
 import com.az.notes.data.settings.SettingsRepository
 import com.az.notes.data.sync.CredentialStore
 import com.az.notes.data.sync.SyncConfigRepository
@@ -64,7 +62,7 @@ data class SyncUiState(
 
 /**
  * 同步页 ViewModel（§6）：配置编辑（地址/账号/密码/远端目录/策略/过滤规则/自动同步）、
- * 连接测试、手动同步（Scan → Plan 预览确认 → Execute）、冲突记录与日志展示。
+ * 连接测试、手动同步（Scan → Plan 预览确认 → Execute）。冲突与日志展示见 SyncHistoryViewModel。
  */
 @HiltViewModel
 class SyncViewModel @Inject constructor(
@@ -73,17 +71,13 @@ class SyncViewModel @Inject constructor(
     private val credentialStore: CredentialStore,
     private val settingsRepository: SettingsRepository,
     private val syncScheduler: SyncScheduler,
-    syncLogDao: SyncLogDao,
     private val conflictRecordDao: ConflictRecordDao
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(SyncUiState())
     val state: StateFlow<SyncUiState> = _state.asStateFlow()
 
-    val logs: StateFlow<List<SyncLogEntity>> = syncLogDao.recent(100)
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
-
-    /** 冲突记录（最近 50 条）：供人工合并后清除（§6.2）。 */
+    /** 冲突记录（最近 50 条）：主页角标与同步页入口计数用。 */
     val conflicts: StateFlow<List<ConflictRecordEntity>> = conflictRecordDao.recent(50)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
@@ -134,9 +128,6 @@ class SyncViewModel @Inject constructor(
     fun updateSyncAfterSave(enabled: Boolean) = viewModelScope.launch {
         syncConfigRepository.setSyncAfterSave(enabled)
     }
-
-    /** 人工合并完成后清除全部冲突记录（顶栏角标随之消失）。 */
-    fun clearConflicts() = viewModelScope.launch { conflictRecordDao.clear() }
 
     fun updatePassword(password: String) {
         _state.update { it.copy(password = password) }

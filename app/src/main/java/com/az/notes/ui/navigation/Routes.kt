@@ -11,10 +11,16 @@ object Routes {
     /** 编辑器工具栏设置页（工具开关 / 顺序 / 恢复默认）；从设置页进入。 */
     const val TOOLBAR_SETTINGS = "toolbar_settings"
 
-    /** 同步设置页（服务器 / 账号 / 策略 / 手动同步 / 日志）；从设置 → 同步进入。 */
+    /** 同步设置页（服务器 / 账号 / 策略 / 手动同步）；从设置 → 同步进入。 */
     const val SYNC = "sync"
 
-    /** 回收站：同步时被远端删除波及的本地文件（保留 30 天）；从抽屉进入。 */
+    /** 冲突记录页；从同步页进入。 */
+    const val SYNC_CONFLICTS = "sync_conflicts"
+
+    /** 同步日志页；从同步页进入。 */
+    const val SYNC_LOGS = "sync_logs"
+
+    /** 回收站：同步时被远端删除波及的本地文件（保留天数可配置）；从抽屉进入。 */
     const val TRASH = "trash"
 
     /** 收藏夹：跨文件夹展示收藏的笔记（仅本地）；从抽屉进入。 */

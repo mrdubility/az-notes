@@ -70,7 +70,7 @@ import kotlinx.coroutines.launch
 /**
  * 主界面（§5.1 重设计）：抽屉菜单 + 笔记卡片列表。
  * 左上角抽屉 → 设置入口；右上角 → 立即同步 / 搜索 / 排序；右下角 FAB → 新建笔记；
- * 下拉刷新；条目右侧 ⋮ → 重命名 / 删除（文件夹同样支持）；文件夹可点击进入；隐藏 '.' 开头项。
+ * 下拉刷新；条目右侧 ⋮ → 收藏 / 重命名 / 移动 / 删除（文件夹除收藏外同样支持）；文件夹可点击进入；隐藏 '.' 开头项。
  *
  * 立即同步不离开本页：扫描进度、变更清单确认与结果均以弹窗展示
  * （与同步页共用 [SyncConfirmDialog] 等组件）；同步配置仍从设置 → 同步进入。
@@ -105,6 +105,7 @@ fun HomeScreen(
     var fabMenuOpen by remember { mutableStateOf(false) }
     var newFolderDialog by remember { mutableStateOf(false) }
     var moveDialog by remember { mutableStateOf(false) }
+    var moveSingle by remember { mutableStateOf<String?>(null) }
     var lastBackAt by remember { mutableStateOf(0L) }
     var dragActive by remember { mutableStateOf(false) }
 
@@ -253,7 +254,8 @@ fun HomeScreen(
                     onMoveSelected = {
                         viewModel.loadMoveTargets()
                         moveDialog = true
-                    }
+                    },
+                    onDeleteSelected = { viewModel.deleteSelected() }
                 )
             },
             floatingActionButton = {
@@ -348,6 +350,10 @@ fun HomeScreen(
                     onLongPress = { item -> viewModel.enterSelectMode(item.node.absolutePath) },
                     onToggleSelect = { item -> viewModel.toggleSelected(item.node.absolutePath) },
                     onToggleFavorite = { item -> viewModel.toggleFavorite(item.node) },
+                    onMove = { item ->
+                        viewModel.loadMoveTargets()
+                        moveSingle = item.node.absolutePath
+                    },
                     onLoadMore = { viewModel.loadMore() }
                 )
                 // 拖拽悬停提示：松开即把内容保存为新笔记
@@ -403,15 +409,20 @@ fun HomeScreen(
         )
     }
 
-    // 批量移动：目标文件夹选择（加载中先展示进度；公共组件与编辑页共用）
-    if (moveDialog) {
+    // 移动：目标文件夹选择（批量 / 单条共用；加载中先展示进度；与编辑页共用组件）
+    if (moveDialog || moveSingle != null) {
         MoveTargetDialog(
             vaultPath = state.vaultPath,
             targets = state.moveTargets,
-            onDismiss = { moveDialog = false },
-            onSelect = { dir ->
-                viewModel.moveSelectedTo(dir)
+            onDismiss = {
                 moveDialog = false
+                moveSingle = null
+            },
+            onSelect = { dir ->
+                val single = moveSingle
+                if (single != null) viewModel.moveTo(single, dir) else viewModel.moveSelectedTo(dir)
+                moveDialog = false
+                moveSingle = null
             }
         )
     }

@@ -17,6 +17,7 @@ import com.az.notes.domain.model.NoteSortOrder
 import com.az.notes.ui.common.UiMessage
 import com.az.notes.ui.common.UiText
 import com.az.notes.ui.common.toUiText
+import com.az.notes.work.SyncScheduler
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -83,9 +84,10 @@ data class NotesUiState(
 
 /**
  * 主页笔记列表 ViewModel：单层列目录（隐藏 '.' 开头项）、
- * 排序（修改时间/名称）、递归搜索、重命名、删除、新建笔记/文件夹。
+ * 排序（修改时间/名称）、递归搜索、重命名、移动、删除、新建笔记/文件夹。
  * 所有文件操作在 `Dispatchers.IO` 执行；偏好变化（Vault / 排序 / 预览字符数）自动重载。
- * 重命名成功后额外把改名同步到云端（MOVE），避免下次同步退化为删除 + 重传。
+ * 重命名 / 移动成功后额外把改名同步到云端（MOVE），避免下次同步退化为删除 + 重传；
+ * 新建 / 改名 / 移动 / 删除后还会调度一次防抖自动同步。
  * 同步运行状态来自 [SyncRunNotifier]：顶栏“同步中”指示与同步完成后刷新。
  */
 @HiltViewModel
@@ -94,6 +96,7 @@ class NotesViewModel @Inject constructor(
     private val settingsRepository: SettingsRepository,
     private val trashRepository: TrashRepository,
     private val syncEngine: SyncEngine,
+    private val syncScheduler: SyncScheduler,
     private val progressRepository: ProgressRepository,
     syncRunNotifier: SyncRunNotifier
 ) : ViewModel() {
@@ -270,6 +273,7 @@ class NotesViewModel @Inject constructor(
                 migrateFavorite(node.absolutePath, target)
                 reloadItems(pullRefresh = false)
                 syncRemoteRename(node.absolutePath, target)
+                scheduleSaveSync()
             }
         }
     }
@@ -285,6 +289,14 @@ class NotesViewModel @Inject constructor(
         viewModelScope.launch {
             runCatching { syncEngine.applyRemoteRename(vault, oldAbsPath, newAbsPath) }
         }
+    }
+
+    /**
+     * 文件变更（新建 / 改名 / 移动 / 删除）后调度一次防抖自动同步；
+     * 未配置同步或未开启“保存后自动同步”时内部自动跳过。
+     */
+    private fun scheduleSaveSync() {
+        viewModelScope.launch { runCatching { syncScheduler.scheduleSaveSync() } }
     }
 
     /** 删除：启用回收站时移入回收站（横幅可撤销恢复）；关闭时直接物理删除（设置页有警示确认）。 */
@@ -313,7 +325,10 @@ class NotesViewModel @Inject constructor(
                     }
                 )
             }
-            if (ok) reloadItems(pullRefresh = false)
+            if (ok) {
+                reloadItems(pullRefresh = false)
+                scheduleSaveSync()
+            }
         }
     }
 
@@ -322,6 +337,7 @@ class NotesViewModel @Inject constructor(
         viewModelScope.launch {
             withContext(Dispatchers.IO) { trashRepository.restore(vault, item) }
             reloadItems(pullRefresh = false)
+            scheduleSaveSync()
         }
     }
 
@@ -357,6 +373,7 @@ class NotesViewModel @Inject constructor(
                 return@launch
             }
             reloadItems(pullRefresh = false)
+            scheduleSaveSync()
             onCreated(createdPath)
         }
     }
@@ -383,6 +400,7 @@ class NotesViewModel @Inject constructor(
                 return@launch
             }
             reloadItems(pullRefresh = false)
+            scheduleSaveSync()
             onCreated(createdPath)
         }
     }
@@ -408,6 +426,7 @@ class NotesViewModel @Inject constructor(
                 return@launch
             }
             reloadItems(pullRefresh = false)
+            scheduleSaveSync()
             onCreated(createdPath)
         }
     }
@@ -436,7 +455,10 @@ class NotesViewModel @Inject constructor(
                     else UiMessage(UiText.of(R.string.msg_folder_create_failed))
                 )
             }
-            if (ok) reloadItems(pullRefresh = false)
+            if (ok) {
+                reloadItems(pullRefresh = false)
+                scheduleSaveSync()
+            }
         }
     }
 
@@ -525,6 +547,94 @@ class NotesViewModel @Inject constructor(
             }
             exitSelectMode()
             reloadItems(pullRefresh = false)
+            if (moved > 0) scheduleSaveSync()
+        }
+    }
+
+    /**
+     * 单条移动（条目三个点菜单入口）：把 [sourcePath] 移到 [targetDir]；
+     * 同目录 / 目标重名时给出提示，成功后迁移收藏、同步改名并刷新列表。
+     */
+    fun moveTo(sourcePath: String, targetDir: String) {
+        viewModelScope.launch {
+            val src = File(sourcePath)
+            if (File(targetDir).absolutePath == src.parentFile?.absolutePath) return@launch
+            val target = File(targetDir, src.name).absolutePath
+            if (File(target).exists()) {
+                _state.update { it.copy(message = UiMessage(UiText.of(R.string.msg_move_failed_exists))) }
+                return@launch
+            }
+            val ok = withContext(Dispatchers.IO) { vaultRepository.rename(sourcePath, target) }
+            if (ok) {
+                migrateFavorite(sourcePath, target)
+                reloadItems(pullRefresh = false)
+                syncRemoteRename(sourcePath, target)
+                scheduleSaveSync()
+                _state.update {
+                    it.copy(message = UiMessage(UiText.of(R.string.msg_moved_one, src.name)))
+                }
+            } else {
+                _state.update { it.copy(message = UiMessage(UiText.of(R.string.msg_move_failed))) }
+            }
+        }
+    }
+
+    /**
+     * 批量删除选中的条目：启用回收站时逐个移入（横幅可整体撤销恢复），
+     * 否则物理删除；部分失败时报成功 / 失败数量，完成后退出多选并刷新。
+     */
+    fun deleteSelected() {
+        viewModelScope.launch {
+            val vault = currentSettings.vaultPath
+            if (vault.isNullOrBlank()) {
+                _state.update { it.copy(message = UiMessage(UiText.of(R.string.home_no_vault))) }
+                return@launch
+            }
+            val paths = _state.value.selectedPaths.toList()
+            if (paths.isEmpty()) return@launch
+            val toTrash = currentSettings.trashEnabled
+            val trashed = mutableListOf<TrashItem>()
+            var done = 0
+            withContext(Dispatchers.IO) {
+                for (src in paths) {
+                    if (toTrash) {
+                        val item = trashRepository.moveToTrash(vault, src)
+                        if (item != null) {
+                            trashed += item
+                            done++
+                        }
+                    } else if (vaultRepository.delete(src)) {
+                        done++
+                    }
+                }
+            }
+            val failed = paths.size - done
+            _state.update {
+                it.copy(
+                    message = when {
+                        failed > 0 && done > 0 ->
+                            UiMessage(UiText.of(R.string.msg_delete_partial, done, failed))
+                        failed > 0 -> UiMessage(UiText.of(R.string.msg_delete_failed))
+                        toTrash -> UiMessage(
+                            text = UiText.of(R.string.msg_moved_to_trash_count, done),
+                            // 撤销批量删除：把本次移入回收站的条目全部恢复
+                            undo = {
+                                viewModelScope.launch {
+                                    withContext(Dispatchers.IO) {
+                                        trashed.forEach { trashRepository.restore(vault, it) }
+                                    }
+                                    reloadItems(pullRefresh = false)
+                                    scheduleSaveSync()
+                                }
+                            }
+                        )
+                        else -> UiMessage(UiText.of(R.string.msg_deleted_count, done))
+                    }
+                )
+            }
+            exitSelectMode()
+            reloadItems(pullRefresh = false)
+            if (done > 0) scheduleSaveSync()
         }
     }
 

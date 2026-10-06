@@ -120,9 +120,9 @@ class SettingsRepository @Inject constructor(
         it[Keys.DEFAULT_NOTE_NAME] = cleaned.ifBlank { "新建笔记" }
     }
 
-    /** 回收站自动清理天数（0 = 永不清理）。 */
+    /** 回收站自动清理天数（0 = 永不清理；上限 180 天）。 */
     suspend fun setTrashRetentionDays(days: Int) = edit {
-        it[Keys.TRASH_RETENTION] = days.coerceIn(0, 365)
+        it[Keys.TRASH_RETENTION] = days.coerceIn(0, 180)
     }
 
     /** 右下角加号点击的默认行为。 */

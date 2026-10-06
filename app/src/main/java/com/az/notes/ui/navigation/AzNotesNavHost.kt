@@ -26,6 +26,8 @@ import com.az.notes.ui.home.HomeScreen
 import com.az.notes.ui.reader.ReaderScreen
 import com.az.notes.ui.settings.SettingsScreen
 import com.az.notes.ui.settings.ToolbarSettingsScreen
+import com.az.notes.ui.sync.SyncConflictScreen
+import com.az.notes.ui.sync.SyncLogScreen
 import com.az.notes.ui.sync.SyncScreen
 import com.az.notes.ui.trash.TrashScreen
 import com.az.notes.util.StoragePermission
@@ -163,6 +165,22 @@ fun AzNotesNavHost(
 
         composable(Routes.SYNC) {
             SyncScreen(
+                onBack = { navController.popBackStack() },
+                onOpenConflicts = { navController.navigate(Routes.SYNC_CONFLICTS) },
+                onOpenLogs = { navController.navigate(Routes.SYNC_LOGS) },
+                viewModel = hiltViewModel()
+            )
+        }
+
+        composable(Routes.SYNC_CONFLICTS) {
+            SyncConflictScreen(
+                onBack = { navController.popBackStack() },
+                viewModel = hiltViewModel()
+            )
+        }
+
+        composable(Routes.SYNC_LOGS) {
+            SyncLogScreen(
                 onBack = { navController.popBackStack() },
                 viewModel = hiltViewModel()
             )

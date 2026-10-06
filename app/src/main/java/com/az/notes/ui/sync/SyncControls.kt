@@ -266,11 +266,8 @@ internal fun FilterEditDialog(
     )
 }
 
-/** 大文件上限选项（MB）与展示文案。 */
-internal val MAX_FILE_SIZE_OPTIONS = listOf(10, 20, 50, 100, 200, 500, 1024)
-
-internal fun fileSizeLabel(mb: Int): String =
-    if (mb >= 1024) "${mb / 1024} GB" else "$mb MB"
+/** 大文件上限展示文案（上限 500 MB）。 */
+internal fun fileSizeLabel(mb: Int): String = "$mb MB"
 
 internal fun formatLogTime(millis: Long): String =
     SimpleDateFormat("MM-dd HH:mm:ss", Locale.getDefault()).format(Date(millis))

@@ -17,7 +17,6 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -40,8 +39,8 @@ import com.az.notes.domain.model.NoteSortOrder
 import com.az.notes.domain.model.ThemeMode
 
 /**
- * 设置页通用控件：分组标题 / 设置行 / 单选行（浮层菜单）/ 输入与滑杆对话框 / 选项文案映射。
- * 自 SettingsScreen 拆分独立文件（纯 UI，逻辑不变）。
+ * 设置页通用控件：分组标题 / 设置行 / 单选行（浮层菜单）/ 文本输入对话框 / 选项文案映射。
+ * 自 SettingsScreen 拆分独立文件（纯 UI，逻辑不变）；滑杆对话框已迁至 ui/components 共用。
  */
 
 @Composable
@@ -154,57 +153,6 @@ internal fun TextInputDialog(
                 )
                 hint?.let {
                     Spacer(Modifier.height(8.dp))
-                    Text(
-                        text = it,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = { onConfirm(draft) }) {
-                Text(stringResource(R.string.action_confirm))
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text(stringResource(R.string.action_cancel))
-            }
-        }
-    )
-}
-
-/** 滑杆对话框（字号 / 行间距 / 预览字符数）。 */
-@Composable
-internal fun SliderDialog(
-    title: String,
-    value: Float,
-    valueRange: ClosedFloatingPointRange<Float>,
-    steps: Int = 0,
-    valueText: @Composable (Float) -> String,
-    hint: String? = null,
-    onConfirm: (Float) -> Unit,
-    onDismiss: () -> Unit
-) {
-    var draft by remember { mutableStateOf(value) }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(title) },
-        text = {
-            Column {
-                Text(
-                    text = valueText(draft),
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.primary
-                )
-                Slider(
-                    value = draft,
-                    onValueChange = { draft = it },
-                    valueRange = valueRange,
-                    steps = steps
-                )
-                hint?.let {
                     Text(
                         text = it,
                         style = MaterialTheme.typography.bodySmall,

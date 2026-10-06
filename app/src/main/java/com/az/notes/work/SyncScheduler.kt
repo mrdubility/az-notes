@@ -7,11 +7,14 @@ import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.workDataOf
 import com.az.notes.data.sync.SyncConfigRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withContext
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -54,6 +57,24 @@ class SyncScheduler @Inject constructor(
         val config = runCatching { syncConfigRepository.config.first() }.getOrNull() ?: return
         if (!config.configured || !config.syncAfterSave) return
         enqueueOneTime(WORK_SAVE, SAVE_DEBOUNCE_MS, SyncWorker.TRIGGER_SAVE)
+    }
+
+    /**
+     * 冲刷排队中的“保存后同步”：App 退到后台（onStop）时调用——若 30 秒防抖任务仍在等待，
+     * 替换为即时任务立即执行，缩小“退出应用后变更未上传”的窗口。
+     * （任务本身持久化在 WorkManager，进程被杀也会由系统兜底执行，此方法只是提前触发。）
+     */
+    suspend fun flushPendingSaveSync() {
+        val config = runCatching { syncConfigRepository.config.first() }.getOrNull() ?: return
+        if (!config.configured || !config.syncAfterSave) return
+        val infos = runCatching {
+            withContext(Dispatchers.IO) {
+                WorkManager.getInstance(context).getWorkInfosForUniqueWork(WORK_SAVE).get()
+            }
+        }.getOrNull() ?: return
+        if (infos.any { it.state == WorkInfo.State.ENQUEUED }) {
+            enqueueOneTime(WORK_SAVE, 0L, SyncWorker.TRIGGER_SAVE)
+        }
     }
 
     private fun enqueueOneTime(name: String, delayMs: Long, trigger: String) {

@@ -11,6 +11,7 @@ import androidx.compose.material.icons.automirrored.outlined.Sort
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Menu
+import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Sync
 import androidx.compose.material3.Badge
@@ -43,7 +44,7 @@ import com.az.notes.R
 import com.az.notes.domain.model.NoteSortOrder
 
 /**
- * 主页顶栏：抽屉/返回 + 标题（或搜索输入、多选计数）+ 同步/搜索/排序（或全选 / 移动）。
+ * 主页顶栏：抽屉/返回 + 标题（或搜索输入、多选计数）+ 同步/搜索/排序（或全选 + 批量操作菜单）。
  * 自 HomeScreen 拆分独立文件（纯 UI，逻辑不变）。
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -71,9 +72,11 @@ internal fun HomeTopBar(
     onExitSelect: () -> Unit,
     onSelectAll: () -> Unit,
     onFavoriteSelected: () -> Unit,
-    onMoveSelected: () -> Unit
+    onMoveSelected: () -> Unit,
+    onDeleteSelected: () -> Unit
 ) {
     var sortMenuOpen by remember { mutableStateOf(false) }
+    var selectMenuOpen by remember { mutableStateOf(false) }
     // 进入搜索时自动聚焦输入框（弹软键盘）
     val searchFocus = remember { FocusRequester() }
     LaunchedEffect(searchActive) {
@@ -134,14 +137,43 @@ internal fun HomeTopBar(
         actions = {
             when {
                 selectMode -> {
+                    // 全选留作独立快捷操作；收藏 / 移动 / 删除收进 ⋮ 菜单，便于后续扩展更多批量操作
                     TextButton(onClick = onSelectAll) {
                         Text(stringResource(R.string.home_select_all))
                     }
-                    TextButton(onClick = onFavoriteSelected, enabled = selectedCount > 0) {
-                        Text(stringResource(R.string.action_favorite))
-                    }
-                    TextButton(onClick = onMoveSelected, enabled = selectedCount > 0) {
-                        Text(stringResource(R.string.home_select_move))
+                    Box {
+                        IconButton(onClick = { selectMenuOpen = true }) {
+                            Icon(Icons.Outlined.MoreVert, stringResource(R.string.action_more))
+                        }
+                        DropdownMenu(
+                            expanded = selectMenuOpen,
+                            onDismissRequest = { selectMenuOpen = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.action_favorite)) },
+                                enabled = selectedCount > 0,
+                                onClick = {
+                                    selectMenuOpen = false
+                                    onFavoriteSelected()
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.home_select_move)) },
+                                enabled = selectedCount > 0,
+                                onClick = {
+                                    selectMenuOpen = false
+                                    onMoveSelected()
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.action_delete)) },
+                                enabled = selectedCount > 0,
+                                onClick = {
+                                    selectMenuOpen = false
+                                    onDeleteSelected()
+                                }
+                            )
+                        }
                     }
                 }
                 searchActive -> {

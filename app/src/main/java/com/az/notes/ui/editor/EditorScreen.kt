@@ -1,9 +1,6 @@
 package com.az.notes.ui.editor
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -59,7 +56,6 @@ import com.az.notes.ui.common.resolve
 import com.az.notes.ui.components.MoveTargetDialog
 import com.az.notes.ui.components.RenameDialog
 import com.az.notes.ui.theme.LocalReadingStyle
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -145,14 +141,12 @@ fun EditorScreen(
         }
     }
 
-    // —— 保存状态反馈：顶栏标题旁短暂显示；分享页首次保存弹「回列表」横幅 ——
-    var savedChipVisible by remember { mutableStateOf(false) }
+    // —— 保存状态反馈：顶栏标题旁文字常驻显示；分享页首次保存弹「回列表」横幅 ——
     var shareBannerShown by rememberSaveable { mutableStateOf(false) }
     val savedLabel = stringResource(R.string.editor_saved)
     val backToHomeLabel = stringResource(R.string.editor_back_to_home)
     LaunchedEffect(state.savedAt) {
         if (state.savedAt == null) return@LaunchedEffect
-        savedChipVisible = true
         if (fromShare && !shareBannerShown) {
             shareBannerShown = true
             val result = snackbarHostState.showSnackbar(
@@ -160,14 +154,9 @@ fun EditorScreen(
                 actionLabel = backToHomeLabel,
                 duration = SnackbarDuration.Long
             )
-            savedChipVisible = false
             if (result == SnackbarResult.ActionPerformed) exitToList()
-        } else {
-            delay(2000)
-            savedChipVisible = false
         }
     }
-    val statusVisible = !searchActive && (state.saving || state.dirty || savedChipVisible)
 
     // 匹配区间（查找栏计数与编辑器内高亮共用；纯文本查询不会跨换行）
     val matchRanges = remember(state.text, query) {
@@ -190,16 +179,10 @@ fun EditorScreen(
                 title = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(stringResource(R.string.action_edit))
-                        // 保存状态紧贴“编辑”右侧（保存中转圈 / 未保存 / 已保存）
-                        AnimatedVisibility(
-                            visible = statusVisible,
-                            enter = fadeIn(),
-                            exit = fadeOut()
-                        ) {
-                            Row {
-                                Spacer(Modifier.width(10.dp))
-                                SaveStatusChip(saving = state.saving, dirty = state.dirty)
-                            }
+                        // 保存状态紧贴“编辑”右侧常驻显示（保存中 / 未保存 / 已保存）
+                        if (!searchActive) {
+                            Spacer(Modifier.width(10.dp))
+                            SaveStatusText(saving = state.saving, dirty = state.dirty)
                         }
                     }
                 },

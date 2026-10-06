@@ -78,6 +78,15 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
+     * 退到后台时冲刷排队中的“保存后同步”：把 30 秒防抖任务提前为立即执行，
+     * 缩小用户退出应用后本地变更尚未上传的窗口（详见 SyncScheduler）。
+     */
+    override fun onStop() {
+        super.onStop()
+        mainViewModel.flushPendingSync()
+    }
+
+    /**
      * 系统分享（ACTION_SEND）与文本选择菜单的“处理文字”（ACTION_PROCESS_TEXT）入口：
      * 提取纯文本交给主页新建笔记并进入编辑页；其它 Intent 忽略。
      */

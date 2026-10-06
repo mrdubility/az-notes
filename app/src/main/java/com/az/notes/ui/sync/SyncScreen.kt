@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
@@ -20,7 +19,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -40,11 +38,14 @@ import com.az.notes.domain.model.SyncInterval
 import com.az.notes.domain.model.SyncMode
 import com.az.notes.ui.common.label
 import com.az.notes.ui.common.resolve
+import com.az.notes.ui.components.SliderDialog
 import com.az.notes.ui.components.SyncConfirmDialog
+import kotlin.math.roundToInt
 
 /**
  * 同步页（§6）：WebDAV / 坚果云配置（服务器 / 账号 / 应用密码 / 远端目录）、
- * 同步策略、手动同步（Scan → 弹窗预览确认 → Execute）、结果汇总与同步日志。
+ * 同步策略、自动同步、手动同步（Scan → 弹窗预览确认 → Execute）、结果汇总，
+ * 并提供冲突记录 / 同步日志的独立页面入口。
  *
  * 从设置 → 同步进入；主页右上角的“立即同步”不跳本页，而是在主页用同一套
  * 弹窗组件（[SyncConfirmDialog] 等）完成扫描 → 确认 → 执行。
@@ -53,12 +54,14 @@ import com.az.notes.ui.components.SyncConfirmDialog
 @Composable
 fun SyncScreen(
     onBack: () -> Unit,
+    onOpenConflicts: () -> Unit,
+    onOpenLogs: () -> Unit,
     viewModel: SyncViewModel = hiltViewModel()
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
-    val logs by viewModel.logs.collectAsStateWithLifecycle()
     val conflicts by viewModel.conflicts.collectAsStateWithLifecycle()
     var filterEditOpen by remember { mutableStateOf(false) }
+    var maxSizeDialog by remember { mutableStateOf(false) }
 
     // 连接测试结果用 Toast 弹出；展示后立即消费，避免重组 / 重建时重复提示
     val context = LocalContext.current
@@ -110,11 +113,10 @@ fun SyncScreen(
                 )
             }
             item {
-                ChoiceRow(
+                ClickableRow(
                     title = stringResource(R.string.sync_max_file_size_row),
-                    options = MAX_FILE_SIZE_OPTIONS.map { it to fileSizeLabel(it) },
-                    selected = state.config.maxFileSizeMb,
-                    onSelect = viewModel::updateMaxFileSizeMb
+                    value = fileSizeLabel(state.config.maxFileSizeMb),
+                    onClick = { maxSizeDialog = true }
                 )
             }
 
@@ -211,51 +213,21 @@ fun SyncScreen(
                 SyncPhase.IDLE -> Unit
             }
 
-            // —— 冲突记录（§6.2）：有记录时展示，人工合并后手动清除 ——
-            item { SectionHeader(stringResource(R.string.sync_conflict_title)) }
-            if (conflicts.isEmpty()) {
-                item {
-                    Text(
-                        text = stringResource(R.string.sync_conflict_empty),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
-                    )
-                }
-            } else {
-                item {
-                    Text(
-                        text = stringResource(R.string.sync_conflict_desc),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)
-                    )
-                }
-                // key 加前缀：两张表自增 id 均从 1 开始，裸 id 会在同一 LazyColumn 内重复导致崩溃
-                items(conflicts, key = { "conflict-${it.id}" }) { record -> ConflictRow(record) }
-                item {
-                    TextButton(
-                        onClick = viewModel::clearConflicts,
-                        modifier = Modifier.padding(horizontal = 12.dp)
-                    ) {
-                        Text(stringResource(R.string.sync_conflict_clear))
-                    }
-                }
+            // —— 同步记录：冲突记录与日志各自独立页面 ——
+            item { SectionHeader(stringResource(R.string.sync_section_history)) }
+            item {
+                ClickableRow(
+                    title = stringResource(R.string.sync_conflict_title),
+                    value = if (conflicts.isEmpty()) "" else conflicts.size.toString(),
+                    onClick = onOpenConflicts
+                )
             }
-
-            // —— 同步日志 ——
-            item { SectionHeader(stringResource(R.string.sync_log_title)) }
-            if (logs.isEmpty()) {
-                item {
-                    Text(
-                        text = stringResource(R.string.sync_log_empty),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
-                    )
-                }
-            } else {
-                items(logs, key = { "log-${it.id}" }) { log -> LogRow(log = log) }
+            item {
+                ClickableRow(
+                    title = stringResource(R.string.sync_log_title),
+                    value = "",
+                    onClick = onOpenLogs
+                )
             }
         }
     }
@@ -279,6 +251,22 @@ fun SyncScreen(
                 filterEditOpen = false
             },
             onDismiss = { filterEditOpen = false }
+        )
+    }
+
+    // 大文件上限：滑块调整（10-500 MB，步进 10 MB）
+    if (maxSizeDialog) {
+        SliderDialog(
+            title = stringResource(R.string.sync_max_file_size_row),
+            value = state.config.maxFileSizeMb.coerceIn(10, 500).toFloat(),
+            valueRange = 10f..500f,
+            steps = 48,
+            valueText = { fileSizeLabel((it / 10f).roundToInt() * 10) },
+            onConfirm = {
+                viewModel.updateMaxFileSizeMb(((it / 10f).roundToInt() * 10).coerceIn(10, 500))
+                maxSizeDialog = false
+            },
+            onDismiss = { maxSizeDialog = false }
         )
     }
 }

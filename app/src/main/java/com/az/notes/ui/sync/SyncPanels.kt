@@ -2,12 +2,10 @@ package com.az.notes.ui.sync
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.LinearProgressIndicator
@@ -18,19 +16,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.az.notes.R
-import com.az.notes.data.local.ConflictRecordEntity
-import com.az.notes.data.local.SyncLogEntity
-import com.az.notes.domain.model.SyncOpType
 import com.az.notes.domain.model.SyncSummary
-import com.az.notes.ui.common.label
 import com.az.notes.ui.common.resolve
 
 /**
- * 同步页进度与结果面板：扫描 / 执行进度、结果汇总、错误卡片、同步日志、冲突记录。
- * 自 SyncScreen 拆分独立文件（纯 UI，逻辑不变）。
+ * 同步页进度与结果面板：扫描 / 执行进度、结果汇总、错误卡片。
+ * 自 SyncScreen 拆分独立文件（纯 UI，逻辑不变）；日志与冲突记录已迁至 SyncHistoryScreens。
  */
 
 // ---------------------------------------------------------------- 进度与结果
@@ -164,112 +157,4 @@ internal fun ErrorCard(message: String, onDismiss: () -> Unit) {
     }
 }
 
-// ---------------------------------------------------------------- 日志
 
-@Composable
-internal fun LogRow(log: SyncLogEntity) {
-    val opType = runCatching { SyncOpType.valueOf(log.op) }.getOrNull()
-    val opLabel = opType?.label() ?: when (log.op) {
-        "BASELINE" -> stringResource(R.string.sync_op_baseline)
-        "REMOTE_MOVE" -> stringResource(R.string.sync_op_remote_move)
-        "AUTO_SYNC" -> stringResource(R.string.sync_op_auto_sync)
-        else -> log.op
-    }
-    Column(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp)
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                text = formatLogTime(log.ts),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.outline
-            )
-            Spacer(Modifier.width(8.dp))
-            Text(
-                text = opLabel,
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.weight(1f)
-            )
-            Text(
-                text = log.result,
-                style = MaterialTheme.typography.labelMedium,
-                color = if (log.result == "OK") MaterialTheme.colorScheme.primary
-                else MaterialTheme.colorScheme.error
-            )
-        }
-        if (log.path.isNotEmpty()) {
-            Spacer(Modifier.height(2.dp))
-            Text(
-                text = log.path,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-        }
-        log.detail?.takeIf { it.isNotEmpty() }?.let { detail ->
-            Spacer(Modifier.height(2.dp))
-            Text(
-                text = detail,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.outline,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis
-            )
-        }
-    }
-}
-
-// ---------------------------------------------------------------- 冲突记录
-
-/** 单条冲突记录：文件、解决方式与败方副本路径（§6.2）。 */
-@Composable
-internal fun ConflictRow(record: ConflictRecordEntity) {
-    Column(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp)
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                text = record.path,
-                style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.weight(1f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            Spacer(Modifier.width(8.dp))
-            Text(
-                text = formatLogTime(record.createdAt),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.outline
-            )
-        }
-        Spacer(Modifier.height(2.dp))
-        Text(
-            text = resolutionLabel(record.resolvedBy),
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.tertiary
-        )
-        if (record.backupPath.isNotEmpty()) {
-            Spacer(Modifier.height(2.dp))
-            Text(
-                text = record.backupPath,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-        }
-    }
-}
-
-/** 冲突解决方式的可读文案（resolved_by 形如「策略:胜方」）。 */
-@Composable
-internal fun resolutionLabel(resolvedBy: String): String = when {
-    resolvedBy.startsWith("CONFLICT_COPY") ->
-        if (resolvedBy.endsWith(":local")) stringResource(R.string.sync_resolve_conflict_local)
-        else stringResource(R.string.sync_resolve_conflict_remote)
-    resolvedBy.startsWith("LOCAL_FIRST") -> stringResource(R.string.sync_resolve_local_first)
-    resolvedBy.startsWith("REMOTE_FIRST") -> stringResource(R.string.sync_resolve_remote_first)
-    else -> resolvedBy
-}

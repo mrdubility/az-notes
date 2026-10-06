@@ -53,6 +53,7 @@ import com.az.notes.domain.model.FontFamilyPreference
 import com.az.notes.domain.model.NoteSortOrder
 import com.az.notes.domain.model.ThemeMode
 import com.az.notes.ui.components.MoveTargetDialog
+import com.az.notes.ui.components.SliderDialog
 import com.az.notes.util.LocaleHelper
 import kotlin.math.roundToInt
 
@@ -384,7 +385,7 @@ fun SettingsScreen(
         SliderDialog(
             title = stringResource(R.string.settings_trash_retention),
             value = settings.trashRetentionDays.toFloat(),
-            valueRange = 0f..365f,
+            valueRange = 0f..180f,
             valueText = { days -> retentionLabel(days.roundToInt()) },
             onConfirm = {
                 viewModel.setTrashRetentionDays(it.roundToInt())

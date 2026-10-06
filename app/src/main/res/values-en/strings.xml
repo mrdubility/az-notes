@@ -90,6 +90,10 @@
     <string name="msg_favorited_count">Added %1$d notes to Favorites</string>
     <string name="msg_move_failed">Failed to move</string>
     <string name="msg_move_failed_exists">Move failed: a file with the same name already exists in the target folder</string>
+    <string name="msg_moved_one">Moved "%1$s"</string>
+    <string name="msg_moved_to_trash_count">Moved %1$d item(s) to Trash</string>
+    <string name="msg_deleted_count">Deleted %1$d item(s)</string>
+    <string name="msg_delete_partial">Deleted %1$d, %2$d failed</string>
 
     <!-- Favorites (local only, not synced) -->
     <string name="fav_title">Favorites</string>
@@ -244,6 +248,7 @@
     <string name="sync_conflict_empty">No conflict records</string>
     <string name="sync_conflict_clear">Clear all</string>
     <string name="sync_conflict_desc">The following files had conflicts. The losing version was saved as a conflict copy; merge manually and clear the records.</string>
+    <string name="sync_section_history">Sync history</string>
     <string name="sync_mb_unit">%1$d MB</string>
 
     <!-- Sync enum names (policy / op type / interval / conflict resolution) -->

@@ -9,15 +9,12 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Edit
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -28,7 +25,7 @@ import androidx.compose.ui.unit.dp
 import com.az.notes.R
 
 /**
- * 编辑页局部组件：标题头 / 保存状态徽标 / 查找栏。
+ * 编辑页局部组件：标题头 / 保存状态文字 / 查找栏。
  * 自 EditorScreen 拆分独立文件（纯 UI，逻辑不变）。
  */
 
@@ -66,35 +63,24 @@ internal fun EditorTitleHeader(path: String, onRenameClick: () -> Unit) {
     }
 }
 
-/** 保存状态小徽标：保存中转圈 + 文案（顶栏标题旁展示）。 */
+/** 保存状态文字：紧贴顶栏“编辑”右侧常驻显示（保存中 / 未保存 / 已保存）。 */
 @Composable
-internal fun SaveStatusChip(saving: Boolean, dirty: Boolean) {
-    Surface(
-        shape = RoundedCornerShape(10.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.92f),
-        shadowElevation = 2.dp
-    ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-        ) {
-            if (saving) {
-                CircularProgressIndicator(modifier = Modifier.size(10.dp), strokeWidth = 1.5.dp)
-                Spacer(Modifier.width(5.dp))
+internal fun SaveStatusText(saving: Boolean, dirty: Boolean) {
+    Text(
+        text = stringResource(
+            when {
+                saving -> R.string.editor_saving
+                dirty -> R.string.editor_unsaved
+                else -> R.string.editor_saved
             }
-            Text(
-                text = stringResource(
-                    when {
-                        saving -> R.string.editor_saving
-                        dirty -> R.string.editor_unsaved
-                        else -> R.string.editor_saved
-                    }
-                ),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+        ),
+        style = MaterialTheme.typography.labelMedium,
+        color = when {
+            saving -> MaterialTheme.colorScheme.primary
+            dirty -> MaterialTheme.colorScheme.error
+            else -> MaterialTheme.colorScheme.onSurfaceVariant
         }
-    }
+    )
 }
 
 /** 查找栏：实时高亮全部匹配并显示数量。 */

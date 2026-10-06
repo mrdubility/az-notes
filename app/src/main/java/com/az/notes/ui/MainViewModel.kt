@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.az.notes.data.settings.SettingsRepository
 import com.az.notes.data.storage.VaultRepository
 import com.az.notes.domain.model.AppSettings
+import com.az.notes.work.SyncScheduler
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -20,7 +21,8 @@ import javax.inject.Inject
 @HiltViewModel
 class MainViewModel @Inject constructor(
     private val settingsRepository: SettingsRepository,
-    private val vaultRepository: VaultRepository
+    private val vaultRepository: VaultRepository,
+    private val syncScheduler: SyncScheduler
 ) : ViewModel() {
 
     /**
@@ -67,5 +69,10 @@ class MainViewModel @Inject constructor(
 
     fun resetVault() {
         viewModelScope.launch { settingsRepository.setVaultPath(null) }
+    }
+
+    /** App 退到后台时冲刷排队中的“保存后同步”（详见 SyncScheduler.flushPendingSaveSync）。 */
+    fun flushPendingSync() {
+        viewModelScope.launch { runCatching { syncScheduler.flushPendingSaveSync() } }
     }
 }

@@ -83,6 +83,7 @@ internal fun NotesListContent(
     onLongPress: (NoteListItem) -> Unit,
     onToggleSelect: (NoteListItem) -> Unit,
     onToggleFavorite: (NoteListItem) -> Unit,
+    onMove: (NoteListItem) -> Unit,
     onLoadMore: () -> Unit
 ) {
     val visible = if (searchActive) state.searchResults else state.items
@@ -171,7 +172,8 @@ internal fun NotesListContent(
                                 },
                                 onRename = { onRename(item) },
                                 onDelete = { onDelete(item) },
-                                onToggleFavorite = { onToggleFavorite(item) }
+                                onToggleFavorite = { onToggleFavorite(item) },
+                                onMove = { onMove(item) }
                             )
                         }
                         // 后续批次装载指示（滚动到底自动触发）
@@ -222,7 +224,8 @@ private fun NoteRow(
     onLongPress: () -> Unit,
     onRename: () -> Unit,
     onDelete: () -> Unit,
-    onToggleFavorite: () -> Unit
+    onToggleFavorite: () -> Unit,
+    onMove: () -> Unit
 ) {
     val node = item.node
     Column(
@@ -255,11 +258,12 @@ private fun NoteRow(
                 if (selectMode) {
                     SelectIndicator(selected)
                 } else {
-                    // 文件夹同样提供重命名 / 删除入口（重命名后云端由 MOVE 同步）
+                    // 文件夹同样提供重命名 / 移动 / 删除入口（改名与移动由云端 MOVE 同步）
                     NoteMoreButton(
                         isFavorite = false,
                         onToggleFavorite = null,
                         onRename = onRename,
+                        onMove = onMove,
                         onDelete = onDelete
                     )
                 }
@@ -298,6 +302,7 @@ private fun NoteRow(
                         isFavorite = isFavorite,
                         onToggleFavorite = onToggleFavorite,
                         onRename = onRename,
+                        onMove = onMove,
                         onDelete = onDelete
                     )
                 }
@@ -337,7 +342,7 @@ private fun SelectIndicator(selected: Boolean) {
 }
 
 /**
- * ⋮ 按钮：点击在按钮旁弹出浮层菜单（收藏 / 重命名 / 删除），替代底部弹窗以便单手操作；
+ * ⋮ 按钮：点击在按钮旁弹出浮层菜单（收藏 / 重命名 / 移动 / 删除），替代底部弹窗以便单手操作；
  * 文件夹不显示收藏项（[onToggleFavorite] 为 null）。
  */
 @Composable
@@ -345,6 +350,7 @@ private fun NoteMoreButton(
     isFavorite: Boolean,
     onToggleFavorite: (() -> Unit)?,
     onRename: () -> Unit,
+    onMove: () -> Unit,
     onDelete: () -> Unit
 ) {
     var menuOpen by remember { mutableStateOf(false) }
@@ -387,6 +393,14 @@ private fun NoteMoreButton(
                 onClick = {
                     menuOpen = false
                     onRename()
+                }
+            )
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.home_select_move)) },
+                leadingIcon = { Icon(Icons.Outlined.DriveFileMove, null) },
+                onClick = {
+                    menuOpen = false
+                    onMove()
                 }
             )
             DropdownMenuItem(

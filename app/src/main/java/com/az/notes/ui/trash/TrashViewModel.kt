@@ -9,6 +9,7 @@ import com.az.notes.data.storage.TrashItem
 import com.az.notes.data.storage.TrashRepository
 import com.az.notes.ui.common.UiMessage
 import com.az.notes.ui.common.UiText
+import com.az.notes.work.SyncScheduler
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -32,7 +33,8 @@ data class TrashUiState(
 @HiltViewModel
 class TrashViewModel @Inject constructor(
     private val trashRepository: TrashRepository,
-    private val settingsRepository: SettingsRepository
+    private val settingsRepository: SettingsRepository,
+    private val syncScheduler: SyncScheduler
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(TrashUiState())
@@ -78,7 +80,11 @@ class TrashViewModel @Inject constructor(
                     } else UiMessage(UiText.of(R.string.trash_restore_failed))
                 )
             }
-            if (restored != null) refreshBatches()
+            if (restored != null) {
+                refreshBatches()
+                // 恢复是 Vault 内容变更：调度一次防抖同步（未配置时内部自动跳过）
+                runCatching { syncScheduler.scheduleSaveSync() }
+            }
         }
     }
 
