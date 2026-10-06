@@ -8,6 +8,8 @@ import androidx.room.RoomDatabase
  * v2：随 M3 同步引擎接入 `sync_baseline` / `sync_log`。
  * v3：M4 接入 `conflict_record`（冲突指纹与解决方式）。
  * v4：移除废弃的 `file_index`（目录列表直接读文件系统，不再维护索引表）。
+ * v5：多仓库——同步基线 / 冲突记录 / 同步日志按 `vault_id` 隔离
+ *     （基线主键改为 (vault_id, path)；破坏性升级，历史同步数据自动重建）。
  * `move_hint` 未采用：重命名改用“即时 MOVE + 扫描期 size 配对启发式”，
  * 无需跨会话保存改名提示（见 SyncEngine）。
  */
@@ -18,7 +20,7 @@ import androidx.room.RoomDatabase
         SyncLogEntity::class,
         ConflictRecordEntity::class
     ],
-    version = 4,
+    version = 5,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {

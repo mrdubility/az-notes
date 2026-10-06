@@ -92,7 +92,21 @@ fun TrashScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(stringResource(R.string.trash_title)) },
+                title = {
+                    // 标题 + 当前仓库标注（回收站按仓库隔离，只展示当前仓库）
+                    Column {
+                        Text(stringResource(R.string.trash_title))
+                        state.vaultName?.let { name ->
+                            Text(
+                                text = stringResource(R.string.vault_label, name),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.action_back))

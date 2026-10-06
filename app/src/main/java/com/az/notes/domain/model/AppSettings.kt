@@ -24,7 +24,10 @@ data class AppSettings(
     val fontFamily: FontFamilyPreference = FontFamilyPreference.SANS,
     val fontSizeSp: Float = 16f,
     val lineHeightRatio: Float = 1.5f,
-    val vaultPath: String? = null,
+    /** 已添加的笔记仓库注册表（多仓库；旧版单仓库升级后为单元素列表） */
+    val vaults: List<VaultInfo> = emptyList(),
+    /** 当前使用的仓库 id（null = 尚未选择任何仓库） */
+    val currentVaultId: String? = null,
     val dynamicColor: Boolean = true,
     /** 列表中正文预览截取的字符数 */
     val previewChars: Int = 100,
@@ -44,8 +47,15 @@ data class AppSettings(
     val editorToolOrder: List<String> = EditorTool.defaultOrder,
     /** 编辑器工具栏中被禁用的工具 id 集合 */
     val editorToolDisabled: Set<String> = emptySet(),
-    /** 收藏的笔记相对路径集合（相对 Vault 根；仅本地，不参与同步） */
+    /** 收藏的笔记相对路径集合（相对当前仓库根；仅本地，不参与同步） */
     val favoritePaths: Set<String> = emptySet(),
-    /** 分享进入的笔记默认保存文件夹（相对 Vault 根；null = 跟随当前目录） */
+    /** 分享进入的笔记默认保存文件夹（相对当前仓库根；null = 跟随当前目录） */
     val shareFolder: String? = null
-)
+) {
+    /**
+     * 当前仓库的绝对路径（由 [vaults] 与 [currentVaultId] 派生）。
+     * 保留原属性名，使既有消费方（笔记列表 / 阅读器 / 同步引擎）无需感知多仓库细节。
+     */
+    val vaultPath: String?
+        get() = vaults.firstOrNull { it.id == currentVaultId }?.path
+}

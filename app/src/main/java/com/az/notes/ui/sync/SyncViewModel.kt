@@ -20,17 +20,20 @@ import com.az.notes.ui.common.toUiText
 import com.az.notes.work.SyncScheduler
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
 /** 同步页状态机：空闲 → 扫描 → 预览确认 → 执行 → 完成 / 失败。 */
@@ -77,14 +80,24 @@ class SyncViewModel @Inject constructor(
     private val _state = MutableStateFlow(SyncUiState())
     val state: StateFlow<SyncUiState> = _state.asStateFlow()
 
-    /** 冲突记录（最近 50 条）：主页角标与同步页入口计数用。 */
-    val conflicts: StateFlow<List<ConflictRecordEntity>> = conflictRecordDao.recent(50)
+    /** 冲突记录（最近 50 条，仅当前仓库）：主页角标与同步页入口计数用。 */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val conflicts: StateFlow<List<ConflictRecordEntity>> = settingsRepository.settings
+        .map { it.currentVaultId }
+        .distinctUntilChanged()
+        .flatMapLatest { vaultId ->
+            if (vaultId.isNullOrBlank() || vaultId == SettingsRepository.LEGACY_VAULT_ID) {
+                flowOf(emptyList())
+            } else {
+                conflictRecordDao.recent(vaultId, 50)
+            }
+        }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     init {
         // 预填加密存储中的密码（用户已开始输入则不覆盖）
         viewModelScope.launch {
-            val password = withContext(Dispatchers.IO) { credentialStore.getPassword() }
+            val password = credentialStore.getPassword()
             if (password.isNotEmpty()) {
                 _state.update { s -> if (s.password.isEmpty()) s.copy(password = password) else s }
             }
@@ -131,7 +144,7 @@ class SyncViewModel @Inject constructor(
 
     fun updatePassword(password: String) {
         _state.update { it.copy(password = password) }
-        credentialStore.setPassword(password)
+        viewModelScope.launch { credentialStore.setPassword(password) }
     }
 
     /** 坚果云预设：一键填入官方 WebDAV 地址（§6.6）。 */

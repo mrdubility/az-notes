@@ -23,6 +23,10 @@ import javax.inject.Inject
 
 data class TrashUiState(
     val vaultPath: String? = null,
+    /** 当前仓库 id（回收站按仓库隔离：只展示 / 清空当前仓库） */
+    val vaultId: String? = null,
+    /** 当前仓库展示名（页面标题下标注「仓库：xxx」） */
+    val vaultName: String? = null,
     val loading: Boolean = true,
     val batches: List<TrashBatch> = emptyList(),
     /** 一次性提示（Snackbar），消费后清空；携带撤销动作时横幅右侧显示「撤销」按钮 */
@@ -44,12 +48,22 @@ class TrashViewModel @Inject constructor(
         reload()
     }
 
-    /** 重新读取回收站目录。 */
+    /** 重新读取回收站目录（仅当前仓库）。 */
     fun reload() {
         viewModelScope.launch {
-            val vault = runCatching { settingsRepository.settings.first().vaultPath }.getOrNull()
-            val batches = withContext(Dispatchers.IO) { trashRepository.batches() }
-            _state.update { it.copy(vaultPath = vault, loading = false, batches = batches) }
+            val settings = runCatching { settingsRepository.settings.first() }.getOrNull()
+            val vaultId = runCatching { settingsRepository.requireCurrentVaultId() }.getOrNull()
+            val vaultName = settings?.vaults?.firstOrNull { it.id == vaultId }?.name
+            val batches = withContext(Dispatchers.IO) { trashRepository.batches(vaultId) }
+            _state.update {
+                it.copy(
+                    vaultPath = settings?.vaultPath,
+                    vaultId = vaultId,
+                    vaultName = vaultName,
+                    loading = false,
+                    batches = batches
+                )
+            }
         }
     }
 
@@ -102,10 +116,11 @@ class TrashViewModel @Inject constructor(
         }
     }
 
-    /** 清空回收站（UI 已二次确认）；不可撤销。 */
+    /** 清空回收站（UI 已二次确认）；不可撤销。仅当前仓库。 */
     fun purgeAll() {
         viewModelScope.launch {
-            val ok = withContext(Dispatchers.IO) { trashRepository.purgeAll() }
+            val vaultId = _state.value.vaultId
+            val ok = withContext(Dispatchers.IO) { trashRepository.purgeAll(vaultId) }
             _state.update {
                 it.copy(
                     message = if (ok) UiMessage(UiText.of(R.string.trash_purged))
@@ -121,7 +136,7 @@ class TrashViewModel @Inject constructor(
     }
 
     private suspend fun refreshBatches() {
-        val batches = withContext(Dispatchers.IO) { trashRepository.batches() }
+        val batches = withContext(Dispatchers.IO) { trashRepository.batches(_state.value.vaultId) }
         _state.update { it.copy(batches = batches) }
     }
 }

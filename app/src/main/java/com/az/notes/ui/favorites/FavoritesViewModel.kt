@@ -21,6 +21,8 @@ import javax.inject.Inject
 
 data class FavoritesUiState(
     val loading: Boolean = true,
+    /** 当前仓库展示名（页面标题下标注「仓库：xxx」） */
+    val vaultName: String? = null,
     /** 收藏笔记列表（按修改时间倒序；跨文件夹、不区分层级） */
     val items: List<FileNode> = emptyList(),
     /** 一次性提示（Snackbar），消费后清空；携带撤销动作时横幅右侧显示「撤销」按钮 */
@@ -48,12 +50,17 @@ class FavoritesViewModel @Inject constructor(
     init {
         viewModelScope.launch {
             settingsRepository.settings.collect { s ->
-                if (s.vaultPath == lastVault && s.favoritePaths == lastFavorites) return@collect
+                val vaultName = s.vaults.firstOrNull { it.id == s.currentVaultId }?.name
+                if (s.vaultPath == lastVault && s.favoritePaths == lastFavorites) {
+                    // 其它设置（如仓库重命名）变化：仅同步仓库标注，无需重扫
+                    _state.update { it.copy(vaultName = vaultName) }
+                    return@collect
+                }
                 lastVault = s.vaultPath
                 lastFavorites = s.favoritePaths
                 val vault = s.vaultPath
                 if (vault.isNullOrBlank()) {
-                    _state.update { it.copy(loading = false, items = emptyList()) }
+                    _state.update { it.copy(vaultName = vaultName, loading = false, items = emptyList()) }
                     return@collect
                 }
                 val loaded = withContext(Dispatchers.IO) {
@@ -66,6 +73,7 @@ class FavoritesViewModel @Inject constructor(
                 }
                 _state.update {
                     it.copy(
+                        vaultName = vaultName,
                         loading = false,
                         items = loaded.sortedByDescending { node -> node.lastModified }
                     )

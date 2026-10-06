@@ -61,7 +61,7 @@ import kotlin.math.roundToInt
  * 设置页（§5.6 重设计）：图标 + 标题 + 副标题的分组列表。
  * 单选类选项（主题 / 字体 / 排序 / 加号行为 / 回收站清理）→ 行旁浮层菜单，
  * 单手即可触达；字号 / 行间距 / 预览字符数 → 滑杆对话框；
- * 动态取色 → 开关；同步、Vault 更换目录 → 对应入口。
+ * 动态取色 → 开关；仓库组（仓库管理 / WebDAV 同步 / 接收分享位置）与回收站组各自独立。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -69,7 +69,7 @@ fun SettingsScreen(
     viewModel: SettingsViewModel,
     onBack: () -> Unit,
     onSync: () -> Unit,
-    onChangeVault: () -> Unit,
+    onOpenVaults: () -> Unit,
     onOpenToolbarSettings: () -> Unit,
     onOpenDebugLogs: () -> Unit
 ) {
@@ -222,6 +222,28 @@ fun SettingsScreen(
                     onSelect = viewModel::setFabAction
                 )
             }
+
+            // —— 仓库（切换 / 添加；WebDAV 同步与分享落点跟随仓库） ——
+            item { SectionHeader(stringResource(R.string.settings_vault_section)) }
+            item {
+                SettingsRow(
+                    icon = Icons.Outlined.FolderOpen,
+                    title = stringResource(R.string.vault_manage_title),
+                    subtitle = settings.vaults.firstOrNull { it.id == settings.currentVaultId }
+                        ?.name
+                        ?.let { stringResource(R.string.settings_vault_subtitle_current, it) }
+                        ?: stringResource(R.string.settings_vault_unset),
+                    onClick = onOpenVaults
+                )
+            }
+            item {
+                SettingsRow(
+                    icon = Icons.Outlined.Sync,
+                    title = stringResource(R.string.sync_title),
+                    subtitle = stringResource(R.string.settings_sync_subtitle),
+                    onClick = onSync
+                )
+            }
             item {
                 SettingsRow(
                     icon = Icons.Outlined.Share,
@@ -236,36 +258,8 @@ fun SettingsScreen(
                 )
             }
 
-            // —— 同步 ——
-            item { SectionHeader(stringResource(R.string.settings_sync)) }
-            item {
-                SettingsRow(
-                    icon = Icons.Outlined.Sync,
-                    title = stringResource(R.string.sync_title),
-                    subtitle = stringResource(R.string.settings_sync_subtitle),
-                    onClick = onSync
-                )
-            }
-
-            // —— Vault ——
-            item { SectionHeader(stringResource(R.string.settings_vault)) }
-            item {
-                SettingsRow(
-                    icon = Icons.Outlined.FolderOpen,
-                    title = stringResource(R.string.settings_vault),
-                    subtitle = settings.vaultPath?.let {
-                        stringResource(R.string.settings_vault_subtitle_current, it)
-                    } ?: stringResource(R.string.settings_vault_unset),
-                    trailing = {
-                        TextButton(onClick = {
-                            viewModel.resetVault()
-                            onChangeVault()
-                        }) {
-                            Text(stringResource(R.string.settings_change_vault))
-                        }
-                    }
-                )
-            }
+            // —— 回收站（独立分组；开关与自动清理） ——
+            item { SectionHeader(stringResource(R.string.settings_trash_section)) }
             item {
                 SettingsRow(
                     icon = Icons.Outlined.DeleteSweep,

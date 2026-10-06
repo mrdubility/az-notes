@@ -1,15 +1,21 @@
 package com.az.notes.ui.home
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.Sort
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Search
@@ -20,6 +26,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -33,7 +40,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.SolidColor
@@ -42,6 +51,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.az.notes.R
 import com.az.notes.domain.model.NoteSortOrder
+import com.az.notes.domain.model.VaultInfo
 
 /**
  * 主页顶栏：抽屉/返回 + 标题（或搜索输入、多选计数）+ 同步/搜索/排序（或全选 + 批量操作菜单）。
@@ -51,6 +61,10 @@ import com.az.notes.domain.model.NoteSortOrder
 @Composable
 internal fun HomeTopBar(
     title: String,
+    /** 当前仓库展示名（根目录标题，点按弹出仓库切换菜单） */
+    vaultName: String,
+    vaults: List<VaultInfo>,
+    currentVaultId: String?,
     atRoot: Boolean,
     searchActive: Boolean,
     searchQuery: String,
@@ -73,7 +87,11 @@ internal fun HomeTopBar(
     onSelectAll: () -> Unit,
     onFavoriteSelected: () -> Unit,
     onMoveSelected: () -> Unit,
-    onDeleteSelected: () -> Unit
+    onDeleteSelected: () -> Unit,
+    /** 顶栏切换仓库（记忆为下次启动 / 分享的目标仓库） */
+    onSwitchVault: (String) -> Unit,
+    /** 仓库菜单 → 管理仓库页 */
+    onManageVaults: () -> Unit
 ) {
     var sortMenuOpen by remember { mutableStateOf(false) }
     var selectMenuOpen by remember { mutableStateOf(false) }
@@ -115,7 +133,19 @@ internal fun HomeTopBar(
                         }
                     }
                 )
-                else -> Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                else -> {
+                    if (atRoot) {
+                        VaultTitle(
+                            vaultName = vaultName,
+                            vaults = vaults,
+                            currentVaultId = currentVaultId,
+                            onSwitchVault = onSwitchVault,
+                            onManageVaults = onManageVaults
+                        )
+                    } else {
+                        Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                }
             }
         },
         navigationIcon = {
@@ -246,3 +276,66 @@ internal fun NoteSortOrder.label(): String = stringResource(
         NoteSortOrder.NAME_DESC -> R.string.sort_name_desc
     }
 )
+
+/**
+ * 根目录标题：仓库名 + 下拉箭头；点按弹出仓库切换菜单
+ * （勾选当前项；底部「管理仓库…」进入仓库管理页）。
+ */
+@Composable
+private fun VaultTitle(
+    vaultName: String,
+    vaults: List<VaultInfo>,
+    currentVaultId: String?,
+    onSwitchVault: (String) -> Unit,
+    onManageVaults: () -> Unit
+) {
+    var menuOpen by remember { mutableStateOf(false) }
+    Box {
+        Row(
+            modifier = Modifier
+                .clip(RoundedCornerShape(8.dp))
+                .clickable { menuOpen = true }
+                .padding(horizontal = 6.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = vaultName,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f, fill = false)
+            )
+            Icon(
+                imageVector = Icons.Filled.ArrowDropDown,
+                contentDescription = stringResource(R.string.vault_switch),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+            vaults.forEach { vault ->
+                DropdownMenuItem(
+                    text = { Text(vault.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    leadingIcon = {
+                        if (vault.id == currentVaultId) {
+                            Icon(Icons.Filled.Check, null)
+                        } else {
+                            Spacer(Modifier.size(24.dp))
+                        }
+                    },
+                    onClick = {
+                        menuOpen = false
+                        if (vault.id != currentVaultId) onSwitchVault(vault.id)
+                    }
+                )
+            }
+            if (vaults.isNotEmpty()) HorizontalDivider()
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.vault_manage)) },
+                leadingIcon = { Icon(Icons.Outlined.FolderOpen, null) },
+                onClick = {
+                    menuOpen = false
+                    onManageVaults()
+                }
+            )
+        }
+    }
+}

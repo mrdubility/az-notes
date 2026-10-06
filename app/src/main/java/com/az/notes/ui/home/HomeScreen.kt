@@ -83,6 +83,10 @@ fun HomeScreen(
     onOpenTrash: () -> Unit,
     onOpenFavorites: () -> Unit,
     onSettings: () -> Unit,
+    /** 顶栏切换当前仓库（记忆为下次启动 / 分享的目标仓库） */
+    onSwitchVault: (String) -> Unit,
+    /** 顶栏仓库菜单 → 仓库管理页 */
+    onOpenVaults: () -> Unit,
     /** 系统分享 / 内容传送门传入的待写入文本（null = 无） */
     sharedText: String? = null,
     onSharedTextConsumed: () -> Unit = {},
@@ -206,6 +210,7 @@ fun HomeScreen(
             // 抽屉按“大半屏”宽度拉出（约 72%），不覆盖全屏
             ModalDrawerSheet(modifier = Modifier.fillMaxWidth(0.72f)) {
                 DrawerContent(
+                    vaultName = state.currentVaultName,
                     vaultPath = state.vaultPath,
                     trashEnabled = state.trashEnabled,
                     onFavorites = {
@@ -228,8 +233,11 @@ fun HomeScreen(
             topBar = {
                 HomeTopBar(
                     title = state.currentDirName
-                        ?: state.vaultPath?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
+                        ?: state.currentVaultName
                         ?: stringResource(R.string.app_name),
+                    vaultName = state.currentVaultName ?: stringResource(R.string.app_name),
+                    vaults = state.vaults,
+                    currentVaultId = state.currentVaultId,
                     atRoot = state.atRoot,
                     searchActive = searchActive,
                     searchQuery = state.searchQuery,
@@ -255,7 +263,9 @@ fun HomeScreen(
                         viewModel.loadMoveTargets()
                         moveDialog = true
                     },
-                    onDeleteSelected = { viewModel.deleteSelected() }
+                    onDeleteSelected = { viewModel.deleteSelected() },
+                    onSwitchVault = onSwitchVault,
+                    onManageVaults = onOpenVaults
                 )
             },
             floatingActionButton = {

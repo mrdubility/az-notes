@@ -103,6 +103,4 @@ class SettingsViewModel @Inject constructor(
     /** 编辑器工具栏禁用集合。 */
     fun setEditorToolDisabled(disabled: Set<String>) =
         viewModelScope.launch { settingsRepository.setEditorToolDisabled(disabled) }
-
-    fun resetVault() = viewModelScope.launch { settingsRepository.setVaultPath(null) }
 }

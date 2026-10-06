@@ -3,6 +3,7 @@ package com.az.notes.ui
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.az.notes.data.settings.SettingsRepository
+import com.az.notes.data.settings.VaultMigrationRunner
 import com.az.notes.data.storage.VaultRepository
 import com.az.notes.domain.model.AppSettings
 import com.az.notes.work.SyncScheduler
@@ -17,13 +18,19 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
-/** 承载全局偏好与 Vault 打开状态的主 ViewModel。 */
+/** 承载全局偏好与仓库打开状态的主 ViewModel。 */
 @HiltViewModel
 class MainViewModel @Inject constructor(
     private val settingsRepository: SettingsRepository,
     private val vaultRepository: VaultRepository,
-    private val syncScheduler: SyncScheduler
+    private val syncScheduler: SyncScheduler,
+    private val vaultMigrationRunner: VaultMigrationRunner
 ) : ViewModel() {
+
+    init {
+        // 升级首启迁移（旧版单仓库数据 → per-vault 数据）；幂等，失败不阻断
+        viewModelScope.launch { vaultMigrationRunner.ensureMigrated() }
+    }
 
     /**
      * 设置是否已从 DataStore 首次回流：启动画面据此延迟退场、导航图据此决定起点，
@@ -41,12 +48,20 @@ class MainViewModel @Inject constructor(
             initialValue = AppSettings()
         )
 
-    /** 选定并校验 Vault 目录后持久化路径。返回是否有效。 */
+    /** 选定并校验仓库目录：加入注册表并设为当前。返回路径是否有效。 */
     fun openVault(path: String): Boolean {
         val normalized = path.trim().trimEnd('/')
         if (normalized.isEmpty() || !vaultRepository.isValidVault(normalized)) return false
-        viewModelScope.launch { settingsRepository.setVaultPath(normalized) }
+        viewModelScope.launch { settingsRepository.addVault(normalized) }
         return true
+    }
+
+    /** 切换当前仓库（顶栏下拉 / 仓库管理页）：持久化记忆并立即对齐周期同步调度。 */
+    fun switchVault(id: String) {
+        viewModelScope.launch {
+            settingsRepository.setCurrentVault(id)
+            runCatching { syncScheduler.reschedulePeriodic() }
+        }
     }
 
     /**
@@ -65,10 +80,6 @@ class MainViewModel @Inject constructor(
     /** 分享文本已交给主页建笔记，清空避免重复处理。 */
     fun consumeSharedText() {
         _sharedText.value = null
-    }
-
-    fun resetVault() {
-        viewModelScope.launch { settingsRepository.setVaultPath(null) }
     }
 
     /** App 退到后台时冲刷排队中的“保存后同步”（详见 SyncScheduler.flushPendingSaveSync）。 */

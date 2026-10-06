@@ -39,8 +39,8 @@ android {
         applicationId = "com.az.notes"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -122,6 +122,10 @@ dependencies {
     ksp(libs.room.compiler)
     implementation(libs.androidx.datastore.preferences)
     implementation(libs.androidx.security.crypto)
+
+    // --- 序列化 (JSON) ---
+    // 仓库注册表 / per-vault 同步配置的持久化
+    implementation(libs.kotlinx.serialization.json)
 
     // --- 后台任务 ---
     implementation(libs.androidx.work.runtime.ktx)

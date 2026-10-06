@@ -37,34 +37,65 @@ import com.az.notes.data.local.ConflictRecordDao
 import com.az.notes.data.local.ConflictRecordEntity
 import com.az.notes.data.local.SyncLogDao
 import com.az.notes.data.local.SyncLogEntity
+import com.az.notes.data.settings.SettingsRepository
 import com.az.notes.domain.model.SyncOpType
 import com.az.notes.ui.common.label
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 /**
  * 同步记录 ViewModel：冲突记录与同步日志（自 SyncViewModel 拆出，供两个独立页面共用）。
+ * 多仓库：均按当前仓库过滤展示。
  */
 @HiltViewModel
 class SyncHistoryViewModel @Inject constructor(
     syncLogDao: SyncLogDao,
-    private val conflictRecordDao: ConflictRecordDao
+    private val conflictRecordDao: ConflictRecordDao,
+    private val settingsRepository: SettingsRepository
 ) : ViewModel() {
 
-    /** 同步日志（最近 100 条）。 */
-    val logs: StateFlow<List<SyncLogEntity>> = syncLogDao.recent(100)
+    /** 同步日志（最近 100 条，仅当前仓库）。 */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val logs: StateFlow<List<SyncLogEntity>> = settingsRepository.settings
+        .map { it.currentVaultId }
+        .distinctUntilChanged()
+        .flatMapLatest { vaultId ->
+            if (vaultId.isNullOrBlank() || vaultId == SettingsRepository.LEGACY_VAULT_ID) {
+                flowOf(emptyList())
+            } else {
+                syncLogDao.recent(vaultId, 100)
+            }
+        }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    /** 冲突记录（最近 50 条）：供人工合并后清除（§6.2）。 */
-    val conflicts: StateFlow<List<ConflictRecordEntity>> = conflictRecordDao.recent(50)
+    /** 冲突记录（最近 50 条，仅当前仓库）：供人工合并后清除（§6.2）。 */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val conflicts: StateFlow<List<ConflictRecordEntity>> = settingsRepository.settings
+        .map { it.currentVaultId }
+        .distinctUntilChanged()
+        .flatMapLatest { vaultId ->
+            if (vaultId.isNullOrBlank() || vaultId == SettingsRepository.LEGACY_VAULT_ID) {
+                flowOf(emptyList())
+            } else {
+                conflictRecordDao.recent(vaultId, 50)
+            }
+        }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    /** 人工合并完成后清除全部冲突记录（顶栏角标随之消失）。 */
-    fun clearConflicts() = viewModelScope.launch { conflictRecordDao.clear() }
+    /** 人工合并完成后清除当前仓库全部冲突记录（顶栏角标随之消失）。 */
+    fun clearConflicts() = viewModelScope.launch {
+        val vaultId = settingsRepository.requireCurrentVaultId() ?: return@launch
+        conflictRecordDao.clear(vaultId)
+    }
 }
 
 /** 冲突记录页：说明 + 列表 + 清除全部（自同步页独立成页）。 */

@@ -84,7 +84,21 @@ fun FavoritesScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(stringResource(R.string.fav_title)) },
+                title = {
+                    // 标题 + 当前仓库标注（收藏仅本地，且按仓库隔离）
+                    Column {
+                        Text(stringResource(R.string.fav_title))
+                        state.vaultName?.let { name ->
+                            Text(
+                                text = stringResource(R.string.vault_label, name),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.action_back))

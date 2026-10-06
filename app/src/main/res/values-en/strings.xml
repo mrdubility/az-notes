@@ -102,6 +102,21 @@
     <string name="fav_empty_hint">Tap Favorite in a note menu to find it here across folders.</string>
     <string name="fav_in_root">Vault root</string>
 
+    <!-- Multiple vaults (management / top-bar switcher / label) -->
+    <string name="vault_switch">Switch vault</string>
+    <string name="vault_manage">Manage vaults…</string>
+    <string name="vault_manage_title">Manage vaults</string>
+    <string name="vault_label">Vault: %1$s</string>
+    <string name="vault_add">Add vault</string>
+    <string name="vault_add_hint">Pick a folder via the system picker to add a new notes vault</string>
+    <string name="vault_rename">Rename vault</string>
+    <string name="vault_remove">Remove vault</string>
+    <string name="vault_remove_confirm">"%1$s" will be removed from the app: its favorites, WebDAV sync configuration and trash data will be cleared. Note files on disk are not affected.</string>
+    <string name="vault_empty">No vaults yet</string>
+    <string name="vault_empty_hint">Tap "Add vault" below and pick a folder via the system picker.</string>
+    <string name="settings_vault_section">Vaults</string>
+    <string name="settings_trash_section">Trash</string>
+
     <!-- Editor -->
     <string name="editor_search_hint">Find in note</string>
     <string name="editor_search_empty">No matches</string>
@@ -213,7 +228,7 @@
     <string name="sync_mode_row">Sync mode</string>
     <string name="sync_section_run">Manual sync</string>
     <string name="sync_start">Sync now</string>
-    <string name="sync_no_vault">No Vault folder selected. Please go back to the setup page and choose one.</string>
+    <string name="sync_no_vault">No vault selected. Add one in Settings first.</string>
     <string name="sync_plan_title">Pending operations preview</string>
     <string name="sync_dialog_scanning">Scanning for differences</string>
     <string name="sync_dialog_executing">Syncing</string>

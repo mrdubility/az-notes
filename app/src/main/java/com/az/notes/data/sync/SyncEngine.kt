@@ -63,6 +63,9 @@ class SyncEngine @Inject constructor(
 
     private data class LocalStat(val size: Long, val mtime: Long)
 
+    /** 当前仓库引用：同步数据（基线 / 日志 / 冲突记录）按 [id] 隔离，文件操作走 [path]。 */
+    private data class VaultRef(val id: String, val path: String)
+
     /** plan 阶段的扫描结果，供同一次同步的 commitBaseline 复用。 */
     private class ScanSnapshot(
         val remote: Map<String, WebDavClient.RemoteEntry>,
@@ -118,7 +121,8 @@ class SyncEngine @Inject constructor(
 
     /** 扫描两端并与基线三方对比，产出待执行操作计划。 */
     suspend fun plan(config: SyncConfig, onStatus: (String) -> Unit): SyncPlan {
-        val vault = requireVault()
+        val ref = requireVaultRef()
+        val vault = ref.path
         val ignore = IgnoreRules(config.ignoreRules)
         val client = buildClient(config) { attempt ->
             onStatus("触发服务端限流，自动等待重试（第 $attempt 次）…")
@@ -153,7 +157,7 @@ class SyncEngine @Inject constructor(
         // 条目数达到服务端单次返回上限的目录，其远端列表可能被分页截断而不完整
         val untrustedDirs = scan.truncatedDirs
 
-        val baseline = withContext(Dispatchers.IO) { baselineDao.getAll() }.associateBy { it.path }
+        val baseline = withContext(Dispatchers.IO) { baselineDao.getAll(ref.id) }.associateBy { it.path }
 
         // 调试埋点：本轮扫描规模与配置（排查“假冲突”等问题时的现场基线）
         syncLog(
@@ -393,7 +397,7 @@ class SyncEngine @Inject constructor(
         // 两端已完全一致（空计划）时清除历史冲突记录：角标数字源自记录条数，
         // 残留会导致此后无差异时仍显示角标
         if (ordered.isEmpty()) {
-            withContext(Dispatchers.IO) { conflictRecordDao.clear() }
+            withContext(Dispatchers.IO) { conflictRecordDao.clear(ref.id) }
         }
         // 快照留给 commitBaseline 复用：同一次同步不再把远端全树扫第二遍
         lastSnapshot = ScanSnapshot(remote, carryOver, local)
@@ -446,7 +450,8 @@ class SyncEngine @Inject constructor(
         plan: SyncPlan,
         onProgress: (done: Int, total: Int, label: String) -> Unit
     ): SyncSummary {
-        val vault = requireVault()
+        val ref = requireVaultRef()
+        val vault = ref.path
 
         var uploaded = 0
         var downloaded = 0
@@ -487,6 +492,7 @@ class SyncEngine @Inject constructor(
                 failed++
                 failedPaths += op.path
                 logs += SyncLogEntity(
+                    vaultId = ref.id,
                     ts = System.currentTimeMillis(),
                     op = op.type.name,
                     path = op.displayPath,
@@ -519,7 +525,7 @@ class SyncEngine @Inject constructor(
                         capturedStat?.let {
                             uploadedStats[op.path] = it
                             // 写透：远端内容此刻已与上传时刻的本地一致
-                            persistBaselineEntry(op.path, it)
+                            persistBaselineEntry(ref.id, op.path, it)
                         }
                     }
                     SyncOpType.DOWNLOAD -> {
@@ -527,7 +533,7 @@ class SyncEngine @Inject constructor(
                         localStatOf(vault, op.path)?.let {
                             downloadedStats[op.path] = it
                             // 写透：远端值用扫描快照（精确 size / mtime / etag）
-                            persistBaselineEntry(op.path, it, lastSnapshot?.remote?.get(op.path))
+                            persistBaselineEntry(ref.id, op.path, it, lastSnapshot?.remote?.get(op.path))
                         }
                     }
                     SyncOpType.DELETE_REMOTE -> deletedRemote++
@@ -546,7 +552,8 @@ class SyncEngine @Inject constructor(
                         // 写透：本地新路径建档（远端值取快照），源路径条目移除
                         localStatOf(vault, op.path)?.let {
                             persistBaselineEntry(
-                                op.path, it, lastSnapshot?.remote?.get(op.path), removePath = op.moveFrom
+                                ref.id, op.path, it, lastSnapshot?.remote?.get(op.path),
+                                removePath = op.moveFrom
                             )
                         }
                     }
@@ -556,7 +563,7 @@ class SyncEngine @Inject constructor(
                         capturedStat?.let {
                             uploadedStats[op.path] = it
                             // 写透：远端新路径内容 = 本地改名后内容；源路径条目移除
-                            persistBaselineEntry(op.path, it, removePath = op.moveFrom)
+                            persistBaselineEntry(ref.id, op.path, it, removePath = op.moveFrom)
                         }
                     }
                 }
@@ -575,6 +582,7 @@ class SyncEngine @Inject constructor(
                 }
             }
             logs += SyncLogEntity(
+                vaultId = ref.id,
                 ts = System.currentTimeMillis(),
                 op = op.type.name,
                 path = op.displayPath,
@@ -586,7 +594,7 @@ class SyncEngine @Inject constructor(
         onProgress(total, total, "正在提交同步基线…")
         withContext(Dispatchers.IO) {
             syncLogDao.insertAll(logs)
-            syncLogDao.trimTo(500)
+            syncLogDao.trimTo(ref.id, 500)
         }
         // 冲突记录（§6.2）：记录冲突双方指纹与解决方式，供同步页人工合并追踪
         if (conflictOps.isNotEmpty()) {
@@ -598,6 +606,7 @@ class SyncEngine @Inject constructor(
                     val loseHash = sha1(op.backupPath?.takeIf { it.isNotEmpty() }?.let { File(vault, it) })
                     conflictRecordDao.insert(
                         ConflictRecordEntity(
+                            vaultId = ref.id,
                             path = op.path,
                             baseSha1 = null,
                             localSha1 = if (op.detail == "local") winHash else loseHash,
@@ -608,12 +617,12 @@ class SyncEngine @Inject constructor(
                         )
                     )
                 }
-                conflictRecordDao.trimTo(200)
+                conflictRecordDao.trimTo(ref.id, 200)
             }
         }
         // 已解决的冲突记录清理：副本已被合并 / 删除（本轮之前创建的）→ 记录移除，角标随之消失
         withContext(Dispatchers.IO) {
-            val stale = conflictRecordDao.getAll().filter {
+            val stale = conflictRecordDao.getAll(ref.id).filter {
                 it.createdAt < runStartedAt &&
                     it.backupPath.isNotEmpty() && !File(vault, it.backupPath).exists()
             }
@@ -626,6 +635,7 @@ class SyncEngine @Inject constructor(
             lastSnapshot = null // 用完即弃，避免跨会话复用陈旧快照
             withContext(Dispatchers.IO) {
                 commitBaseline(
+                    vaultId = ref.id,
                     vaultRoot = vault,
                     client = client,
                     ignore = IgnoreRules(config.ignoreRules),
@@ -647,6 +657,7 @@ class SyncEngine @Inject constructor(
                 syncLogDao.insertAll(
                     listOf(
                         SyncLogEntity(
+                            vaultId = ref.id,
                             ts = System.currentTimeMillis(),
                             op = "BASELINE",
                             path = "",
@@ -748,6 +759,7 @@ class SyncEngine @Inject constructor(
      * 本轮下载的用落盘捕获值，本轮上传的用操作前捕获值，其余用 plan 阶段扫描值。
      */
     private suspend fun commitBaseline(
+        vaultId: String,
         vaultRoot: String,
         client: WebDavClient,
         ignore: IgnoreRules,
@@ -760,7 +772,7 @@ class SyncEngine @Inject constructor(
         val local = scanLocal(vaultRoot, ignore)
         val carryOver = snapshot?.carryOver.orEmpty()
         // 失败路径的旧基线条目（Fix A）：本轮不更新但必须原样保留，留待下一轮重新决策
-        val previous = baselineDao.getAll().associateBy { it.path }
+        val previous = baselineDao.getAll(vaultId).associateBy { it.path }
         val remote: Map<String, WebDavClient.RemoteEntry> = if (snapshot != null) {
             val merged = snapshot.remote.toMutableMap()
             for ((path, captured) in uploaded) {
@@ -802,6 +814,7 @@ class SyncEngine @Inject constructor(
                 else -> planLocal[path] ?: l
             }
             entries += SyncBaselineEntity(
+                vaultId = vaultId,
                 path = path,
                 localSize = localStat.size,
                 localMtime = localStat.mtime,
@@ -820,7 +833,7 @@ class SyncEngine @Inject constructor(
                 }
             }
         }
-        baselineDao.replaceAll(entries)
+        baselineDao.replaceAll(vaultId, entries)
         syncLog(
             DebugLogLevel.DEBUG,
             "基线提交完成",
@@ -842,12 +855,14 @@ class SyncEngine @Inject constructor(
      * 宽松模式下不影响判定）。[removePath] 用于 MOVE：移除源路径的旧基线条目。
      */
     private suspend fun persistBaselineEntry(
+        vaultId: String,
         path: String,
         localStat: LocalStat,
         remote: WebDavClient.RemoteEntry? = null,
         removePath: String? = null
     ) {
         val entry = SyncBaselineEntity(
+            vaultId = vaultId,
             path = path,
             localSize = localStat.size,
             localMtime = localStat.mtime,
@@ -857,7 +872,7 @@ class SyncEngine @Inject constructor(
             syncedAt = System.currentTimeMillis()
         )
         withContext(Dispatchers.IO) {
-            removePath?.let { baselineDao.deleteByPath(it) }
+            removePath?.let { baselineDao.deleteByPath(vaultId, it) }
             baselineDao.upsertAll(listOf(entry))
         }
         syncLog(DebugLogLevel.DEBUG, "基线写透", mapOf("path" to path, "remove" to removePath))
@@ -873,6 +888,7 @@ class SyncEngine @Inject constructor(
      * 远端不存在或 MOVE 失败时静默跳过（仅记一条日志），由下次常规同步兜底。
      */
     suspend fun applyRemoteRename(vaultRoot: String, oldAbsPath: String, newAbsPath: String) {
+        val vaultId = settingsRepository.requireCurrentVaultId() ?: return
         val config = runCatching { syncConfigRepository.config.first() }.getOrNull() ?: return
         if (!config.configured) return
         val root = vaultRoot.trimEnd('/') + "/"
@@ -885,10 +901,11 @@ class SyncEngine @Inject constructor(
         val isDirectory = withContext(Dispatchers.IO) { File(newAbsPath).isDirectory }
         val ok = runCatching { client.move(oldRel, newRel, isDirectory) }.getOrDefault(false)
         withContext(Dispatchers.IO) {
-            if (ok) remapBaseline(oldRel, newRel)
+            if (ok) remapBaseline(vaultId, oldRel, newRel)
             syncLogDao.insertAll(
                 listOf(
                     SyncLogEntity(
+                        vaultId = vaultId,
                         ts = System.currentTimeMillis(),
                         op = LOG_OP_REMOTE_MOVE,
                         path = "$oldRel → $newRel",
@@ -902,8 +919,8 @@ class SyncEngine @Inject constructor(
     }
 
     /** 基线路径重映射：单文件或整个目录前缀（远端 MOVE 成功后两端仍一致）。 */
-    private suspend fun remapBaseline(oldRel: String, newRel: String) {
-        val all = baselineDao.getAll()
+    private suspend fun remapBaseline(vaultId: String, oldRel: String, newRel: String) {
+        val all = baselineDao.getAll(vaultId)
         val prefix = "$oldRel/"
         var changed = false
         val remapped = all.map { entry ->
@@ -919,7 +936,7 @@ class SyncEngine @Inject constructor(
                 else -> entry
             }
         }
-        if (changed) baselineDao.replaceAll(remapped)
+        if (changed) baselineDao.replaceAll(vaultId, remapped)
     }
 
     // ---------------------------------------------------------------- 文件系统辅助
@@ -1045,13 +1062,19 @@ class SyncEngine @Inject constructor(
 
     // ---------------------------------------------------------------- 基础依赖
 
-    private suspend fun requireVault(): String {
-        val vault = settingsRepository.settings.first().vaultPath
-        if (vault.isNullOrBlank()) throw IOException("未选择 Vault 目录")
-        return vault
+    /** 解析当前仓库（id + 路径）；未选择仓库 / 处于升级迁移窗口时抛出，同步不可用。 */
+    private suspend fun requireVaultRef(): VaultRef {
+        val settings = settingsRepository.settings.first()
+        val id = settings.currentVaultId
+        val path = settings.vaultPath
+        if (id == null || id == SettingsRepository.LEGACY_VAULT_ID || path.isNullOrBlank()) {
+            throw IOException("未选择仓库目录")
+        }
+        return VaultRef(id, path)
     }
 
-    private fun buildClient(
+    /** 构建 WebDAV 客户端（密码按当前仓库读取，凭据存储为 suspend）。 */
+    private suspend fun buildClient(
         config: SyncConfig,
         onRateLimited: (attempt: Int) -> Unit = {}
     ): WebDavClient {

@@ -13,7 +13,9 @@ import androidx.room.PrimaryKey
 @Entity(tableName = "conflict_record")
 data class ConflictRecordEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
-    /** 冲突文件相对 Vault 根的路径 */
+    /** 所属仓库 id（多仓库隔离） */
+    @ColumnInfo(name = "vault_id") val vaultId: String,
+    /** 冲突文件相对仓库根的路径 */
     @ColumnInfo(name = "path") val path: String,
     /** 基线版本的 SHA-1（当前基线不含内容指纹，通常为 null） */
     @ColumnInfo(name = "base_sha1") val baseSha1: String?,

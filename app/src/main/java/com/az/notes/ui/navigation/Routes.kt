@@ -29,8 +29,11 @@ object Routes {
     /** 收藏夹：跨文件夹展示收藏的笔记（仅本地）；从抽屉进入。 */
     const val FAVORITES = "favorites"
 
-    private const val READER_BASE = "reader"
-    private const val EDITOR_BASE = "editor"
+    /** 仓库管理页：切换 / 添加 / 重命名 / 移除仓库；从设置页与顶栏仓库菜单进入。 */
+    const val VAULTS = "vaults"
+
+    const val READER_BASE = "reader"
+    const val EDITOR_BASE = "editor"
 
     /** 阅读器：path 为编码后的绝对路径 */
     const val READER = "$READER_BASE/{path}"

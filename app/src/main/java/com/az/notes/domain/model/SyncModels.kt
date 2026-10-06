@@ -1,9 +1,12 @@
 package com.az.notes.domain.model
 
+import kotlinx.serialization.Serializable
+
 /**
  * 同步策略（§6.3）：五种模式全量对齐坚果云官方插件。
  * 后两种为“镜像”语义：以单侧为唯一真相，另一端对齐（多余项会被删除，删除仍需确认）。
  */
+@Serializable
 enum class SyncMode {
     BIDIRECTIONAL,
     UPLOAD_ONLY,
@@ -15,6 +18,7 @@ enum class SyncMode {
 }
 
 /** 冲突处理策略（§6.2）。三种策略均在覆盖前把败方另存为冲突副本。 */
+@Serializable
 enum class ConflictStrategy {
     /** 冲突副本（默认）：按修改时间判定胜方，败方另存副本等人工合并。 */
     CONFLICT_COPY,
@@ -25,13 +29,15 @@ enum class ConflictStrategy {
 }
 
 /** 自动同步周期（§6.4）。OFF = 不启用 WorkManager 周期任务。 */
+@Serializable
 enum class SyncInterval(val minutes: Long?) {
     OFF(null), M15(15), M30(30), H1(60), H4(240), H8(480)
 }
 
 /**
- * 同步配置（非敏感部分，DataStore 持久化；密码见 data/sync/CredentialStore 加密存储）。
+ * 同步配置（非敏感部分，DataStore 持久化，按仓库序列化为 JSON；密码见 data/sync/CredentialStore 加密存储）。
  */
+@Serializable
 data class SyncConfig(
     /** WebDAV 服务器地址（坚果云默认 https://dav.jianguoyun.com/dav/） */
     val serverUrl: String = DEFAULT_SERVER_URL,

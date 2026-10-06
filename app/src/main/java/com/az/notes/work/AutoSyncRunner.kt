@@ -6,6 +6,8 @@ import com.az.notes.data.debug.DebugLogType
 import com.az.notes.data.local.SyncBaselineDao
 import com.az.notes.data.local.SyncLogDao
 import com.az.notes.data.local.SyncLogEntity
+import com.az.notes.data.settings.SettingsRepository
+import com.az.notes.data.settings.VaultMigrationRunner
 import com.az.notes.data.sync.SyncConfigRepository
 import com.az.notes.data.sync.SyncEngine
 import com.az.notes.domain.model.SyncPlan
@@ -26,6 +28,8 @@ import javax.inject.Singleton
  */
 @Singleton
 class AutoSyncRunner @Inject constructor(
+    private val settingsRepository: SettingsRepository,
+    private val vaultMigrationRunner: VaultMigrationRunner,
     private val syncConfigRepository: SyncConfigRepository,
     private val syncEngine: SyncEngine,
     private val baselineDao: SyncBaselineDao,
@@ -35,17 +39,20 @@ class AutoSyncRunner @Inject constructor(
 
     /** 执行一次自动同步会话；[trigger] 为触发方式（写入日志便于追溯）。 */
     suspend fun run(trigger: String) {
+        // 升级迁移优先：保证 per-vault 配置 / 基线 / 回收站就位后再读取
+        vaultMigrationRunner.ensureMigrated()
+        val vaultId = settingsRepository.requireCurrentVaultId() ?: return
         val config = runCatching { syncConfigRepository.config.first() }.getOrNull() ?: return
         if (!config.configured) return
         val ran = syncEngine.runExclusive {
             try {
-                val firstSync = withContext(Dispatchers.IO) { baselineDao.getAll().isEmpty() }
+                val firstSync = withContext(Dispatchers.IO) { baselineDao.getAll(vaultId).isEmpty() }
                 val plan = syncEngine.plan(config) { }
                 // 无变更且没有跳过大文件：静默结束，不写日志避免周期任务刷屏
                 if (plan.isEmpty && plan.skippedLarge == 0) return@runExclusive
                 val veto = safetyVeto(plan, firstSync)
                 if (veto != null) {
-                    log("AUTO_SKIP", "$trigger：$veto")
+                    log(vaultId, "AUTO_SKIP", "$trigger：$veto")
                     debugLog(
                         DebugLogLevel.WARN,
                         "自动同步转人工确认",
@@ -62,7 +69,7 @@ class AutoSyncRunner @Inject constructor(
                     if (summary.skippedLarge > 0) append(" / 跳过大文件 ${summary.skippedLarge}")
                     if (summary.failed > 0) append(" / 失败 ${summary.failed}")
                 }
-                log(if (summary.failed > 0) "FAIL" else "OK", detail)
+                log(vaultId, if (summary.failed > 0) "FAIL" else "OK", detail)
                 debugLog(
                     DebugLogLevel.INFO,
                     "自动同步完成",
@@ -79,7 +86,7 @@ class AutoSyncRunner @Inject constructor(
             } catch (ce: CancellationException) {
                 throw ce
             } catch (t: Exception) {
-                log("FAIL", "$trigger：${t.message ?: "自动同步失败"}")
+                log(vaultId, "FAIL", "$trigger：${t.message ?: "自动同步失败"}")
                 debugLog(
                     DebugLogLevel.ERROR,
                     "自动同步失败",
@@ -87,7 +94,7 @@ class AutoSyncRunner @Inject constructor(
                 )
             }
         }
-        if (!ran) log("AUTO_SKIP", "$trigger：已有同步会话进行中，本次跳过")
+        if (!ran) log(vaultId, "AUTO_SKIP", "$trigger：已有同步会话进行中，本次跳过")
     }
 
     /** 安全阀判定（§6.5-1）；返回需要人工确认的原因，通过时返回 null。 */
@@ -104,11 +111,12 @@ class AutoSyncRunner @Inject constructor(
     private fun debugLog(level: DebugLogLevel, msg: String, extra: Map<String, Any?>) =
         debugLogRepository.log(level, DebugLogType.WORK, msg, extra)
 
-    private suspend fun log(result: String, detail: String) {
+    private suspend fun log(vaultId: String, result: String, detail: String) {
         withContext(Dispatchers.IO) {
             syncLogDao.insertAll(
                 listOf(
                     SyncLogEntity(
+                        vaultId = vaultId,
                         ts = System.currentTimeMillis(),
                         op = LOG_OP_AUTO,
                         path = "",
@@ -117,7 +125,7 @@ class AutoSyncRunner @Inject constructor(
                     )
                 )
             )
-            syncLogDao.trimTo(500)
+            syncLogDao.trimTo(vaultId, 500)
         }
     }
 

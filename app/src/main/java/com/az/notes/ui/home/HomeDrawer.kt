@@ -22,11 +22,12 @@ import androidx.compose.ui.unit.dp
 import com.az.notes.R
 
 /**
- * 主页抽屉内容：Vault 信息 + 收藏夹 / 回收站（关闭时隐藏入口） / 设置入口。
+ * 主页抽屉内容：仓库信息（名称 + 路径） + 收藏夹 / 回收站（关闭时隐藏入口） / 设置入口。
  * 自 HomeScreen 拆分独立文件（纯 UI，逻辑不变）。
  */
 @Composable
 internal fun DrawerContent(
+    vaultName: String?,
     vaultPath: String?,
     /** 回收站开关：关闭时隐藏入口（删除即物理删除） */
     trashEnabled: Boolean,
@@ -40,12 +41,21 @@ internal fun DrawerContent(
                 text = stringResource(R.string.app_name),
                 style = MaterialTheme.typography.headlineSmall
             )
-            val vaultName = vaultPath?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
             if (vaultName != null) {
-                Spacer(Modifier.height(4.dp))
+                Spacer(Modifier.height(6.dp))
                 Text(
                     text = vaultName,
-                    style = MaterialTheme.typography.bodySmall,
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            if (vaultPath != null) {
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = vaultPath,
+                    style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis

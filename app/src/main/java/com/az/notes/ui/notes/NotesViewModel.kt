@@ -14,6 +14,7 @@ import com.az.notes.domain.model.AppSettings
 import com.az.notes.domain.model.FabAction
 import com.az.notes.domain.model.FileNode
 import com.az.notes.domain.model.NoteSortOrder
+import com.az.notes.domain.model.VaultInfo
 import com.az.notes.ui.common.UiMessage
 import com.az.notes.ui.common.UiText
 import com.az.notes.ui.common.toUiText
@@ -50,6 +51,9 @@ data class NoteListItem(
 
 data class NotesUiState(
     val vaultPath: String? = null,
+    /** 仓库注册表与当前仓库 id（顶栏仓库切换器的数据源） */
+    val vaults: List<VaultInfo> = emptyList(),
+    val currentVaultId: String? = null,
     val loading: Boolean = false,
     val refreshing: Boolean = false,
     /** 已进入的目录栈（绝对路径，根目录为空）；last 即当前目录 */
@@ -80,6 +84,9 @@ data class NotesUiState(
     val atRoot: Boolean get() = dirStack.isEmpty()
     val currentDirName: String?
         get() = dirStack.lastOrNull()?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
+    /** 当前仓库的展示名（顶栏标题 / 抽屉 / 收藏夹与回收站标注） */
+    val currentVaultName: String?
+        get() = vaults.firstOrNull { it.id == currentVaultId }?.name
 }
 
 /**
@@ -139,7 +146,9 @@ class NotesViewModel @Inject constructor(
                 sortOrder = s.sortOrder,
                 fabAction = s.fabAction,
                 trashEnabled = s.trashEnabled,
-                favoritePaths = s.favoritePaths
+                favoritePaths = s.favoritePaths,
+                vaults = s.vaults,
+                currentVaultId = s.currentVaultId
             )
         }
 
