@@ -33,6 +33,7 @@
     <string name="action_close">关闭</string>
     <string name="action_more">更多操作</string>
     <string name="action_rename">重命名</string>
+    <string name="action_duplicate">复制副本</string>
     <string name="action_delete">删除</string>
     <string name="action_favorite">收藏</string>
     <string name="action_unfavorite">取消收藏</string>
@@ -81,6 +82,8 @@
     <string name="msg_moved_to_trash_count">已移入回收站 %1$d 项</string>
     <string name="msg_deleted_count">已删除 %1$d 项</string>
     <string name="msg_delete_partial">已删除 %1$d 项，%2$d 项失败</string>
+    <string name="msg_duplicated">已复制为「%1$s」</string>
+    <string name="msg_duplicate_failed">复制失败</string>
 
     <!-- 收藏夹（仅本地，不参与同步） -->
     <string name="fav_title">收藏夹</string>
@@ -96,6 +99,7 @@
     <string name="vault_label">仓库：%1$s</string>
     <string name="vault_default_name">默认仓库</string>
     <string name="vault_builtin_badge">默认</string>
+    <string name="vault_current_badge">当前</string>
     <string name="vault_hidden_badge">已隐藏</string>
     <string name="vault_hide">隐藏该仓库</string>
     <string name="vault_unhide">取消隐藏</string>
@@ -208,6 +212,21 @@
     <string name="settings_about_subtitle">Az Notes · 本地 Markdown 笔记 · 数据不离开设备</string>
     <string name="settings_about_version">当前版本 %1$s · 点按进入调试日志</string>
     <string name="settings_about_github">GitHub 仓库</string>
+
+    <!-- 备份与恢复（设置 → 备份；导出 / 导入全部配置） -->
+    <string name="settings_backup_section">备份</string>
+    <string name="settings_backup_subtitle">导出 / 导入全部设置与仓库配置</string>
+    <string name="backup_title">备份与恢复</string>
+    <string name="backup_export">导出配置</string>
+    <string name="backup_export_subtitle">将全部设置与仓库配置导出为 JSON 文件</string>
+    <string name="backup_import">导入配置</string>
+    <string name="backup_import_subtitle">从备份文件恢复设置（同项以备份为准覆盖）</string>
+    <string name="backup_hint">导出内容：外观 / 编辑器 / 笔记列表 / 仓库配置 / 收藏与分享位置 / WebDAV 同步设置（不含密码）。导入按仓库合并恢复，无效或缺失的条目自动忽略。</string>
+    <string name="backup_export_done">配置已导出</string>
+    <string name="backup_export_failed">导出失败</string>
+    <string name="backup_import_done">已恢复 %1$d 个仓库的配置</string>
+    <string name="backup_import_done_partial">已恢复 %1$d 个仓库配置，忽略 %2$d 个无效条目</string>
+    <string name="backup_import_invalid">备份文件无效，未做任何修改</string>
 
     <!-- 同步（M3：坚果云 / 通用 WebDAV） -->
     <string name="sync_title">WebDAV 同步</string>

@@ -53,12 +53,11 @@ internal fun DrawerContent(
             }
             if (vaultPath != null) {
                 Spacer(Modifier.height(2.dp))
+                // 路径完整展示（超长自动换行，不截断）
                 Text(
                     text = vaultPath,
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }

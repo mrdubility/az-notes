@@ -369,6 +369,7 @@ fun HomeScreen(
                         viewModel.loadMoveTargets()
                         moveSingle = item.node.absolutePath
                     },
+                    onDuplicate = { item -> viewModel.copyNote(item.node) },
                     onLoadMore = { viewModel.loadMore() }
                 )
                 // 拖拽悬停提示：松开即把内容保存为新笔记
@@ -425,9 +426,10 @@ fun HomeScreen(
     }
 
     // 移动：目标文件夹选择（批量 / 单条共用；加载中先展示进度；与编辑页共用组件）
+    // 顶部队列可切换目标仓库（不显示隐藏仓库）；根目录行以目标仓库为准
     if (moveDialog || moveSingle != null) {
         MoveTargetDialog(
-            vaultPath = state.vaultPath,
+            vaultPath = state.moveTargetVaultPath,
             targets = state.moveTargets,
             onDismiss = {
                 moveDialog = false
@@ -438,7 +440,10 @@ fun HomeScreen(
                 if (single != null) viewModel.moveTo(single, dir) else viewModel.moveSelectedTo(dir)
                 moveDialog = false
                 moveSingle = null
-            }
+            },
+            vaults = state.vaults.filterNot { it.hidden },
+            selectedVaultId = state.moveTargetVaultId,
+            onSelectVault = { viewModel.loadMoveTargetsFor(it) }
         )
     }
 

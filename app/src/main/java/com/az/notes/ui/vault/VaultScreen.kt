@@ -25,6 +25,8 @@ import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material.icons.outlined.Visibility
+import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -68,7 +70,8 @@ import com.az.notes.util.StoragePermission
 import kotlinx.coroutines.launch
 
 /**
- * 仓库管理页：列出全部仓库（单选切换当前仓库），支持添加 / 重命名 / 移除。
+ * 仓库管理页：列出全部仓库（单选切换当前仓库），支持添加 / 重命名 / 隐藏 / 移除。
+ * 隐藏仅作用于顶栏切换列表与移动目标，本页始终可见；切换为当前仓库时自动取消隐藏。
  * WebDAV 同步配置与「接收分享的笔记位置」跟随仓库切换（设置 → 仓库组同页可见）。
  * 移除仅清理应用内数据，磁盘上的笔记文件不受影响。
  */
@@ -270,7 +273,7 @@ fun VaultScreen(
 private fun VaultRow(
     vault: VaultInfo,
     current: Boolean,
-    /** 多仓库时才允许隐藏默认仓库（只有一个仓库时强行显示）。 */
+    /** 多仓库时才允许隐藏（只有一个仓库时强行显示）。 */
     hideEnabled: Boolean,
     onSelect: () -> Unit,
     onRename: () -> Unit,
@@ -299,6 +302,14 @@ private fun VaultRow(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f, fill = false)
                 )
+                if (current) {
+                    Spacer(Modifier.width(6.dp))
+                    VaultBadge(
+                        text = stringResource(R.string.vault_current_badge),
+                        tint = MaterialTheme.colorScheme.onPrimary,
+                        container = MaterialTheme.colorScheme.primary
+                    )
+                }
                 if (vault.builtin) {
                     Spacer(Modifier.width(6.dp))
                     VaultBadge(
@@ -317,12 +328,11 @@ private fun VaultRow(
                 }
             }
             Spacer(Modifier.height(2.dp))
+            // 路径完整展示（超长自动换行，不截断）
             Text(
                 text = vault.path,
                 style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
         Box {
@@ -338,23 +348,30 @@ private fun VaultRow(
                         onRename()
                     }
                 )
-                if (vault.builtin) {
-                    // 默认仓库：多仓库时可隐藏 / 恢复显示；只有一个仓库时强行显示（置灰）
-                    DropdownMenuItem(
-                        text = {
-                            Text(
-                                stringResource(
-                                    if (vault.hidden) R.string.vault_unhide else R.string.vault_hide
-                                )
+                // 隐藏 / 取消隐藏：仅多仓库时可用；当前仓库需先切换（点击给出提示）
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            stringResource(
+                                if (vault.hidden) R.string.vault_unhide else R.string.vault_hide
                             )
-                        },
-                        enabled = hideEnabled || vault.hidden,
-                        onClick = {
-                            menuOpen = false
-                            onToggleHidden()
-                        }
-                    )
-                } else {
+                        )
+                    },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = if (vault.hidden) Icons.Outlined.Visibility
+                            else Icons.Outlined.VisibilityOff,
+                            contentDescription = null
+                        )
+                    },
+                    enabled = hideEnabled || vault.hidden,
+                    onClick = {
+                        menuOpen = false
+                        onToggleHidden()
+                    }
+                )
+                if (!vault.builtin) {
+                    // 非内置仓库：额外提供移除入口（默认仓库不可移除）
                     DropdownMenuItem(
                         text = {
                             Text(

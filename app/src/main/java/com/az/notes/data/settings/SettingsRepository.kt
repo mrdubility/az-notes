@@ -37,6 +37,12 @@ import kotlinx.serialization.json.Json
 
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "az_notes_settings")
 
+/** 某仓库的 per-vault 设置快照（收藏路径 + 分享目录），用于配置备份导出。 */
+data class VaultPerVault(
+    val favorites: Set<String>,
+    val shareFolder: String?
+)
+
 /**
  * 偏好设置仓库（§5.6）。用 DataStore 持久化主题 / 字体 / 仓库注册表等。
  * 读取异常回退为默认值（[emptyPreferences]），避免崩溃。
@@ -199,10 +205,13 @@ class SettingsRepository @Inject constructor(
         return created
     }
 
-    /** 切换当前仓库（id 必须在注册表中才生效）。 */
+    /** 切换当前仓库（id 必须在注册表中才生效）；切换后自动取消其隐藏（当前仓库恒可见）。 */
     suspend fun setCurrentVault(id: String) = edit { prefs ->
-        if (parseVaults(prefs[Keys.VAULTS]).any { it.id == id }) {
-            prefs[Keys.CURRENT_VAULT_ID] = id
+        val vaults = parseVaults(prefs[Keys.VAULTS])
+        val target = vaults.firstOrNull { it.id == id } ?: return@edit
+        prefs[Keys.CURRENT_VAULT_ID] = id
+        if (target.hidden) {
+            persistVaults(prefs, vaults.map { if (it.id == id) it.copy(hidden = false) else it })
         }
     }
 
@@ -245,14 +254,13 @@ class SettingsRepository @Inject constructor(
     }
 
     /**
-     * 设置「隐藏」状态：仅内置默认仓库支持隐藏，且要求注册表存在多个仓库、
-     * 目标不是当前正在使用的仓库（调用方需先切换）；取消隐藏不受限制。
-     * 隐藏仅作用于顶栏切换列表，仓库管理页始终可见。
+     * 设置「隐藏」状态：任意仓库均可隐藏，要求注册表存在多个仓库、且目标不是
+     * 当前正在使用的仓库（调用方需先切换；取消隐藏不受限制）。
+     * 隐藏作用于顶栏切换列表与移动目标仓库选择，仓库管理页始终可见。
      */
     suspend fun setVaultHidden(id: String, hidden: Boolean) = edit { prefs ->
         val vaults = parseVaults(prefs[Keys.VAULTS])
-        val target = vaults.firstOrNull { it.id == id } ?: return@edit
-        if (!target.builtin) return@edit
+        if (vaults.none { it.id == id }) return@edit
         if (hidden) {
             if (vaults.size <= 1) return@edit
             if (currentVaultIdOf(prefs) == id) return@edit
@@ -307,6 +315,54 @@ class SettingsRepository @Inject constructor(
     suspend fun setShareFolder(relativePath: String?) = edit { prefs ->
         val key = shareFolderKey(currentVaultIdOf(prefs))
         if (relativePath.isNullOrBlank()) prefs.remove(key) else prefs[key] = relativePath
+    }
+
+    // ------------------------------------------------- 配置备份 / 恢复（§5.6）
+
+    /** 内置默认仓库在本设备的绝对路径（导入时重定向到本设备，不信任备份中的绝对路径）。 */
+    fun builtinVaultPath(): String = File(appContext.filesDir, DEFAULT_VAULT_DIR).absolutePath
+
+    /** 读取某仓库的 per-vault 设置快照（收藏 / 分享目录），用于导出。 */
+    suspend fun perVaultSnapshot(vaultId: String): VaultPerVault {
+        val prefs = dataStore.data.first()
+        return VaultPerVault(
+            favorites = prefs[favoritesKey(vaultId)] ?: emptySet(),
+            shareFolder = prefs[shareFolderKey(vaultId)]?.takeIf { it.isNotBlank() }
+        )
+    }
+
+    /**
+     * 备份导入：按 id 合并恢复仓库注册表（同 id 覆盖、新 id 追加，不删除现有仓库），
+     * 并修正不变量：仓库数 <= 1 时清隐藏；备份中的当前仓库有效时选中它并清其隐藏。
+     */
+    suspend fun restoreVaultRegistry(imported: List<VaultInfo>, currentVaultId: String?) = edit { prefs ->
+        if (imported.isEmpty()) return@edit
+        val merged = parseVaults(prefs[Keys.VAULTS]).toMutableList()
+        imported.forEach { item ->
+            val index = merged.indexOfFirst { it.id == item.id }
+            if (index >= 0) merged[index] = item else merged += item
+        }
+        // 不变量：仅剩一个仓库时不可隐藏
+        val resolved = if (merged.size <= 1) merged.map { it.copy(hidden = false) } else merged
+        persistVaults(prefs, resolved)
+        val candidate = currentVaultId?.takeIf { id -> resolved.any { it.id == id } }
+        if (candidate != null) {
+            prefs[Keys.CURRENT_VAULT_ID] = candidate
+            if (resolved.any { it.id == candidate && it.hidden }) {
+                persistVaults(prefs, resolved.map { if (it.id == candidate) it.copy(hidden = false) else it })
+            }
+        } else if (prefs[Keys.CURRENT_VAULT_ID].let { it == null || resolved.none { v -> v.id == it } }) {
+            prefs[Keys.CURRENT_VAULT_ID] = resolved.first().id
+        }
+    }
+
+    /** 备份导入：恢复某仓库的收藏 / 分享目录（仓库不在注册表时忽略，保证导入健壮性）。 */
+    suspend fun restorePerVault(vaultId: String, favorites: Set<String>, shareFolder: String?) = edit { prefs ->
+        if (parseVaults(prefs[Keys.VAULTS]).none { it.id == vaultId }) return@edit
+        val favKey = favoritesKey(vaultId)
+        if (favorites.isEmpty()) prefs.remove(favKey) else prefs[favKey] = favorites
+        val sfKey = shareFolderKey(vaultId)
+        if (shareFolder.isNullOrBlank()) prefs.remove(sfKey) else prefs[sfKey] = shareFolder
     }
 
     // ------------------------------------------------------- 收藏夹（per-vault）

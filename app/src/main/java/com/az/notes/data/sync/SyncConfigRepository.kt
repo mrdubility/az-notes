@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
@@ -75,6 +76,18 @@ class SyncConfigRepository @Inject constructor(
     /** 清除指定仓库的同步配置（移除仓库时调用；不影响其它仓库）。 */
     suspend fun clearVault(vaultId: String) =
         dataStore.edit { prefs -> prefs.remove(configKey(vaultId)) }
+
+    /** 读取指定仓库的同步配置（配置备份导出；未设置 / 损坏 → 默认值）。 */
+    suspend fun configOf(vaultId: String): SyncConfig {
+        val prefs = dataStore.data.catch { e ->
+            if (e is IOException) emit(emptyPreferences()) else throw e
+        }.first()
+        return readConfig(prefs, vaultId)
+    }
+
+    /** 备份导入：整份覆盖指定仓库的同步配置（密码不在配置内，走 [CredentialStore] 独立管理）。 */
+    suspend fun writeVaultConfig(vaultId: String, config: SyncConfig) =
+        dataStore.edit { prefs -> prefs[configKey(vaultId)] = json.encodeToString(config) }
 
     // ---------------------------------------------------------------- 内部
 

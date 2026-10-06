@@ -24,6 +24,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.DriveFileMove
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Folder
@@ -85,6 +86,7 @@ internal fun NotesListContent(
     onToggleSelect: (NoteListItem) -> Unit,
     onToggleFavorite: (NoteListItem) -> Unit,
     onMove: (NoteListItem) -> Unit,
+    onDuplicate: (NoteListItem) -> Unit,
     onLoadMore: () -> Unit
 ) {
     val visible = if (searchActive) state.searchResults else state.items
@@ -174,7 +176,8 @@ internal fun NotesListContent(
                                 onRename = { onRename(item) },
                                 onDelete = { onDelete(item) },
                                 onToggleFavorite = { onToggleFavorite(item) },
-                                onMove = { onMove(item) }
+                                onMove = { onMove(item) },
+                                onDuplicate = { onDuplicate(item) }
                             )
                         }
                         // 后续批次装载指示（滚动到底自动触发）
@@ -226,7 +229,8 @@ private fun NoteRow(
     onRename: () -> Unit,
     onDelete: () -> Unit,
     onToggleFavorite: () -> Unit,
-    onMove: () -> Unit
+    onMove: () -> Unit,
+    onDuplicate: () -> Unit
 ) {
     val node = item.node
     Column(
@@ -264,6 +268,7 @@ private fun NoteRow(
                         isFavorite = false,
                         onToggleFavorite = null,
                         onRename = onRename,
+                        onDuplicate = null,
                         onMove = onMove,
                         onDelete = onDelete
                     )
@@ -303,6 +308,7 @@ private fun NoteRow(
                         isFavorite = isFavorite,
                         onToggleFavorite = onToggleFavorite,
                         onRename = onRename,
+                        onDuplicate = onDuplicate,
                         onMove = onMove,
                         onDelete = onDelete
                     )
@@ -343,14 +349,15 @@ private fun SelectIndicator(selected: Boolean) {
 }
 
 /**
- * ⋮ 按钮：点击在按钮旁弹出浮层菜单（收藏 / 重命名 / 移动 / 删除），替代底部弹窗以便单手操作；
- * 文件夹不显示收藏项（[onToggleFavorite] 为 null）。
+ * ⋮ 按钮：点击在按钮旁弹出浮层菜单（收藏 / 重命名 / 复制 / 移动 / 删除），替代底部弹窗以便单手操作；
+ * 文件夹不显示收藏与复制项（[onToggleFavorite] / [onDuplicate] 为 null）。
  */
 @Composable
 private fun NoteMoreButton(
     isFavorite: Boolean,
     onToggleFavorite: (() -> Unit)?,
     onRename: () -> Unit,
+    onDuplicate: (() -> Unit)?,
     onMove: () -> Unit,
     onDelete: () -> Unit
 ) {
@@ -396,6 +403,16 @@ private fun NoteMoreButton(
                     onRename()
                 }
             )
+            onDuplicate?.let { duplicate ->
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.action_duplicate)) },
+                    leadingIcon = { Icon(Icons.Outlined.ContentCopy, null) },
+                    onClick = {
+                        menuOpen = false
+                        duplicate()
+                    }
+                )
+            }
             DropdownMenuItem(
                 text = { Text(stringResource(R.string.home_select_move)) },
                 leadingIcon = { Icon(Icons.AutoMirrored.Outlined.DriveFileMove, null) },

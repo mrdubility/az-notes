@@ -81,7 +81,7 @@ class VaultViewModel @Inject constructor(
     fun renameVault(id: String, name: String) =
         viewModelScope.launch { settingsRepository.renameVault(id, name) }
 
-    /** 设置默认仓库的隐藏状态（多仓库时可隐藏；当前仓库需先切换，数据层亦校验）。 */
+    /** 设置仓库的隐藏状态（多仓库时可隐藏；当前仓库需先切换，数据层亦校验）。 */
     fun setVaultHidden(id: String, hidden: Boolean) =
         viewModelScope.launch { settingsRepository.setVaultHidden(id, hidden) }
 

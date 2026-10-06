@@ -347,6 +347,31 @@ class VaultRepository @Inject constructor() {
         return src.renameTo(File(newPath))
     }
 
+    /**
+     * 复制一篇笔记到同目录：`原名_副本.md`；已存在时追加序号（`原名_副本2.md`、`原名_副本3.md`…）。
+     * @return 新文件绝对路径；源文件不存在或复制失败返回 null
+     */
+    fun duplicateNote(sourcePath: String): String? {
+        if (!isSafeTarget(sourcePath)) return null
+        val src = File(sourcePath)
+        if (!src.isFile) return null
+        val dir = src.parentFile ?: return null
+        val name = src.name
+        val dot = name.lastIndexOf('.')
+        val base = if (dot > 0) name.substring(0, dot) else name
+        val ext = if (dot > 0) name.substring(dot) else ""
+        var candidate = File(dir, "${base}_副本$ext")
+        var index = 2
+        while (candidate.exists()) {
+            candidate = File(dir, "${base}_副本$index$ext")
+            index++
+        }
+        return runCatching {
+            src.copyTo(candidate, overwrite = false)
+            candidate.absolutePath
+        }.getOrNull()
+    }
+
     /** 删除（二次确认由 UI 层负责；敏感路径护栏兜底，绝不触碰 Vault 之外的系统文件）。 */
     fun delete(absolutePath: String): Boolean {
         if (!isSafeTarget(absolutePath)) return false

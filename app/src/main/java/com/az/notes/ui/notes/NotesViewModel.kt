@@ -76,6 +76,8 @@ data class NotesUiState(
     val selectedPaths: Set<String> = emptySet(),
     /** 批量移动对话框的目标文件夹列表（null = 尚未加载） */
     val moveTargets: List<FileNode>? = null,
+    /** 移动对话框的目标仓库 id（null = 未指定；打开时默认当前仓库） */
+    val moveTargetVaultId: String? = null,
     val error: UiText? = null,
     /** 一次性提示（Snackbar），消费后清空；携带撤销动作时横幅右侧显示「撤销」按钮 */
     val message: UiMessage? = null
@@ -87,6 +89,9 @@ data class NotesUiState(
     /** 当前仓库的展示名（顶栏标题 / 抽屉 / 收藏夹与回收站标注） */
     val currentVaultName: String?
         get() = vaults.firstOrNull { it.id == currentVaultId }?.name
+    /** 移动对话框目标仓库的根路径（「根目录」行与目录树均以它为准） */
+    val moveTargetVaultPath: String?
+        get() = vaults.firstOrNull { it.id == moveTargetVaultId }?.path
 }
 
 /**
@@ -163,7 +168,8 @@ class NotesViewModel @Inject constructor(
                         searchResults = emptyList(),
                         selectMode = false,
                         selectedPaths = emptySet(),
-                        moveTargets = null
+                        moveTargets = null,
+                        moveTargetVaultId = null
                     )
                 }
                 if (s.vaultPath.isNullOrBlank()) {
@@ -514,22 +520,40 @@ class NotesViewModel @Inject constructor(
         }
     }
 
-    /** 打开移动对话框前加载目标文件夹列表（递归全部子目录）。 */
+    /** 打开移动对话框前加载目标文件夹列表（重置到当前仓库；该仓库已加载则复用缓存）。 */
     fun loadMoveTargets() {
-        val vault = currentSettings.vaultPath ?: return
-        if (_state.value.moveTargets != null) return
+        val currentId = currentSettings.currentVaultId ?: return
+        if (_state.value.moveTargetVaultId == currentId && _state.value.moveTargets != null) return
+        loadMoveTargetsFor(currentId)
+    }
+
+    /** 切换移动对话框的目标仓库：[vaultId] 的目录树（递归全部子目录）装载完成后展示。 */
+    fun loadMoveTargetsFor(vaultId: String) {
+        val vault = currentSettings.vaults.firstOrNull { it.id == vaultId } ?: return
+        if (_state.value.moveTargetVaultId == vaultId && _state.value.moveTargets != null) return
+        _state.update { it.copy(moveTargetVaultId = vaultId, moveTargets = null) }
         viewModelScope.launch {
-            val dirs = withContext(Dispatchers.IO) { vaultRepository.listAllDirectories(vault) }
-            _state.update { it.copy(moveTargets = dirs) }
+            val dirs = runCatching {
+                withContext(Dispatchers.IO) { vaultRepository.listAllDirectories(vault.path) }
+            }.getOrDefault(emptyList())
+            // 防竞态：加载期间又切换了仓库（或对话框已重置）则丢弃本次结果
+            _state.update { s ->
+                if (s.moveTargetVaultId == vaultId) s.copy(moveTargets = dirs) else s
+            }
         }
     }
 
-    /** 将选中的条目批量移动到 [targetDir]（逐个移动，重名跳过）；完成后退出多选并刷新。 */
+    /**
+     * 将选中的条目批量移动到 [targetDir]（逐个移动，重名跳过）；完成后退出多选并刷新。
+     * 跨仓库移动：原收藏（含子孙路径）从当前仓库移除、跳过即时云端 MOVE，其余由常规同步兜底。
+     */
     fun moveSelectedTo(targetDir: String) {
         viewModelScope.launch {
             val paths = _state.value.selectedPaths.toList()
             if (paths.isEmpty()) return@launch
+            val crossVault = isCrossVaultMove(targetDir)
             var skipped = 0
+            val movedPairs = mutableListOf<Pair<String, String>>()
             val moved = withContext(Dispatchers.IO) {
                 var ok = 0
                 for (src in paths) {
@@ -541,11 +565,18 @@ class NotesViewModel @Inject constructor(
                     }
                     if (vaultRepository.rename(src, target)) {
                         ok++
-                        migrateFavorite(src, target)
-                        syncRemoteRename(src, target)
+                        movedPairs += src to target
                     }
                 }
                 ok
+            }
+            if (crossVault) {
+                removeFavoriteTrees(movedPairs.map { it.first })
+            } else {
+                movedPairs.forEach { (src, target) ->
+                    migrateFavorite(src, target)
+                    syncRemoteRename(src, target)
+                }
             }
             val failed = paths.size - moved - skipped
             _state.update {
@@ -561,8 +592,9 @@ class NotesViewModel @Inject constructor(
     }
 
     /**
-     * 单条移动（条目三个点菜单入口）：把 [sourcePath] 移到 [targetDir]；
+     * 单条移动（条目三个点菜单入口）：把 [sourcePath] 移到 [targetDir]（可跨仓库）；
      * 同目录 / 目标重名时给出提示，成功后迁移收藏、同步改名并刷新列表。
+     * 跨仓库移动：收藏从当前仓库移除、跳过即时云端 MOVE，其余由常规同步兜底。
      */
     fun moveTo(sourcePath: String, targetDir: String) {
         viewModelScope.launch {
@@ -573,17 +605,43 @@ class NotesViewModel @Inject constructor(
                 _state.update { it.copy(message = UiMessage(UiText.of(R.string.msg_move_failed_exists))) }
                 return@launch
             }
+            val crossVault = isCrossVaultMove(targetDir)
             val ok = withContext(Dispatchers.IO) { vaultRepository.rename(sourcePath, target) }
             if (ok) {
-                migrateFavorite(sourcePath, target)
+                if (crossVault) removeFavoriteTrees(listOf(sourcePath))
+                else migrateFavorite(sourcePath, target)
                 reloadItems(pullRefresh = false)
-                syncRemoteRename(sourcePath, target)
+                if (!crossVault) syncRemoteRename(sourcePath, target)
                 scheduleSaveSync()
                 _state.update {
                     it.copy(message = UiMessage(UiText.of(R.string.msg_moved_one, src.name)))
                 }
             } else {
                 _state.update { it.copy(message = UiMessage(UiText.of(R.string.msg_move_failed))) }
+            }
+        }
+    }
+
+    /**
+     * 复制一篇笔记到同目录（`原名_副本.md`，重名自动追加序号）：
+     * 成功后刷新列表并提示新文件名，随后调度一次防抖自动同步（副本作为新增文件上传云端）。
+     */
+    fun copyNote(node: FileNode) {
+        if (node.isDirectory) return
+        viewModelScope.launch {
+            val newPath = withContext(Dispatchers.IO) {
+                vaultRepository.duplicateNote(node.absolutePath)
+            }
+            if (newPath == null) {
+                _state.update {
+                    it.copy(message = UiMessage(UiText.of(R.string.msg_duplicate_failed)))
+                }
+            } else {
+                reloadItems(pullRefresh = false)
+                _state.update {
+                    it.copy(message = UiMessage(UiText.of(R.string.msg_duplicated, File(newPath).name)))
+                }
+                scheduleSaveSync()
             }
         }
     }
@@ -726,6 +784,25 @@ class NotesViewModel @Inject constructor(
         if (migrated != favorites) runCatching { settingsRepository.setFavorites(migrated) }
     }
 
+    /** 目标目录是否在当前仓库之外（跨仓库移动判定）。 */
+    private fun isCrossVaultMove(targetDir: String): Boolean {
+        val current = currentSettings.vaultPath?.trimEnd('/') ?: return false
+        val target = File(targetDir).absolutePath.trimEnd('/')
+        return target != current && !target.startsWith("$current/")
+    }
+
+    /** 从当前仓库收藏集移除若干路径及其子孙（跨仓库移动后清理；未涉及收藏时不写盘）。 */
+    private suspend fun removeFavoriteTrees(absPaths: List<String>) {
+        val vault = currentSettings.vaultPath ?: return
+        val rels = absPaths.mapNotNull { vaultRelative(vault, it) }.toSet()
+        if (rels.isEmpty()) return
+        val favorites = _state.value.favoritePaths
+        val remaining = favorites
+            .filterNot { rel -> rels.any { r -> rel == r || rel.startsWith("$r/") } }
+            .toSet()
+        if (remaining != favorites) runCatching { settingsRepository.setFavorites(remaining) }
+    }
+
     /** 绝对路径 → Vault 根相对路径（不在 Vault 内返回 null）。 */
     private fun vaultRelative(vault: String, absPath: String): String? {
         val prefix = vault.trimEnd('/') + "/"
@@ -748,7 +825,8 @@ class NotesViewModel @Inject constructor(
                     // 目录 / 偏好变化：选择状态可能指向已失效条目，一并重置
                     selectMode = false,
                     selectedPaths = emptySet(),
-                    moveTargets = null
+                    moveTargets = null,
+                    moveTargetVaultId = null
                 )
             }
             val dir = _state.value.currentDir ?: vault

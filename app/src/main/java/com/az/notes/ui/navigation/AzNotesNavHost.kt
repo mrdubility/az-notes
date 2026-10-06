@@ -25,6 +25,7 @@ import com.az.notes.ui.editor.EditorScreen
 import com.az.notes.ui.favorites.FavoritesScreen
 import com.az.notes.ui.home.HomeScreen
 import com.az.notes.ui.reader.ReaderScreen
+import com.az.notes.ui.settings.BackupScreen
 import com.az.notes.ui.settings.SettingsScreen
 import com.az.notes.ui.settings.ToolbarSettingsScreen
 import com.az.notes.ui.sync.SyncConflictScreen
@@ -123,7 +124,15 @@ fun AzNotesNavHost(
                 onSync = { navController.navigate(Routes.SYNC) },
                 onOpenVaults = { navController.navigate(Routes.VAULTS) },
                 onOpenToolbarSettings = { navController.navigate(Routes.TOOLBAR_SETTINGS) },
+                onOpenBackup = { navController.navigate(Routes.BACKUP) },
                 onOpenDebugLogs = { navController.navigate(Routes.DEBUG_LOGS) }
+            )
+        }
+
+        composable(Routes.BACKUP) { entry ->
+            BackupScreen(
+                onBack = { navController.popBackStackSafely(entry) },
+                viewModel = hiltViewModel()
             )
         }
 

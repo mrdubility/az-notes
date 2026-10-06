@@ -11,6 +11,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.Sort
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Backup
 import androidx.compose.material.icons.outlined.Build
 import androidx.compose.material.icons.outlined.ColorLens
 import androidx.compose.material.icons.outlined.DeleteSweep
@@ -71,6 +72,7 @@ fun SettingsScreen(
     onSync: () -> Unit,
     onOpenVaults: () -> Unit,
     onOpenToolbarSettings: () -> Unit,
+    onOpenBackup: () -> Unit,
     onOpenDebugLogs: () -> Unit
 ) {
     val settings by viewModel.settings.collectAsStateWithLifecycle()
@@ -289,6 +291,17 @@ fun SettingsScreen(
                     title = stringResource(R.string.settings_trash_retention),
                     subtitle = retentionLabel(settings.trashRetentionDays),
                     onClick = { retentionDialog = true }
+                )
+            }
+
+            // —— 备份（导出 / 导入全部配置；置于「关于」上方） ——
+            item { SectionHeader(stringResource(R.string.settings_backup_section)) }
+            item {
+                SettingsRow(
+                    icon = Icons.Outlined.Backup,
+                    title = stringResource(R.string.backup_title),
+                    subtitle = stringResource(R.string.settings_backup_subtitle),
+                    onClick = onOpenBackup
                 )
             }
 

@@ -22,6 +22,9 @@ object Routes {
     /** 调试日志设置页；从设置 → 关于（版本条目）进入。 */
     const val DEBUG_LOGS = "debug_logs"
 
+    /** 备份与恢复页：导出 / 导入全部配置；从设置 → 备份进入。 */
+    const val BACKUP = "backup"
+
     /** 回收站：同步时被远端删除波及的本地文件（保留天数可配置）；从抽屉进入。 */
     const val TRASH = "trash"
 
