@@ -171,7 +171,7 @@ fun HomeScreen(
 
     // 立即同步的一次性提示（尚未配置 / 正在同步中 / 未选 Vault 等）
     LaunchedEffect(syncState.testMessage) {
-        val message = syncState.testMessage ?: return@LaunchedEffect
+        val message = syncState.testMessage?.resolve(context) ?: return@LaunchedEffect
         Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
         syncViewModel.clearTestMessage()
     }

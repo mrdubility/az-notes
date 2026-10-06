@@ -393,6 +393,7 @@ private fun EditorTool.icon(): ImageVector = when (this) {
 }
 
 /** 执行工具动作：标记插入后光标 / 选区自动跟随。 */
+@OptIn(ExperimentalFoundationApi::class)
 private fun EditorTool.perform(textState: TextFieldState) {
     when (this) {
         EditorTool.UNDO -> textState.undoState.undo()

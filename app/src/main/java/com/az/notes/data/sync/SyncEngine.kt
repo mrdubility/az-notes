@@ -17,7 +17,6 @@ import com.az.notes.domain.model.SyncOpType
 import com.az.notes.domain.model.SyncPlan
 import com.az.notes.domain.model.SyncSummary
 import com.az.notes.domain.model.displayPath
-import com.az.notes.domain.model.label
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -395,7 +394,7 @@ class SyncEngine @Inject constructor(
 
         plan.ops.forEachIndexed { index, op ->
             progressIndex = index
-            onProgress(index, total, "${op.type.label()} ${op.displayPath}")
+            onProgress(index, total, "${op.type.engineLabel()} ${op.displayPath}")
             // 前置冲突副本失败时跳过同路径覆盖（§6.2）：宁可整条留到下轮，也不在未备份败方时丢失版本
             if ((op.type == SyncOpType.UPLOAD || op.type == SyncOpType.DOWNLOAD) && op.path in unprotectedConflict) {
                 failed++
@@ -888,4 +887,15 @@ class SyncEngine @Inject constructor(
         val TEXT_EXTENSIONS =
             setOf("md", "markdown", "txt", "text", "json", "yaml", "yml", "csv", "canvas", "html")
     }
+}
+
+/** 引擎进度文案中的操作名（动态技术文本：不随界面语言切换，与落库日志文案一致）。 */
+private fun SyncOpType.engineLabel(): String = when (this) {
+    SyncOpType.UPLOAD -> "上传"
+    SyncOpType.DOWNLOAD -> "下载"
+    SyncOpType.DELETE_REMOTE -> "删除云端"
+    SyncOpType.TRASH_LOCAL -> "移入回收站"
+    SyncOpType.CONFLICT_COPY -> "冲突副本"
+    SyncOpType.MOVE_LOCAL -> "本地改名"
+    SyncOpType.MOVE_REMOTE -> "云端改名"
 }

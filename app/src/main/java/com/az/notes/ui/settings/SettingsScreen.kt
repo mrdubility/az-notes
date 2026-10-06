@@ -105,6 +105,10 @@ fun SettingsScreen(
             )
         }
     ) { inner ->
+        // 持久化顺序可能缺少新版本追加的工具：补齐到末尾（默认启用）
+        val toolOrder = remember(settings.editorToolOrder) {
+            settings.editorToolOrder + EditorTool.defaultOrder.filter { it !in settings.editorToolOrder }
+        }
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(inner),
             contentPadding = PaddingValues(bottom = 32.dp)
@@ -187,10 +191,6 @@ fun SettingsScreen(
                     modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 4.dp, bottom = 4.dp)
                 )
             }
-            val toolOrder = remember(settings.editorToolOrder) {
-                // 持久化顺序可能缺少新版本追加的工具：补齐到末尾（默认启用）
-                settings.editorToolOrder + EditorTool.defaultOrder.filter { it !in settings.editorToolOrder }
-            }
             toolOrder.forEachIndexed { index, id ->
                 val tool = EditorTool.fromId(id) ?: return@forEachIndexed
                 item(key = "tool_$id") {
@@ -222,7 +222,7 @@ fun SettingsScreen(
                 }
             }
             item {
-                Box(Modifier.fillMaxWidth().padding(horizontal = 20.dp), contentAlignment = Alignment.End) {
+                Box(Modifier.fillMaxWidth().padding(horizontal = 20.dp), contentAlignment = Alignment.CenterEnd) {
                     TextButton(onClick = {
                         viewModel.setEditorToolOrder(EditorTool.defaultOrder)
                         viewModel.setEditorToolDisabled(emptySet())
