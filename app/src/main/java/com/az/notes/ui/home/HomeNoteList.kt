@@ -21,6 +21,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.DriveFileMove
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.Delete
@@ -397,7 +398,7 @@ private fun NoteMoreButton(
             )
             DropdownMenuItem(
                 text = { Text(stringResource(R.string.home_select_move)) },
-                leadingIcon = { Icon(Icons.Outlined.DriveFileMove, null) },
+                leadingIcon = { Icon(Icons.AutoMirrored.Outlined.DriveFileMove, null) },
                 onClick = {
                     menuOpen = false
                     onMove()
