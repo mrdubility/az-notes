@@ -4,7 +4,6 @@ import android.net.Uri
 
 /** 路由常量。单 Activity + Compose Navigation（§5.7）。 */
 object Routes {
-    const val GATE = "gate"                 // 授权 + Vault 选择门禁
     const val HOME = "home"                 // 主界面（抽屉菜单 + 笔记列表）
     const val SETTINGS = "settings"
 

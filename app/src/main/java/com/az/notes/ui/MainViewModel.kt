@@ -4,7 +4,6 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.az.notes.data.settings.SettingsRepository
 import com.az.notes.data.settings.VaultMigrationRunner
-import com.az.notes.data.storage.VaultRepository
 import com.az.notes.domain.model.AppSettings
 import com.az.notes.work.SyncScheduler
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -22,7 +21,6 @@ import javax.inject.Inject
 @HiltViewModel
 class MainViewModel @Inject constructor(
     private val settingsRepository: SettingsRepository,
-    private val vaultRepository: VaultRepository,
     private val syncScheduler: SyncScheduler,
     private val vaultMigrationRunner: VaultMigrationRunner
 ) : ViewModel() {
@@ -34,7 +32,7 @@ class MainViewModel @Inject constructor(
 
     /**
      * 设置是否已从 DataStore 首次回流：启动画面据此延迟退场、导航图据此决定起点，
-     * 避免已配置 Vault 时先闪一帧引导页。
+     * 避免已配置 Vault 时先闪一帧空界面。
      */
     private val _ready = MutableStateFlow(false)
     val ready: StateFlow<Boolean> = _ready.asStateFlow()
@@ -48,14 +46,6 @@ class MainViewModel @Inject constructor(
             initialValue = AppSettings()
         )
 
-    /** 选定并校验仓库目录：加入注册表并设为当前。返回路径是否有效。 */
-    fun openVault(path: String): Boolean {
-        val normalized = path.trim().trimEnd('/')
-        if (normalized.isEmpty() || !vaultRepository.isValidVault(normalized)) return false
-        viewModelScope.launch { settingsRepository.addVault(normalized) }
-        return true
-    }
-
     /** 切换当前仓库（顶栏下拉 / 仓库管理页）：持久化记忆并立即对齐周期同步调度。 */
     fun switchVault(id: String) {
         viewModelScope.launch {
@@ -66,7 +56,7 @@ class MainViewModel @Inject constructor(
 
     /**
      * 系统分享（ACTION_SEND）与文本处理（ACTION_PROCESS_TEXT）传入的待写入文本。
-     * 由主页消费后清空；未选 Vault 时暂存，完成门禁后仍会送达。
+     * 由主页消费后清空；仓库未就绪时暂存，就绪后仍会送达。
      */
     private val _sharedText = MutableStateFlow<String?>(null)
     val sharedText: StateFlow<String?> = _sharedText.asStateFlow()

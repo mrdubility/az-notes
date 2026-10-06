@@ -34,7 +34,8 @@ class VaultMigrationRunner @Inject constructor(
         mutex.withLock {
             if (done) return
             runCatching {
-                // 无任何旧数据且未建档时返回 null：后续步骤同样无事可做
+                // 建档并取得当前仓库 id（全新安装由内置默认仓库兜底）；
+                // 无旧数据时后续 migrate* 均为幂等空操作
                 val vaultId = settingsRepository.ensureVaultRegistry() ?: return@runCatching
                 settingsRepository.migrateLegacyVaultScoped()
                 syncConfigRepository.migrateLegacyConfig()

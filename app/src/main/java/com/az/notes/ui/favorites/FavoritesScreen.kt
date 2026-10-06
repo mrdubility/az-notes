@@ -52,6 +52,7 @@ import com.az.notes.ui.common.resolve
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * 收藏夹页：跨文件夹展示全部收藏笔记（相对路径解析，移动 / 改名后仍对应
@@ -68,15 +69,18 @@ fun FavoritesScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
 
-    // 一次性提示（取消收藏等）；可撤销操作显示长横幅与「撤销」按钮
+    // 一次性提示（取消收藏等）；可撤销操作显示横幅与「撤销」按钮，
+    // 限时 [UNDO_BANNER_MS] 后自动消失（超时视为放弃撤销）
     val undoLabel = stringResource(R.string.action_undo)
     LaunchedEffect(state.message) {
         val msg = state.message ?: return@LaunchedEffect
-        val result = snackbarHostState.showSnackbar(
-            message = msg.text.resolve(context),
-            actionLabel = if (msg.undo != null) undoLabel else null,
-            duration = if (msg.undo != null) SnackbarDuration.Long else SnackbarDuration.Short
-        )
+        val result = withTimeoutOrNull(UNDO_BANNER_MS) {
+            snackbarHostState.showSnackbar(
+                message = msg.text.resolve(context),
+                actionLabel = if (msg.undo != null) undoLabel else null,
+                duration = if (msg.undo != null) SnackbarDuration.Indefinite else SnackbarDuration.Short
+            )
+        }
         if (result == SnackbarResult.ActionPerformed) msg.undo?.invoke()
         viewModel.consumeMessage()
     }
@@ -224,3 +228,6 @@ private fun displayTitle(node: FileNode): String =
 
 private fun formatDateTime(millis: Long): String =
     SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(millis))
+
+/** 可撤销横幅（取消收藏等）的显示时长（毫秒）：超时视为放弃撤销。 */
+private const val UNDO_BANNER_MS = 5_000L

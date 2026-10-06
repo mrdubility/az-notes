@@ -42,6 +42,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -50,15 +51,20 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.az.notes.R
 import com.az.notes.domain.model.VaultInfo
 import com.az.notes.util.SafPathUtils
+import com.az.notes.util.StoragePermission
 import kotlinx.coroutines.launch
 
 /**
@@ -79,6 +85,8 @@ fun VaultScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     var renameTarget by remember { mutableStateOf<VaultInfo?>(null) }
     var removeTarget by remember { mutableStateOf<VaultInfo?>(null) }
+    var permissionDialog by remember { mutableStateOf(false) }
+    var pendingPick by remember { mutableStateOf(false) }
 
     // 系统文件夹选择器：选中后换算为文件系统绝对路径并加入注册表
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
@@ -86,9 +94,33 @@ fun VaultScreen(
         val path = SafPathUtils.treeUriToPath(uri)
         if (path == null || !viewModel.addVault(path)) {
             scope.launch {
-                snackbarHostState.showSnackbar(context.getString(R.string.gate_dir_invalid, path ?: ""))
+                snackbarHostState.showSnackbar(context.getString(R.string.vault_dir_invalid, path ?: ""))
             }
         }
+    }
+
+    // 外部目录需要「所有文件访问权限」：授权返回后自动接续打开文件夹选择器
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) {
+        if (pendingPick && StoragePermission.hasAllFilesAccess()) {
+            pendingPick = false
+            picker.launch(null)
+        }
+    }
+    // 部分 ROM 从系统授权页返回时不带 result：ON_RESUME 兜底重检
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME &&
+                pendingPick && StoragePermission.hasAllFilesAccess()
+            ) {
+                pendingPick = false
+                picker.launch(null)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     Scaffold(
@@ -118,18 +150,37 @@ fun VaultScreen(
                 if (settings.vaults.isEmpty()) {
                     item { EmptyVaults() }
                 } else {
+                    val multiVault = settings.vaults.size > 1
                     items(settings.vaults, key = { it.id }) { vault ->
                         VaultRow(
                             vault = vault,
                             current = vault.id == settings.currentVaultId,
+                            hideEnabled = multiVault,
                             onSelect = { viewModel.switchTo(vault.id) },
                             onRename = { renameTarget = vault },
-                            onRemove = { removeTarget = vault }
+                            onRemove = { removeTarget = vault },
+                            onToggleHidden = {
+                                when {
+                                    vault.hidden -> viewModel.setVaultHidden(vault.id, false)
+                                    vault.id == settings.currentVaultId -> scope.launch {
+                                        snackbarHostState.showSnackbar(
+                                            context.getString(R.string.vault_hide_current)
+                                        )
+                                    }
+                                    else -> viewModel.setVaultHidden(vault.id, true)
+                                }
+                            }
                         )
                     }
                 }
                 item(key = "add") {
-                    AddVaultRow(onClick = { picker.launch(null) })
+                    AddVaultRow(onClick = {
+                        if (StoragePermission.hasAllFilesAccess()) {
+                            picker.launch(null)
+                        } else {
+                            permissionDialog = true
+                        }
+                    })
                 }
             }
         }
@@ -165,7 +216,7 @@ fun VaultScreen(
         )
     }
 
-    // 移除仓库（二次确认：仅清除应用内数据，磁盘文件不受影响）
+    // 移除仓库（二次确认：仅清除应用内数据，磁盘文件不受影响；默认仓库不提供此入口）
     removeTarget?.let { target ->
         AlertDialog(
             onDismissRequest = { removeTarget = null },
@@ -189,16 +240,42 @@ fun VaultScreen(
             }
         )
     }
+
+    // 添加外部仓库前的权限引导：授权返回后自动接续打开文件夹选择器（见 pendingPick）
+    if (permissionDialog) {
+        AlertDialog(
+            onDismissRequest = { permissionDialog = false },
+            title = { Text(stringResource(R.string.permission_title)) },
+            text = { Text(stringResource(R.string.permission_subtitle)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    permissionDialog = false
+                    pendingPick = true
+                    runCatching { permissionLauncher.launch(StoragePermission.buildIntent(context)) }
+                }) {
+                    Text(stringResource(R.string.permission_grant))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { permissionDialog = false }) {
+                    Text(stringResource(R.string.action_cancel))
+                }
+            }
+        )
+    }
 }
 
-/** 单条仓库：单选（点击切换当前仓库）+ 名称 / 路径 + ⋮（重命名 / 移除）。 */
+/** 单条仓库：单选（点击切换当前仓库）+ 名称 / 徽标 + 路径 + ⋮（重命名 / 隐藏 / 移除）。 */
 @Composable
 private fun VaultRow(
     vault: VaultInfo,
     current: Boolean,
+    /** 多仓库时才允许隐藏默认仓库（只有一个仓库时强行显示）。 */
+    hideEnabled: Boolean,
     onSelect: () -> Unit,
     onRename: () -> Unit,
-    onRemove: () -> Unit
+    onRemove: () -> Unit,
+    onToggleHidden: () -> Unit
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     Row(
@@ -212,14 +289,33 @@ private fun VaultRow(
     ) {
         RadioButton(selected = current, onClick = onSelect)
         Column(Modifier.weight(1f)) {
-            Text(
-                text = vault.name,
-                style = MaterialTheme.typography.titleMedium,
-                color = if (current) MaterialTheme.colorScheme.primary
-                else MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = vault.name,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = if (current) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false)
+                )
+                if (vault.builtin) {
+                    Spacer(Modifier.width(6.dp))
+                    VaultBadge(
+                        text = stringResource(R.string.vault_builtin_badge),
+                        tint = MaterialTheme.colorScheme.primary,
+                        container = MaterialTheme.colorScheme.primaryContainer
+                    )
+                }
+                if (vault.hidden) {
+                    Spacer(Modifier.width(6.dp))
+                    VaultBadge(
+                        text = stringResource(R.string.vault_hidden_badge),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        container = MaterialTheme.colorScheme.surfaceContainerHighest
+                    )
+                }
+            }
             Spacer(Modifier.height(2.dp))
             Text(
                 text = vault.path,
@@ -242,24 +338,56 @@ private fun VaultRow(
                         onRename()
                     }
                 )
-                DropdownMenuItem(
-                    text = {
-                        Text(
-                            stringResource(R.string.vault_remove),
-                            color = MaterialTheme.colorScheme.error
-                        )
-                    },
-                    leadingIcon = {
-                        Icon(Icons.Outlined.DeleteOutline, null, tint = MaterialTheme.colorScheme.error)
-                    },
-                    onClick = {
-                        menuOpen = false
-                        onRemove()
-                    }
-                )
+                if (vault.builtin) {
+                    // 默认仓库：多仓库时可隐藏 / 恢复显示；只有一个仓库时强行显示（置灰）
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                stringResource(
+                                    if (vault.hidden) R.string.vault_unhide else R.string.vault_hide
+                                )
+                            )
+                        },
+                        enabled = hideEnabled || vault.hidden,
+                        onClick = {
+                            menuOpen = false
+                            onToggleHidden()
+                        }
+                    )
+                } else {
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                stringResource(R.string.vault_remove),
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        },
+                        leadingIcon = {
+                            Icon(Icons.Outlined.DeleteOutline, null, tint = MaterialTheme.colorScheme.error)
+                        },
+                        onClick = {
+                            menuOpen = false
+                            onRemove()
+                        }
+                    )
+                }
             }
         }
     }
+}
+
+/** 仓库徽标（默认 / 已隐藏）：小号标签，跟随主题色。 */
+@Composable
+private fun VaultBadge(text: String, tint: Color, container: Color) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.labelSmall,
+        color = tint,
+        modifier = Modifier
+            .clip(RoundedCornerShape(6.dp))
+            .background(container)
+            .padding(horizontal = 6.dp, vertical = 1.dp)
+    )
 }
 
 /** 底部入口：添加仓库（打开系统文件夹选择器）。 */

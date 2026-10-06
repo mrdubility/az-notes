@@ -1,23 +1,10 @@
 <resources>
     <string name="app_name">Az Notes</string>
 
-    <!-- Permission guidance -->
+    <!-- Permission guidance (shown on demand when adding an external vault) -->
     <string name="permission_title">Grant all files access</string>
     <string name="permission_subtitle">Az Notes reads your vault folder directly and needs "All files access". This app is not distributed on Google Play; your notes are only read and written on this device.</string>
     <string name="permission_grant">Open system settings</string>
-    <string name="permission_opened_hint">Return to the app after granting, then pick your Vault folder to get started.</string>
-    <string name="permission_granted">Granted, choose folder</string>
-    <string name="gate_dir_invalid">Directory not found or unreadable: %1$s</string>
-    <string name="gate_subtitle">Read your vault · standard Markdown preview/edit · note list and outline</string>
-
-    <!-- Vault selection -->
-    <string name="vault_title">Choose Vault folder</string>
-    <string name="vault_path_hint">Vault absolute path</string>
-    <string name="vault_pick_hint">Tap the button below to pick your notes repository (Vault) folder via the system picker.</string>
-    <string name="vault_pick_empty">No folder selected yet</string>
-    <string name="vault_pick_button">Choose folder</string>
-    <string name="vault_pick_common">Common folders</string>
-    <string name="vault_open">Open</string>
 
     <!-- Directory tree -->
     <string name="tree_empty">No Markdown files in this folder</string>
@@ -107,6 +94,13 @@
     <string name="vault_manage">Manage vaults…</string>
     <string name="vault_manage_title">Manage vaults</string>
     <string name="vault_label">Vault: %1$s</string>
+    <string name="vault_default_name">Default vault</string>
+    <string name="vault_builtin_badge">Default</string>
+    <string name="vault_hidden_badge">Hidden</string>
+    <string name="vault_hide">Hide this vault</string>
+    <string name="vault_unhide">Unhide</string>
+    <string name="vault_hide_current">The vault in use cannot be hidden; switch to another vault first</string>
+    <string name="vault_dir_invalid">Directory not found or unreadable: %1$s</string>
     <string name="vault_add">Add vault</string>
     <string name="vault_add_hint">Pick a folder via the system picker to add a new notes vault</string>
     <string name="vault_rename">Rename vault</string>

@@ -12,6 +12,7 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.az.notes.R
 import com.az.notes.domain.model.AppLanguage
 import com.az.notes.domain.model.AppSettings
 import com.az.notes.domain.model.EditorTool
@@ -94,11 +95,12 @@ class SettingsRepository @Inject constructor(
         val registered = parseVaults(prefs[Keys.VAULTS])
         val legacyPath = prefs[Keys.LEGACY_VAULT_PATH]?.trim()?.trimEnd('/')?.takeIf { it.isNotEmpty() }
         // 迁移窗口：注册表尚未建立但存在旧版路径 → 临时合成一条仓库记录保证功能可用；
-        // 落盘建档由 ensureVaultRegistry() 在启动时完成
+        // 全新安装（无任何旧数据）→ 合成内置默认仓库（App 私有目录），首帧即有仓库可用；
+        // 两者的落盘建档均由 ensureVaultRegistry() 在启动时完成
         val vaults = registered.ifEmpty {
             legacyPath?.let {
                 listOf(VaultInfo(LEGACY_VAULT_ID, File(it).name.ifBlank { it }, it))
-            } ?: emptyList()
+            } ?: listOf(defaultVaultInfo())
         }
         val currentId = prefs[Keys.CURRENT_VAULT_ID]?.takeIf { id -> vaults.any { it.id == id } }
             ?: vaults.firstOrNull()?.id
@@ -143,11 +145,20 @@ class SettingsRepository @Inject constructor(
 
     // ---------------------------------------------------- 仓库注册表管理
 
+    /** 内置默认仓库的注册表记录（名称按创建时的系统语言取资源文案，可随时重命名）。 */
+    private fun defaultVaultInfo(): VaultInfo = VaultInfo(
+        id = DEFAULT_VAULT_ID,
+        name = appContext.getString(R.string.vault_default_name),
+        path = File(appContext.filesDir, DEFAULT_VAULT_DIR).absolutePath,
+        builtin = true
+    )
+
     /**
      * 幂等建档：保证仓库注册表与「当前仓库」处于可用状态。
      * - 注册表为空且存在旧版 vault_path → 生成 [VaultInfo] 落盘并设为当前；
+     * - 注册表为空且无旧数据（全新安装）→ 创建内置默认仓库（App 私有目录）并设为当前；
      * - 注册表非空但 current 缺失 / 失效 → 修复为注册表首项。
-     * @return 建档后的当前仓库 id；无任何仓库数据时返回 null
+     * @return 建档后的当前仓库 id
      */
     suspend fun ensureVaultRegistry(): String? {
         var current: String? = null
@@ -157,6 +168,11 @@ class SettingsRepository @Inject constructor(
                 val legacy = prefs[Keys.LEGACY_VAULT_PATH]?.trim()?.trimEnd('/')?.takeIf { it.isNotEmpty() }
                 if (legacy != null) {
                     vaults += VaultInfo(VaultInfo.newId(), File(legacy).name.ifBlank { legacy }, legacy)
+                } else {
+                    // 全新安装：启用内置默认仓库（App 私有目录），首次进入即可直接记笔记
+                    val fallback = defaultVaultInfo()
+                    runCatching { File(fallback.path).mkdirs() }
+                    vaults += fallback
                 }
             }
             if (vaults.isNotEmpty()) {
@@ -214,16 +230,30 @@ class SettingsRepository @Inject constructor(
 
     /**
      * 移除仓库：从注册表删除并清理其 per-vault 键；若为当前仓库则回落到剩余首项。
+     * 内置默认仓库不可移除；删到只剩默认仓库时强制取消其隐藏并选中默认仓库；
+     * 删空（无内置默认仓库的迁移老用户）时重建默认仓库兜底，保证始终有仓库可用。
      * 磁盘上的笔记文件不受影响；同步配置 / 凭据 / 回收站 / 同步数据的收尾由调用方编排。
      */
     suspend fun removeVault(id: String) = edit { prefs ->
-        val vaults = parseVaults(prefs[Keys.VAULTS]).filterNot { it.id == id }
+        val all = parseVaults(prefs[Keys.VAULTS])
+        val target = all.firstOrNull { it.id == id } ?: return@edit
+        if (target.builtin) return@edit
+        var vaults = all.filterNot { it.id == id }
+        // 只剩默认仓库：强行恢复显示（隐藏仅对「多仓库」有意义）
+        if (vaults.size == 1 && vaults[0].builtin && vaults[0].hidden) {
+            vaults = vaults.map { it.copy(hidden = false) }
+        }
+        // 删空兜底：重建内置默认仓库
+        if (vaults.isEmpty()) {
+            val fallback = defaultVaultInfo()
+            runCatching { File(fallback.path).mkdirs() }
+            vaults = listOf(fallback)
+        }
         persistVaults(prefs, vaults)
         prefs.remove(stringSetPreferencesKey("favorite_paths_$id"))
         prefs.remove(stringPreferencesKey("share_folder_$id"))
         if (prefs[Keys.CURRENT_VAULT_ID] == id) {
-            val next = vaults.firstOrNull()?.id
-            if (next == null) prefs.remove(Keys.CURRENT_VAULT_ID) else prefs[Keys.CURRENT_VAULT_ID] = next
+            prefs[Keys.CURRENT_VAULT_ID] = vaults.first().id
         }
     }
 
@@ -234,6 +264,22 @@ class SettingsRepository @Inject constructor(
         val vaults = parseVaults(prefs[Keys.VAULTS])
         if (vaults.none { it.id == id }) return@edit
         persistVaults(prefs, vaults.map { if (it.id == id) it.copy(name = cleaned) else it })
+    }
+
+    /**
+     * 设置「隐藏」状态：仅内置默认仓库支持隐藏，且要求注册表存在多个仓库、
+     * 目标不是当前正在使用的仓库（调用方需先切换）；取消隐藏不受限制。
+     * 隐藏仅作用于顶栏切换列表，仓库管理页始终可见。
+     */
+    suspend fun setVaultHidden(id: String, hidden: Boolean) = edit { prefs ->
+        val vaults = parseVaults(prefs[Keys.VAULTS])
+        val target = vaults.firstOrNull { it.id == id } ?: return@edit
+        if (!target.builtin) return@edit
+        if (hidden) {
+            if (vaults.size <= 1) return@edit
+            if (currentVaultIdOf(prefs) == id) return@edit
+        }
+        persistVaults(prefs, vaults.map { if (it.id == id) it.copy(hidden = hidden) else it })
     }
 
     // ---------------------------------------------------------------- 迁移
@@ -386,5 +432,11 @@ class SettingsRepository @Inject constructor(
     companion object {
         /** 迁移窗口内临时合成的仓库 id（不满足 newId 的十六进制空间，不会与真实仓库冲突）。 */
         const val LEGACY_VAULT_ID = "legacy"
+
+        /** 内置默认仓库的固定 id（不满足 newId 的 "v"+8 位十六进制格式，不会冲突）。 */
+        const val DEFAULT_VAULT_ID = "default"
+
+        /** 内置默认仓库位于 App 私有目录下的子目录名。 */
+        private const val DEFAULT_VAULT_DIR = "vault"
     }
 }

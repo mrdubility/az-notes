@@ -66,6 +66,7 @@ import com.az.notes.ui.notes.NotesViewModel
 import com.az.notes.ui.sync.SyncPhase
 import com.az.notes.ui.sync.SyncViewModel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * 主界面（§5.1 重设计）：抽屉菜单 + 笔记卡片列表。
@@ -116,15 +117,18 @@ fun HomeScreen(
     // 首次进入 / 从阅读、编辑页返回时静默重读当前目录，保证修改时间与预览最新
     LaunchedEffect(Unit) { viewModel.onScreenEntered() }
 
-    // 一次性提示（重命名/删除/收藏等结果）；携带撤销动作时显示长横幅与「撤销」按钮
+    // 一次性提示（重命名/删除/收藏等结果）；携带撤销动作时显示横幅与「撤销」按钮，
+    // 限时 [UNDO_BANNER_MS] 后自动消失（超时视为放弃撤销）
     val undoLabel = stringResource(R.string.action_undo)
     LaunchedEffect(state.message) {
         val msg = state.message ?: return@LaunchedEffect
-        val result = snackbarHostState.showSnackbar(
-            message = msg.text.resolve(context),
-            actionLabel = if (msg.undo != null) undoLabel else null,
-            duration = if (msg.undo != null) SnackbarDuration.Long else SnackbarDuration.Short
-        )
+        val result = withTimeoutOrNull(UNDO_BANNER_MS) {
+            snackbarHostState.showSnackbar(
+                message = msg.text.resolve(context),
+                actionLabel = if (msg.undo != null) undoLabel else null,
+                duration = if (msg.undo != null) SnackbarDuration.Indefinite else SnackbarDuration.Short
+            )
+        }
         if (result == SnackbarResult.ActionPerformed) msg.undo?.invoke()
         viewModel.consumeMessage()
     }
@@ -236,7 +240,8 @@ fun HomeScreen(
                         ?: state.currentVaultName
                         ?: stringResource(R.string.app_name),
                     vaultName = state.currentVaultName ?: stringResource(R.string.app_name),
-                    vaults = state.vaults,
+                    // 隐藏的仓库不出现在切换列表（仓库管理页仍可见并可就地恢复显示）
+                    vaults = state.vaults.filterNot { it.hidden },
                     currentVaultId = state.currentVaultId,
                     atRoot = state.atRoot,
                     searchActive = searchActive,
@@ -474,3 +479,6 @@ fun HomeScreen(
 
 /** 双击返回退出的时间窗口（毫秒）。 */
 private const val DOUBLE_BACK_EXIT_MS = 2000L
+
+/** 可撤销横幅（删除/收藏等）的显示时长（毫秒）：超时视为放弃撤销。 */
+private const val UNDO_BANNER_MS = 5_000L

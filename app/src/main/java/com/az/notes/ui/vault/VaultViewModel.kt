@@ -81,9 +81,19 @@ class VaultViewModel @Inject constructor(
     fun renameVault(id: String, name: String) =
         viewModelScope.launch { settingsRepository.renameVault(id, name) }
 
+    /** 设置默认仓库的隐藏状态（多仓库时可隐藏；当前仓库需先切换，数据层亦校验）。 */
+    fun setVaultHidden(id: String, hidden: Boolean) =
+        viewModelScope.launch { settingsRepository.setVaultHidden(id, hidden) }
+
     /** 移除仓库：注册表 + per-vault 应用内数据收尾；磁盘笔记文件不受影响。 */
     fun removeVault(id: String) {
         viewModelScope.launch {
+            // 内置默认仓库不可移除（UI 已不提供入口，此处兜底避免误清 per-vault 数据）
+            if (settingsRepository.settings.first().vaults
+                    .firstOrNull { it.id == id }?.builtin == true
+            ) {
+                return@launch
+            }
             runCatching { syncConfigRepository.clearVault(id) }
             runCatching { credentialStore.clearPassword(id) }
             runCatching { withContext(Dispatchers.IO) { trashRepository.purgeAll(id) } }

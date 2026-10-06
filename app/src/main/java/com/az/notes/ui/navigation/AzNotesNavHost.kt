@@ -7,11 +7,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.navigation.NavBackStackEntry
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -22,7 +23,6 @@ import com.az.notes.ui.MainViewModel
 import com.az.notes.ui.debug.DebugLogScreen
 import com.az.notes.ui.editor.EditorScreen
 import com.az.notes.ui.favorites.FavoritesScreen
-import com.az.notes.ui.gate.GateScreen
 import com.az.notes.ui.home.HomeScreen
 import com.az.notes.ui.reader.ReaderScreen
 import com.az.notes.ui.settings.SettingsScreen
@@ -32,7 +32,6 @@ import com.az.notes.ui.sync.SyncLogScreen
 import com.az.notes.ui.sync.SyncScreen
 import com.az.notes.ui.trash.TrashScreen
 import com.az.notes.ui.vault.VaultScreen
-import com.az.notes.util.StoragePermission
 
 /** 全局导航图（§5.7）。path 参数以 URL 编码存放绝对路径。 */
 @Composable
@@ -41,36 +40,16 @@ fun AzNotesNavHost(
     navController: NavHostController = rememberNavController()
 ) {
     val ready by mainViewModel.ready.collectAsStateWithLifecycle()
-    val settings by mainViewModel.settings.collectAsStateWithLifecycle()
 
     if (!ready) {
-        // 设置尚未回流完成：显示与启动画面一致的底色，防止引导页闪现（正常仅数毫秒）
+        // 设置尚未回流完成：显示与启动画面一致的底色（正常仅数毫秒）
         Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface))
         return
     }
 
-    // 起点在就绪后一次性固化（remember）：已配置且权限就绪直接进主页，
-    // 从根上避免引导页一闪而过；此后设置变化不会重建导航图
-    val startDestination = remember {
-        if (settings.vaultPath.isNullOrBlank() || !StoragePermission.hasAllFilesAccess()) {
-            Routes.GATE
-        } else {
-            Routes.HOME
-        }
-    }
-
-    NavHost(navController = navController, startDestination = startDestination) {
-        composable(Routes.GATE) {
-            GateScreen(
-                viewModel = mainViewModel,
-                onReady = {
-                    navController.navigate(Routes.HOME) {
-                        popUpTo(Routes.GATE) { inclusive = true }
-                    }
-                }
-            )
-        }
-
+    // 无门禁引导页：首启由内置默认仓库（App 私有目录）兜底，直接进入主页；
+    // 外部目录的「所有文件访问权限」改为添加仓库时按需引导（见仓库管理页）
+    NavHost(navController = navController, startDestination = Routes.HOME) {
         composable(Routes.HOME) {
             val sharedText by mainViewModel.sharedText.collectAsStateWithLifecycle()
             HomeScreen(
@@ -95,13 +74,13 @@ fun AzNotesNavHost(
         composable(
             route = Routes.READER,
             arguments = listOf(navArgument("path") { type = NavType.StringType })
-        ) {
+        ) { entry ->
             ReaderScreen(
                 viewModel = hiltViewModel(),
-                onBack = { navController.popBackStack() },
+                onBack = { navController.popBackStackSafely(entry) },
                 onEdit = { path ->
                     // 去重：编辑页已是栈顶时直接回退复用，避免反复入栈
-                    navController.navigateOrBack(Routes.EDITOR_BASE, path, Routes.editor(path))
+                    navController.navigateOrBack(entry, Routes.EDITOR_BASE, path, Routes.editor(path))
                 }
             )
         }
@@ -124,10 +103,10 @@ fun AzNotesNavHost(
             val context = LocalContext.current
             EditorScreen(
                 viewModel = hiltViewModel(),
-                onBack = { navController.popBackStack() },
+                onBack = { navController.popBackStackSafely(entry) },
                 onPreview = { path ->
                     // 去重：预览页已是栈顶时直接回退复用，避免反复入栈
-                    navController.navigateOrBack(Routes.READER_BASE, path, Routes.reader(path))
+                    navController.navigateOrBack(entry, Routes.READER_BASE, path, Routes.reader(path))
                 },
                 fromShare = fromShare,
                 // 分享独立页：返回即退出应用（回到分享来源应用）
@@ -137,10 +116,10 @@ fun AzNotesNavHost(
             )
         }
 
-        composable(Routes.SETTINGS) {
+        composable(Routes.SETTINGS) { entry ->
             SettingsScreen(
                 viewModel = hiltViewModel(),
-                onBack = { navController.popBackStack() },
+                onBack = { navController.popBackStackSafely(entry) },
                 onSync = { navController.navigate(Routes.SYNC) },
                 onOpenVaults = { navController.navigate(Routes.VAULTS) },
                 onOpenToolbarSettings = { navController.navigate(Routes.TOOLBAR_SETTINGS) },
@@ -148,76 +127,91 @@ fun AzNotesNavHost(
             )
         }
 
-        composable(Routes.VAULTS) {
+        composable(Routes.VAULTS) { entry ->
             VaultScreen(
                 viewModel = hiltViewModel(),
-                onBack = { navController.popBackStack() }
+                onBack = { navController.popBackStackSafely(entry) }
             )
         }
 
-        composable(Routes.TOOLBAR_SETTINGS) {
+        composable(Routes.TOOLBAR_SETTINGS) { entry ->
             ToolbarSettingsScreen(
                 viewModel = hiltViewModel(),
-                onBack = { navController.popBackStack() }
+                onBack = { navController.popBackStackSafely(entry) }
             )
         }
 
-        composable(Routes.TRASH) {
+        composable(Routes.TRASH) { entry ->
             TrashScreen(
                 viewModel = hiltViewModel(),
-                onBack = { navController.popBackStack() }
+                onBack = { navController.popBackStackSafely(entry) }
             )
         }
 
-        composable(Routes.FAVORITES) {
+        composable(Routes.FAVORITES) { entry ->
             FavoritesScreen(
                 viewModel = hiltViewModel(),
-                onBack = { navController.popBackStack() },
+                onBack = { navController.popBackStackSafely(entry) },
                 onOpen = { path -> navController.navigate(Routes.reader(path)) }
             )
         }
 
-        composable(Routes.SYNC) {
+        composable(Routes.SYNC) { entry ->
             SyncScreen(
-                onBack = { navController.popBackStack() },
+                onBack = { navController.popBackStackSafely(entry) },
                 onOpenConflicts = { navController.navigate(Routes.SYNC_CONFLICTS) },
                 onOpenLogs = { navController.navigate(Routes.SYNC_LOGS) },
                 viewModel = hiltViewModel()
             )
         }
 
-        composable(Routes.SYNC_CONFLICTS) {
+        composable(Routes.SYNC_CONFLICTS) { entry ->
             SyncConflictScreen(
-                onBack = { navController.popBackStack() },
+                onBack = { navController.popBackStackSafely(entry) },
                 viewModel = hiltViewModel()
             )
         }
 
-        composable(Routes.SYNC_LOGS) {
+        composable(Routes.SYNC_LOGS) { entry ->
             SyncLogScreen(
-                onBack = { navController.popBackStack() },
+                onBack = { navController.popBackStackSafely(entry) },
                 viewModel = hiltViewModel()
             )
         }
 
-        composable(Routes.DEBUG_LOGS) {
+        composable(Routes.DEBUG_LOGS) { entry ->
             DebugLogScreen(
-                onBack = { navController.popBackStack() }
+                onBack = { navController.popBackStackSafely(entry) }
             )
         }
     }
 }
 
 /**
+ * 安全返回：快速点击返回按钮时，第二击会落在上一页正在退场的残留 UI 上再触发一次
+ * 弹栈；若此时栈中只剩起始页 Home，连它一起弹出会让 NavHost 变成空白（需杀进程
+ * 恢复）。仅当来源页面仍处于 RESUMED（确实是栈顶活跃页）时才执行弹栈。
+ */
+private fun NavHostController.popBackStackSafely(from: NavBackStackEntry) {
+    if (from.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
+        popBackStack()
+    }
+}
+
+/**
  * 预览 ↔ 编辑互跳去重：目标页若已在返回栈顶（同一笔记的预览/编辑），
  * 直接回退以复用原页面，避免 E→R→E→R 反复入栈、返回时需按多次返回键。
+ * 同样对来源页做 RESUMED 守护：快速双击互跳按钮时第二击落在残留 UI 上，
+ * 若放行会误把去重条件判为不满足而重复入栈。
  * 注意：NavType.StringType 读取参数时已自动解码，可直接与原始路径比较。
  */
 private fun NavHostController.navigateOrBack(
+    from: NavBackStackEntry,
     targetBase: String,
     path: String,
     route: String
 ) {
+    if (!from.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) return
     val prev = previousBackStackEntry
     if (prev != null &&
         prev.destination.route?.startsWith("$targetBase/") == true &&

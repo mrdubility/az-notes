@@ -9,13 +9,18 @@ import java.util.UUID
  * - [id]：本地生成的稳定标识（换路径 / 重命名不改变），per-vault 配置（收藏夹、分享目录、
  *   WebDAV、回收站、同步数据）均按 id 存储；
  * - [name]：展示名（默认取目录名，可重命名）；
- * - [path]：磁盘绝对路径（规范化后结尾不含 '/'）。
+ * - [path]：磁盘绝对路径（规范化后结尾不含 '/'）；
+ * - [builtin]：内置默认仓库（App 私有目录）——不可删除，仅它支持隐藏；
+ * - [hidden]：从顶栏切换列表隐藏（仓库管理页始终可见）；仅多仓库时允许，
+ *   只剩它一个仓库时强制恢复显示。
  */
 @Serializable
 data class VaultInfo(
     val id: String,
     val name: String,
-    val path: String
+    val path: String,
+    val builtin: Boolean = false,
+    val hidden: Boolean = false
 ) {
     companion object {
         /** 生成新的仓库 id（十六进制字符集，不会与保留合成 id "legacy" 冲突）。 */
