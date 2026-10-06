@@ -44,9 +44,13 @@ jobs:
           gradle :app:assembleDebug --no-daemon --stacktrace 2>&1 | tee build.log
           status=${PIPESTATUS[0]}
           if [ $status -ne 0 ]; then
-            # 把编译错误行输出为 annotation（无需登录即可通过 REST API 读取），便于快速定位
-            echo "===== compile errors ====="
-            grep -E "^(e: |error:)|e: file" build.log | head -50 | while IFS= read -r line; do
+            # 失败关键行输出为 annotation（匿名可经 REST API 读取，便于快速定位）：
+            # 编译/资源错误（Kotlin "e: file"、AAPT2 大写 "ERROR:"）与 Gradle 失败段
+            echo "===== failure annotations ====="
+            grep -E "^(e: |error:)|e: file|ERROR:|AAPT: error" build.log | head -35 | while IFS= read -r line; do
+              echo "::error::$line"
+            done
+            awk '/^FAILURE:|^> Task .* FAILED|What went wrong|Script compilation|Caused by:/' build.log | head -15 | while IFS= read -r line; do
               echo "::error::$line"
             done
             echo "===== tail of build log ====="

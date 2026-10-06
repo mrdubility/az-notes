@@ -154,11 +154,13 @@ fun DebugLogScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     var clearConfirm by remember { mutableStateOf(false) }
 
-    val message = viewModel.message
-    LaunchedEffect(message) {
-        val text = message?.resolve() ?: return@LaunchedEffect
-        snackbarHostState.showSnackbar(text)
-        viewModel.consumeMessage()
+    // 一次性提示：resolve() 是 @Composable，需先在组合上下文解析再交给副作用（同 EditorScreen）
+    val messageText = viewModel.message?.resolve()
+    LaunchedEffect(messageText) {
+        if (messageText != null) {
+            snackbarHostState.showSnackbar(messageText)
+            viewModel.consumeMessage()
+        }
     }
 
     // 导出走系统“保存文件”：用户可选任意目录，文件名自动带时间戳
