@@ -38,30 +38,6 @@ jobs:
           java -version
           gradle --version
 
-      # 正式密钥注入（与 release.yml 同一来源）：debug 与 release 同签名，可直接
-      # 互相覆盖安装、真机调试数据无缝衔接；未配置 Secrets（如 fork/PR）时跳过，
-      # 回退仓库内置调试密钥（见 app/build.gradle.kts signingConfigs）。
-      - name: Prepare signing keystore
-        env:
-          KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
-          STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
-        run: |
-          if [ -z "$KEYSTORE_BASE64" ]; then
-            echo "RELEASE_KEYSTORE_BASE64 未配置：回退内置调试密钥签名"
-            exit 0
-          fi
-          mkdir -p "$RUNNER_TEMP/signing"
-          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/signing/release.jks"
-          {
-            echo "AZ_RELEASE_STORE_FILE=$RUNNER_TEMP/signing/release.jks"
-            echo "AZ_RELEASE_STORE_PASSWORD=$STORE_PASSWORD"
-            echo "AZ_RELEASE_KEY_ALIAS=$KEY_ALIAS"
-            echo "AZ_RELEASE_KEY_PASSWORD=$KEY_PASSWORD"
-          } >> "$GITHUB_ENV"
-          echo "正式密钥已就绪：debug 构建将使用正式签名"
-
       - name: Assemble Debug APK
         run: |
           set +e
@@ -81,33 +57,6 @@ jobs:
             tail -80 build.log
           fi
           exit $status
-
-      - name: Verify debug APK signature
-        run: |
-          APK=$(ls app/build/outputs/apk/debug/*.apk | head -1)
-          echo "APK: $APK ($(du -h "$APK" | cut -f1))"
-          APKSIGNER=$(ls -d "$ANDROID_HOME"/build-tools/*/apksigner 2>/dev/null | sort -V | tail -1)
-          if [ -z "$APKSIGNER" ]; then
-            echo "::warning::apksigner not found, skip signature verification"
-            exit 0
-          fi
-          APK_SHA=$("$APKSIGNER" verify --print-certs "$APK" | grep -m1 "SHA-256 digest" | awk '{print $NF}' | tr -d ':' | tr 'A-F' 'a-f')
-          if [ -z "$APK_SHA" ]; then
-            echo "::error::apksigner 未读取到证书，debug APK 可能未签名"
-            exit 1
-          fi
-          echo "debug APK cert SHA-256: $APK_SHA"
-          if [ -n "$AZ_RELEASE_STORE_FILE" ] && [ -f "$AZ_RELEASE_STORE_FILE" ]; then
-            # 与正式密钥指纹比对：不一致直接失败（保证 debug 与 release 可互相覆盖安装）
-            KS_SHA=$(keytool -list -v -keystore "$AZ_RELEASE_STORE_FILE" -storepass "$AZ_RELEASE_STORE_PASSWORD" 2>/dev/null | grep -m1 "SHA256:" | awk '{print $2}' | tr -d ':' | tr 'A-F' 'a-f')
-            if [ "$APK_SHA" != "$KS_SHA" ]; then
-              echo "::error::debug APK 签名与正式密钥不一致（APK=$APK_SHA keystore=$KS_SHA）"
-              exit 1
-            fi
-            echo "::notice::debug APK 已用正式密钥签名（SHA-256 ${APK_SHA:0:16}...），与 release 可互相覆盖安装"
-          else
-            echo "未注入正式密钥：使用内置调试密钥签名（回退模式）"
-          fi
 
       - name: Upload build log on failure
         if: failure()

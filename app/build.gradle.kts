@@ -11,12 +11,14 @@ android {
     namespace = "com.az.notes"
     compileSdk = libs.versions.compileSdk.get().toInt()
 
-    // debug 与 release 统一签名：提供 AZ_RELEASE_* 环境变量时两者都用正式密钥
-    // （密钥不入库，CI 经 GitHub Secrets 注入，见 .github/workflows/build.yml 与 release.yml），
-    // 使 debug/release 包可以互相覆盖安装、真机调试与日常使用数据无缝衔接；
-    // 未提供环境变量时回退仓库内置调试密钥（keystore/debug.keystore，公知密码 android）。
+    // debug 独立包名（.debug 后缀）+ 仓库内置调试密钥签名：与正式版（com.az.notes）
+    // 共存安装、互不覆盖；CI 每次在全新 runner 上自动生成的调试密钥不同，会导致
+    // 前后构建的 APK 无法覆盖安装，改用仓库内置密钥后签名保持一致。
+    // （keystore/debug.keystore 为公知密码 android 的调试密钥，发布密钥仍不入库）
     //
-    // 正式发布必须走 release.yml（推 tag 触发）；workflow_dispatch 仅产 Actions 产物。
+    // 正式签名（M5）从环境变量读取：密钥文件不入库，CI 由 GitHub Secrets 注入
+    // （见 .github/workflows/release.yml）；未配置时 release 仍可构建（未签名），
+    // 正式发布必须走 release.yml（推 tag 触发）。
     signingConfigs {
         getByName("debug") {
             storeFile = rootProject.file("keystore/debug.keystore")
@@ -48,9 +50,9 @@ android {
     buildTypes {
         debug {
             isMinifyEnabled = false
-            // 同包名（不设 applicationIdSuffix）+ 同签名：可直接覆盖安装 release 版
+            // 独立包名 .debug + 内置调试密钥签名：与正式版共存安装、互不覆盖
+            applicationIdSuffix = ".debug"
             versionNameSuffix = "-debug"
-            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
         }
         release {
             // 先不混淆，避免反射/序列化被裁剪（后续评估 R8）；
