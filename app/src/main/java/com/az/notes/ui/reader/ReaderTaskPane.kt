@@ -232,10 +232,14 @@ internal fun TaskListPane(
 
     // 稳定 key：写回重载后待办行号全部变化（以 lineIndex 作 key 会整列置换 → item 被
     // 重建、Checkbox 勾选动画重播，出现「排序后勾闪一下」）。改用「文本 + 同文本出现
-    // 序号」作身份：不含 lineIndex（重排会变）也不含勾选态（勾选只改渲染不改身份）
-    val stableKeys = remember(visibleTasks) {
+    // 序号」作身份：不含 lineIndex（重排会变）也不含勾选态（勾选只改渲染不改身份）。
+    // 必须按“当前渲染的 displayTasks”建表：写回重载瞬间 displayTasks 仍是拖动中的旧
+    // 对象（旧行号），若按新 visibleTasks 建表再用旧行号查询会命中错误条目 → key 置换、
+    // 行内容异常滑动，出现「排序后文字闪一下」；按 displayTasks 建表则 key 在
+    // 拖动 → 重载 → 收敛全程不变。
+    val stableKeys = remember(displayTasks) {
         val occurrence = HashMap<String, Int>()
-        visibleTasks.associate { task ->
+        displayTasks.associate { task ->
             val n = (occurrence[task.text] ?: 0) + 1
             occurrence[task.text] = n
             // \u0000 不可能出现在解析后的文本中，用作分隔符避免拼接歧义

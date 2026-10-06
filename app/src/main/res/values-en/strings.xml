@@ -353,7 +353,7 @@
     <string name="debug_logs_type_file">File</string>
     <string name="debug_logs_type_app">App</string>
     <string name="debug_logs_storage">Storage</string>
-    <string name="debug_logs_storage_value">%1$d segments · %2$s</string>
+    <string name="debug_logs_storage_value">%1$s used / %2$s max</string>
     <string name="debug_logs_storage_path">Directory: %1$s</string>
     <string name="debug_logs_actions">Actions</string>
     <string name="debug_logs_view">View logs</string>
@@ -361,11 +361,11 @@
     <string name="debug_logs_line_count">%1$d lines</string>
     <string name="debug_logs_empty">No logs yet</string>
     <string name="debug_logs_export">Export to storage</string>
-    <string name="debug_logs_export_desc">Merge all segments into one JSONL file (easy to share with AI)</string>
+    <string name="debug_logs_export_desc">Export as one JSONL file (easy to share with AI)</string>
     <string name="debug_logs_export_done">Exported %1$d lines</string>
     <string name="debug_logs_export_failed">Export failed, please retry</string>
     <string name="debug_logs_clear">Clear logs</string>
-    <string name="debug_logs_clear_desc">Delete all segments; irreversible</string>
-    <string name="debug_logs_clear_confirm">This will delete all log segments. It cannot be undone.</string>
+    <string name="debug_logs_clear_desc">Delete all log files; irreversible</string>
+    <string name="debug_logs_clear_confirm">This will delete all log files. It cannot be undone.</string>
     <string name="debug_logs_clear_done">Logs cleared</string>
 </resources>

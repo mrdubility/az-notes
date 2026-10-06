@@ -350,7 +350,7 @@
     <string name="debug_logs_type_file">文件</string>
     <string name="debug_logs_type_app">应用</string>
     <string name="debug_logs_storage">存储占用</string>
-    <string name="debug_logs_storage_value">%1$d 个分片 · %2$s</string>
+    <string name="debug_logs_storage_value">已用 %1$s / 上限 %2$s</string>
     <string name="debug_logs_storage_path">目录：%1$s</string>
     <string name="debug_logs_actions">操作</string>
     <string name="debug_logs_view">查看日志</string>
@@ -358,12 +358,12 @@
     <string name="debug_logs_line_count">共 %1$d 行</string>
     <string name="debug_logs_empty">暂无日志</string>
     <string name="debug_logs_export">导出到存储目录</string>
-    <string name="debug_logs_export_desc">合并全部分片为单个 JSONL 文件（便于发给 AI 分析）</string>
+    <string name="debug_logs_export_desc">导出为单个 JSONL 文件（便于发给 AI 分析）</string>
     <string name="debug_logs_export_done">已导出 %1$d 行</string>
     <string name="debug_logs_export_failed">导出失败，请重试</string>
     <string name="debug_logs_clear">清空日志</string>
-    <string name="debug_logs_clear_desc">删除全部分片，不可恢复</string>
-    <string name="debug_logs_clear_confirm">将删除全部日志分片，此操作不可撤销。</string>
+    <string name="debug_logs_clear_desc">删除全部日志文件，不可恢复</string>
+    <string name="debug_logs_clear_confirm">将删除全部日志文件，此操作不可撤销。</string>
     <string name="debug_logs_clear_done">已清空日志</string>
     <string name="trash_restore_failed">恢复失败</string>
     <string name="trash_purged">回收站已清空</string>
