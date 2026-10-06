@@ -60,6 +60,8 @@ data class NotesUiState(
     val fabAction: FabAction = FabAction.NEW_NOTE,
     /** 是否启用回收站（关闭时删除直接物理删除、抽屉隐藏入口） */
     val trashEnabled: Boolean = true,
+    /** 收藏的笔记相对路径集合（仅本地，不参与同步） */
+    val favoritePaths: Set<String> = emptySet(),
     /** 是否还有后续批次未装载（滚动到底自动加载） */
     val hasMore: Boolean = false,
     /** 多选模式（长按进入）：批量移动笔记 */
@@ -128,7 +130,12 @@ class NotesViewModel @Inject constructor(
         val prev = currentSettings
         currentSettings = s
         _state.update {
-            it.copy(sortOrder = s.sortOrder, fabAction = s.fabAction, trashEnabled = s.trashEnabled)
+            it.copy(
+                sortOrder = s.sortOrder,
+                fabAction = s.fabAction,
+                trashEnabled = s.trashEnabled,
+                favoritePaths = s.favoritePaths
+            )
         }
 
         when {
@@ -256,6 +263,7 @@ class NotesViewModel @Inject constructor(
                 )
             }
             if (ok) {
+                migrateFavorite(node.absolutePath, target)
                 reloadItems(pullRefresh = false)
                 syncRemoteRename(node.absolutePath, target)
             }
@@ -315,7 +323,10 @@ class NotesViewModel @Inject constructor(
                 _state.update { it.copy(message = UiText.of(R.string.home_no_vault)) }
                 return@launch
             }
-            val dir = _state.value.currentDir ?: vault
+            // 分享笔记默认保存文件夹：设置页可配置（相对 Vault 根），留空时存入当前目录
+            val shareRel = snapshot?.shareFolder ?: currentSettings.shareFolder
+            val dir = if (!shareRel.isNullOrBlank()) File(vault, shareRel).absolutePath
+            else (_state.value.currentDir ?: vault)
             val createdPath = runCatching {
                 withContext(Dispatchers.IO) {
                     val baseName = VaultRepository.resolveDateName(
@@ -349,6 +360,31 @@ class NotesViewModel @Inject constructor(
                     val baseName = VaultRepository.resolveDateName(currentSettings.defaultNoteName)
                     val path = vaultRepository.uniqueNotePath(dir, baseName)
                     if (vaultRepository.createFile(path, "")) path else null
+                }
+            }.getOrNull()
+            if (createdPath == null) {
+                _state.update { it.copy(message = UiText.of(R.string.msg_note_create_failed)) }
+                return@launch
+            }
+            reloadItems(pullRefresh = false)
+            onCreated(createdPath)
+        }
+    }
+
+    /** 新建待办笔记（frontmatter 标记 note_type: task），成功后回调路径直接进入编辑页。 */
+    fun createTaskNote(onCreated: (String) -> Unit) {
+        viewModelScope.launch {
+            val vault = currentSettings.vaultPath
+            if (vault.isNullOrBlank()) {
+                _state.update { it.copy(message = UiText.of(R.string.home_no_vault)) }
+                return@launch
+            }
+            val dir = _state.value.currentDir ?: vault
+            val createdPath = runCatching {
+                withContext(Dispatchers.IO) {
+                    val baseName = VaultRepository.resolveDateName(currentSettings.defaultNoteName)
+                    val path = vaultRepository.uniqueNotePath(dir, baseName)
+                    if (vaultRepository.createFile(path, TASK_NOTE_TEMPLATE)) path else null
                 }
             }.getOrNull()
             if (createdPath == null) {
@@ -458,6 +494,7 @@ class NotesViewModel @Inject constructor(
                     }
                     if (vaultRepository.rename(src, target)) {
                         ok++
+                        migrateFavorite(src, target)
                         syncRemoteRename(src, target)
                     }
                 }
@@ -473,6 +510,71 @@ class NotesViewModel @Inject constructor(
             exitSelectMode()
             reloadItems(pullRefresh = false)
         }
+    }
+
+    // ——————————————— 收藏（仅本地，不参与同步） ———————————————
+
+    /** 单条收藏 / 取消收藏（条目三个点菜单入口）；按相对路径记录，改名与移动后自动迁移。 */
+    fun toggleFavorite(node: FileNode) {
+        if (node.isDirectory) return
+        val vault = currentSettings.vaultPath ?: return
+        val rel = vaultRelative(vault, node.absolutePath) ?: return
+        val adding = rel !in _state.value.favoritePaths
+        viewModelScope.launch {
+            if (adding) settingsRepository.addFavorite(rel)
+            else settingsRepository.removeFavorite(rel)
+            _state.update {
+                it.copy(
+                    message = if (adding) UiText.of(R.string.msg_favorited, node.name)
+                    else UiText.of(R.string.msg_unfavorited, node.name)
+                )
+            }
+        }
+    }
+
+    /** 多选批量收藏（跳过文件夹）；完成后退出多选并提示数量。 */
+    fun favoriteSelected() {
+        viewModelScope.launch {
+            val vault = currentSettings.vaultPath
+            if (vault.isNullOrBlank()) {
+                _state.update { it.copy(message = UiText.of(R.string.home_no_vault)) }
+                return@launch
+            }
+            val rels = _state.value.selectedPaths
+                .filter { File(it).isFile }
+                .mapNotNull { vaultRelative(vault, it) }
+                .toSet()
+            if (rels.isEmpty()) return@launch
+            settingsRepository.addFavorites(rels)
+            _state.update { it.copy(message = UiText.of(R.string.msg_favorited_count, rels.size)) }
+            exitSelectMode()
+        }
+    }
+
+    /**
+     * 应用内改名 / 移动后迁移收藏记录：文件本身与其子孙目录内的收藏一并迁移，
+     * 保证收藏始终指向原始文档（未涉及收藏时不做任何事）。
+     */
+    private suspend fun migrateFavorite(oldAbsPath: String, newAbsPath: String) {
+        val vault = currentSettings.vaultPath ?: return
+        val oldRel = vaultRelative(vault, oldAbsPath) ?: return
+        val newRel = vaultRelative(vault, newAbsPath) ?: return
+        val favorites = _state.value.favoritePaths
+        val migrated = favorites.map { rel ->
+            when {
+                rel == oldRel -> newRel
+                rel.startsWith("$oldRel/") -> newRel + rel.removePrefix(oldRel)
+                else -> rel
+            }
+        }.toSet()
+        if (migrated != favorites) runCatching { settingsRepository.setFavorites(migrated) }
+    }
+
+    /** 绝对路径 → Vault 根相对路径（不在 Vault 内返回 null）。 */
+    private fun vaultRelative(vault: String, absPath: String): String? {
+        val prefix = vault.trimEnd('/') + "/"
+        if (!absPath.startsWith(prefix)) return null
+        return absPath.removePrefix(prefix)
     }
 
     private fun reloadItems(pullRefresh: Boolean) {
@@ -629,5 +731,8 @@ class NotesViewModel @Inject constructor(
 
         /** 列表每批装载的笔记数：首屏只读首批预览，其余滚动到底自动加载。 */
         const val PAGE_SIZE = 60
+
+        /** 新建待办笔记的初始内容：frontmatter 标记 note_type: task，预览页进入待办清单模式。 */
+        const val TASK_NOTE_TEMPLATE = "---\nnote_type: task\n---\n"
     }
 }

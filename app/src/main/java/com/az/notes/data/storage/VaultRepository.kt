@@ -169,6 +169,7 @@ class VaultRepository @Inject constructor() {
     /**
      * 递归搜索 Vault 中的 Markdown 笔记（主页全局搜索）：
      * 第一轮按文件名不区分大小写包含 [query]（全部优先），第二轮按正文内容包含；
+     * 两轮内部均按修改时间从新到旧排序（搜索结果倒序）；
      * 正文读取走 mtime 增量缓存（见 [contentFor]），大文件跳过正文匹配。
      * 最多返回 [limit] 条；正文命中时附带 [SearchHit.snippet] 上下文片段。
      */
@@ -178,14 +179,16 @@ class VaultRepository @Inject constructor() {
         if (!root.isDirectory || trimmed.isEmpty()) return emptyList()
         val notes = ArrayList<FileNode>()
         collectNotes(root, rootPath, notes)
+        // 倒序：最新的笔记优先展示
+        val ordered = notes.sortedByDescending { it.lastModified }
         val out = ArrayList<SearchHit>()
         // 第一轮：文件名命中（优先展示）
-        for (node in notes) {
+        for (node in ordered) {
             if (out.size >= limit) break
             if (node.name.contains(trimmed, ignoreCase = true)) out += SearchHit(node)
         }
         // 第二轮：正文命中（文件名已命中的跳过）
-        for (node in notes) {
+        for (node in ordered) {
             if (out.size >= limit) break
             if (node.name.contains(trimmed, ignoreCase = true)) continue
             val text = contentFor(node) ?: continue

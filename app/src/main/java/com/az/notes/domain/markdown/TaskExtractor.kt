@@ -42,6 +42,21 @@ object TaskExtractor {
         return lines.joinToString("\n")
     }
 
+    /**
+     * 重排：把 [orderedLineIndexes] 指定的任务行按给定顺序重新填充回它们原有的行槽位。
+     * 仅调整传入行之间的相对顺序（支持只传子集，如“仅未完成”过滤视图下拖动），
+     * 未传入的行（含其它已完成待办）保持在原位不动。数据不一致时返回 null。
+     */
+    fun reorder(body: String, orderedLineIndexes: List<Int>): String? {
+        if (orderedLineIndexes.size < 2) return null
+        val lines = body.split('\n').toMutableList()
+        val slots = orderedLineIndexes.sorted()
+        if (slots.any { it !in lines.indices || !TASK_LINE.matches(lines[it]) }) return null
+        val contents = orderedLineIndexes.map { lines[it] }
+        slots.forEachIndexed { index, slot -> lines[slot] = contents[index] }
+        return lines.joinToString("\n")
+    }
+
     /** 追加一条待办：插到最后一个待办行之后；无待办行时追加到正文末尾。空白文本返回 null。 */
     fun append(body: String, text: String): String? {
         val trimmed = text.trim()

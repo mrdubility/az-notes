@@ -17,6 +17,9 @@ object Routes {
     /** 回收站：同步时被远端删除波及的本地文件（保留 30 天）；从抽屉进入。 */
     const val TRASH = "trash"
 
+    /** 收藏夹：跨文件夹展示收藏的笔记（仅本地）；从抽屉进入。 */
+    const val FAVORITES = "favorites"
+
     private const val READER_BASE = "reader"
     private const val EDITOR_BASE = "editor"
 

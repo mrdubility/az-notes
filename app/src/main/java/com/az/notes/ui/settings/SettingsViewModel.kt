@@ -3,27 +3,62 @@ package com.az.notes.ui.settings
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.az.notes.data.settings.SettingsRepository
+import com.az.notes.data.storage.VaultRepository
 import com.az.notes.domain.model.AppLanguage
 import com.az.notes.domain.model.AppSettings
 import com.az.notes.domain.model.FabAction
+import com.az.notes.domain.model.FileNode
 import com.az.notes.domain.model.FontFamilyPreference
 import com.az.notes.domain.model.NoteSortOrder
 import com.az.notes.domain.model.ThemeMode
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
 /** 设置页 ViewModel（§5.6）。 */
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
-    private val settingsRepository: SettingsRepository
+    private val settingsRepository: SettingsRepository,
+    private val vaultRepository: VaultRepository
 ) : ViewModel() {
 
     val settings: StateFlow<AppSettings> = settingsRepository.settings
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AppSettings())
+
+    /** 分享文件夹选择对话框的目标目录列表（null = 尚未加载） */
+    private val _moveTargets = MutableStateFlow<List<FileNode>?>(null)
+    val moveTargets: StateFlow<List<FileNode>?> = _moveTargets.asStateFlow()
+
+    /** 加载文件夹选择列表（缓存式，首次打开对话框时调用）。 */
+    fun loadMoveTargets() {
+        if (_moveTargets.value != null) return
+        viewModelScope.launch {
+            val vault = settings.value.vaultPath ?: return@launch
+            val dirs = withContext(Dispatchers.IO) { vaultRepository.listAllDirectories(vault) }
+            _moveTargets.value = dirs
+        }
+    }
+
+    /** 分享新建笔记的默认进入文件夹：选择目标目录（绝对路径），Vault 根 → null。 */
+    fun setShareFolderAbsolute(targetDir: String) {
+        viewModelScope.launch {
+            val vault = settings.value.vaultPath ?: return@launch
+            val root = vault.trimEnd('/')
+            val rel = when {
+                targetDir == root -> null
+                targetDir.startsWith("$root/") -> targetDir.removePrefix("$root/")
+                else -> return@launch
+            }
+            settingsRepository.setShareFolder(rel)
+        }
+    }
 
     fun setThemeMode(mode: ThemeMode) = viewModelScope.launch { settingsRepository.setThemeMode(mode) }
     fun setFontFamily(family: FontFamilyPreference) =

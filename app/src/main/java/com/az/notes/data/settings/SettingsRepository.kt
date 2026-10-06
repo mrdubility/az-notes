@@ -9,6 +9,7 @@ import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.az.notes.domain.model.AppLanguage
 import com.az.notes.domain.model.AppSettings
@@ -52,6 +53,8 @@ class SettingsRepository @Inject constructor(
         val TRASH_ENABLED = booleanPreferencesKey("trash_enabled")
         val TOOL_ORDER = stringPreferencesKey("editor_tool_order")
         val TOOL_DISABLED = stringPreferencesKey("editor_tool_disabled")
+        val FAVORITES = stringSetPreferencesKey("favorite_paths")
+        val SHARE_FOLDER = stringPreferencesKey("share_folder")
     }
 
     private val appContext = context.applicationContext
@@ -94,7 +97,9 @@ class SettingsRepository @Inject constructor(
                     ?.split(',')
                     ?.filter { EditorTool.fromId(it) != null }
                     ?.toSet()
-                    ?: emptySet()
+                    ?: emptySet(),
+                favoritePaths = prefs[Keys.FAVORITES] ?: emptySet(),
+                shareFolder = prefs[Keys.SHARE_FOLDER]?.takeIf { it.isNotBlank() }
             )
         }
 
@@ -140,6 +145,40 @@ class SettingsRepository @Inject constructor(
     /** 编辑器工具栏禁用集合（存工具 id，逗号分隔）。 */
     suspend fun setEditorToolDisabled(disabled: Set<String>) = edit {
         it[Keys.TOOL_DISABLED] = disabled.filter { id -> EditorTool.fromId(id) != null }.joinToString(",")
+    }
+
+    /** 分享笔记默认保存文件夹（相对 Vault 根；null = 跟随当前目录）。 */
+    suspend fun setShareFolder(relativePath: String?) = edit {
+        if (relativePath.isNullOrBlank()) it.remove(Keys.SHARE_FOLDER)
+        else it[Keys.SHARE_FOLDER] = relativePath
+    }
+
+    /** 收藏一条笔记（相对 Vault 根的路径；仅本地，不参与同步）。 */
+    suspend fun addFavorite(relativePath: String) = edit {
+        it[Keys.FAVORITES] = (it[Keys.FAVORITES] ?: emptySet()) + relativePath
+    }
+
+    /** 批量收藏。 */
+    suspend fun addFavorites(relativePaths: Collection<String>) = edit {
+        if (relativePaths.isNotEmpty()) {
+            it[Keys.FAVORITES] = (it[Keys.FAVORITES] ?: emptySet()) + relativePaths
+        }
+    }
+
+    /** 取消收藏。 */
+    suspend fun removeFavorite(relativePath: String) = edit {
+        it[Keys.FAVORITES] = (it[Keys.FAVORITES] ?: emptySet()) - relativePath
+    }
+
+    /** 文件被移动 / 改名后迁移收藏路径（未收藏时不做任何事）。 */
+    suspend fun moveFavorite(oldRelative: String, newRelative: String) = edit {
+        val current = it[Keys.FAVORITES] ?: return@edit
+        if (oldRelative in current) it[Keys.FAVORITES] = current - oldRelative + newRelative
+    }
+
+    /** 以现存集合覆盖收藏（用于清理已失效的路径）。 */
+    suspend fun setFavorites(relativePaths: Set<String>) = edit {
+        it[Keys.FAVORITES] = relativePaths
     }
 
     private suspend fun edit(block: (androidx.datastore.preferences.core.MutablePreferences) -> Unit) {

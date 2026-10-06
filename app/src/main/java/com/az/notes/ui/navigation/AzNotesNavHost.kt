@@ -20,6 +20,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.az.notes.ui.MainViewModel
 import com.az.notes.ui.editor.EditorScreen
+import com.az.notes.ui.favorites.FavoritesScreen
 import com.az.notes.ui.gate.GateScreen
 import com.az.notes.ui.home.HomeScreen
 import com.az.notes.ui.reader.ReaderScreen
@@ -74,6 +75,7 @@ fun AzNotesNavHost(
                     navController.navigate(Routes.editor(path, fresh, fromShare))
                 },
                 onOpenTrash = { navController.navigate(Routes.TRASH) },
+                onOpenFavorites = { navController.navigate(Routes.FAVORITES) },
                 // 主页右上角“立即同步”在本页以弹窗完成（扫描 → 确认 → 执行），无需导航；
                 // 同步配置从抽屉 → 设置 → 同步进入
                 onSettings = { navController.navigate(Routes.SETTINGS) },
@@ -148,6 +150,14 @@ fun AzNotesNavHost(
             TrashScreen(
                 viewModel = hiltViewModel(),
                 onBack = { navController.popBackStack() }
+            )
+        }
+
+        composable(Routes.FAVORITES) {
+            FavoritesScreen(
+                viewModel = hiltViewModel(),
+                onBack = { navController.popBackStack() },
+                onOpen = { path -> navController.navigate(Routes.reader(path)) }
             )
         }
 

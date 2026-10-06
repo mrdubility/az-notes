@@ -18,7 +18,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -32,6 +31,8 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.Sort
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Checklist
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.CreateNewFolder
 import androidx.compose.material.icons.outlined.Delete
@@ -42,6 +43,7 @@ import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.RestoreFromTrash
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Star
 import androidx.compose.material.icons.outlined.Sync
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
@@ -90,6 +92,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -106,6 +109,7 @@ import com.az.notes.domain.model.FabAction
 import com.az.notes.domain.model.FileNode
 import com.az.notes.domain.model.NoteSortOrder
 import com.az.notes.ui.common.resolve
+import com.az.notes.ui.components.MoveTargetDialog
 import com.az.notes.ui.components.RenameDialog
 import com.az.notes.ui.components.SyncConfirmDialog
 import com.az.notes.ui.components.SyncProgressDialog
@@ -134,6 +138,7 @@ fun HomeScreen(
     onOpenFile: (String) -> Unit,
     onOpenEditor: (path: String, fresh: Boolean, fromShare: Boolean) -> Unit,
     onOpenTrash: () -> Unit,
+    onOpenFavorites: () -> Unit,
     onSettings: () -> Unit,
     /** 系统分享 / 内容传送门传入的待写入文本（null = 无） */
     sharedText: String? = null,
@@ -255,6 +260,10 @@ fun HomeScreen(
                 DrawerContent(
                     vaultPath = state.vaultPath,
                     trashEnabled = state.trashEnabled,
+                    onFavorites = {
+                        scope.launch { drawerState.close() }
+                        onOpenFavorites()
+                    },
                     onTrash = {
                         scope.launch { drawerState.close() }
                         onOpenTrash()
@@ -293,6 +302,7 @@ fun HomeScreen(
                     syncActive = syncRunning,
                     onExitSelect = { viewModel.exitSelectMode() },
                     onSelectAll = { viewModel.toggleSelectAll() },
+                    onFavoriteSelected = { viewModel.favoriteSelected() },
                     onMoveSelected = {
                         viewModel.loadMoveTargets()
                         moveDialog = true
@@ -310,6 +320,9 @@ fun HomeScreen(
                                 onClick = {
                                     when (state.fabAction) {
                                         FabAction.NEW_NOTE -> viewModel.createNote { path ->
+                                            onOpenEditor(path, true, false)
+                                        }
+                                        FabAction.NEW_TASK -> viewModel.createTaskNote { path ->
                                             onOpenEditor(path, true, false)
                                         }
                                         FabAction.NEW_FOLDER -> newFolderDialog = true
@@ -338,6 +351,14 @@ fun HomeScreen(
                             onClick = {
                                 fabMenuOpen = false
                                 viewModel.createNote { path -> onOpenEditor(path, true, false) }
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.home_new_task)) },
+                            leadingIcon = { Icon(Icons.Filled.Checklist, null) },
+                            onClick = {
+                                fabMenuOpen = false
+                                viewModel.createTaskNote { path -> onOpenEditor(path, true, false) }
                             }
                         )
                         DropdownMenuItem(
@@ -377,6 +398,7 @@ fun HomeScreen(
                     onRefresh = viewModel::refresh,
                     onLongPress = { item -> viewModel.enterSelectMode(item.node.absolutePath) },
                     onToggleSelect = { item -> viewModel.toggleSelected(item.node.absolutePath) },
+                    onToggleFavorite = { item -> viewModel.toggleFavorite(item.node) },
                     onLoadMore = { viewModel.loadMore() }
                 )
                 // 拖拽悬停提示：松开即把内容保存为新笔记
@@ -432,9 +454,9 @@ fun HomeScreen(
         )
     }
 
-    // 批量移动：目标文件夹选择（加载中先展示进度）
+    // 批量移动：目标文件夹选择（加载中先展示进度；公共组件与编辑页共用）
     if (moveDialog) {
-        MoveDialog(
+        MoveTargetDialog(
             vaultPath = state.vaultPath,
             targets = state.moveTargets,
             onDismiss = { moveDialog = false },
@@ -505,6 +527,7 @@ private fun HomeTopBar(
     syncActive: Boolean,
     onExitSelect: () -> Unit,
     onSelectAll: () -> Unit,
+    onFavoriteSelected: () -> Unit,
     onMoveSelected: () -> Unit
 ) {
     var sortMenuOpen by remember { mutableStateOf(false) }
@@ -571,6 +594,9 @@ private fun HomeTopBar(
                     TextButton(onClick = onSelectAll) {
                         Text(stringResource(R.string.home_select_all))
                     }
+                    TextButton(onClick = onFavoriteSelected, enabled = selectedCount > 0) {
+                        Text(stringResource(R.string.action_favorite))
+                    }
                     TextButton(onClick = onMoveSelected, enabled = selectedCount > 0) {
                         Text(stringResource(R.string.home_select_move))
                     }
@@ -636,12 +662,13 @@ private fun HomeTopBar(
     )
 }
 
-/** 抽屉内容：Vault 信息 + 回收站（关闭时隐藏入口）/ 设置入口。 */
+/** 抽屉内容：Vault 信息 + 收藏夹 / 回收站（关闭时隐藏入口） / 设置入口。 */
 @Composable
 private fun DrawerContent(
     vaultPath: String?,
     /** 回收站开关：关闭时隐藏入口（删除即物理删除） */
     trashEnabled: Boolean,
+    onFavorites: () -> Unit,
     onTrash: () -> Unit,
     onSettings: () -> Unit
 ) {
@@ -666,6 +693,13 @@ private fun DrawerContent(
         Spacer(Modifier.height(8.dp))
         HorizontalDivider()
         Spacer(Modifier.height(8.dp))
+        NavigationDrawerItem(
+            label = { Text(stringResource(R.string.fav_title)) },
+            icon = { Icon(Icons.Outlined.Star, null) },
+            selected = false,
+            onClick = onFavorites,
+            modifier = Modifier.padding(horizontal = 12.dp)
+        )
         if (trashEnabled) {
             NavigationDrawerItem(
                 label = { Text(stringResource(R.string.trash_title)) },
@@ -698,6 +732,7 @@ private fun NotesListContent(
     onRefresh: () -> Unit,
     onLongPress: (NoteListItem) -> Unit,
     onToggleSelect: (NoteListItem) -> Unit,
+    onToggleFavorite: (NoteListItem) -> Unit,
     onLoadMore: () -> Unit
 ) {
     val visible = if (searchActive) state.searchResults else state.items
@@ -777,6 +812,7 @@ private fun NotesListContent(
                                 item = item,
                                 selectMode = state.selectMode,
                                 selected = item.node.absolutePath in state.selectedPaths,
+                                isFavorite = item.node.relativePath in state.favoritePaths,
                                 onClick = {
                                     if (state.selectMode) onToggleSelect(item) else onOpen(item)
                                 },
@@ -784,7 +820,8 @@ private fun NotesListContent(
                                     if (state.selectMode) onToggleSelect(item) else onLongPress(item)
                                 },
                                 onRename = { onRename(item) },
-                                onDelete = { onDelete(item) }
+                                onDelete = { onDelete(item) },
+                                onToggleFavorite = { onToggleFavorite(item) }
                             )
                         }
                         // 后续批次装载指示（滚动到底自动触发）
@@ -823,17 +860,19 @@ private fun ListHint(text: String) {
     }
 }
 
-/** 单条：文件夹 → 图标 + 名称；笔记 → 日期 / 标题 + ⋮ / 正文预览；多选模式：选中高亮 + 勾选指示。 */
+/** 单条：文件夹 → 图标 + 名称；笔记 → 日期 / 标题 + ⋮ / 正文预览；多选模式：选中高亮 + 勾选指示（仅选中显示）。 */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun NoteRow(
     item: NoteListItem,
     selectMode: Boolean,
     selected: Boolean,
+    isFavorite: Boolean,
     onClick: () -> Unit,
     onLongPress: () -> Unit,
     onRename: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    onToggleFavorite: () -> Unit
 ) {
     val node = item.node
     Column(
@@ -867,7 +906,12 @@ private fun NoteRow(
                     SelectIndicator(selected)
                 } else {
                     // 文件夹同样提供重命名 / 删除入口（重命名后云端由 MOVE 同步）
-                    NoteMoreButton(onRename = onRename, onDelete = onDelete)
+                    NoteMoreButton(
+                        isFavorite = false,
+                        onToggleFavorite = null,
+                        onRename = onRename,
+                        onDelete = onDelete
+                    )
                 }
             }
         } else {
@@ -884,14 +928,28 @@ private fun NoteRow(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f)
                 )
-                item.progress?.let { percent ->
-                    ReadingProgressDot(progress = percent)
+                if (isFavorite) {
                     Spacer(Modifier.width(6.dp))
+                    Icon(
+                        imageVector = Icons.Filled.Star,
+                        contentDescription = stringResource(R.string.action_unfavorite),
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+                item.progress?.let { percent ->
+                    Spacer(Modifier.width(6.dp))
+                    ReadingProgressDot(progress = percent)
                 }
                 if (selectMode) {
                     SelectIndicator(selected)
                 } else {
-                    NoteMoreButton(onRename = onRename, onDelete = onDelete)
+                    NoteMoreButton(
+                        isFavorite = isFavorite,
+                        onToggleFavorite = onToggleFavorite,
+                        onRename = onRename,
+                        onDelete = onDelete
+                    )
                 }
             }
             if (item.preview.isNotEmpty()) {
@@ -917,21 +975,25 @@ private fun NoteRow(
     }
 }
 
-/** 多选模式选中指示：选中实心主色，未选中弱化显示（点击条目切换）；尺寸对齐 [NoteMoreButton]。 */
+/** 多选模式选中指示：仅选中时显示实心勾，未选中透明占位（保持布局稳定）。 */
 @Composable
 private fun SelectIndicator(selected: Boolean) {
     Icon(
         imageVector = Icons.Filled.Check,
         contentDescription = null,
-        tint = if (selected) MaterialTheme.colorScheme.primary
-        else MaterialTheme.colorScheme.outline,
+        tint = if (selected) MaterialTheme.colorScheme.primary else Color.Transparent,
         modifier = Modifier.padding(12.dp)
     )
 }
 
-/** ⋮ 按钮：点击在按钮旁弹出浮层菜单（重命名 / 删除），替代底部弹窗以便单手操作。 */
+/**
+ * ⋮ 按钮：点击在按钮旁弹出浮层菜单（收藏 / 重命名 / 删除），替代底部弹窗以便单手操作；
+ * 文件夹不显示收藏项（[onToggleFavorite] 为 null）。
+ */
 @Composable
 private fun NoteMoreButton(
+    isFavorite: Boolean,
+    onToggleFavorite: (() -> Unit)?,
     onRename: () -> Unit,
     onDelete: () -> Unit
 ) {
@@ -948,6 +1010,27 @@ private fun NoteMoreButton(
             expanded = menuOpen,
             onDismissRequest = { menuOpen = false }
         ) {
+            onToggleFavorite?.let { toggle ->
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            stringResource(
+                                if (isFavorite) R.string.action_unfavorite else R.string.action_favorite
+                            )
+                        )
+                    },
+                    leadingIcon = {
+                        Icon(
+                            if (isFavorite) Icons.Filled.Star else Icons.Outlined.Star,
+                            null
+                        )
+                    },
+                    onClick = {
+                        menuOpen = false
+                        toggle()
+                    }
+                )
+            }
             DropdownMenuItem(
                 text = { Text(stringResource(R.string.action_rename)) },
                 leadingIcon = { Icon(Icons.Outlined.Edit, null) },
@@ -1030,86 +1113,6 @@ private fun NewFolderDialog(
             }
         }
     )
-}
-
-/**
- * 批量移动对话框：列出 Vault 根目录与全部子目录（按层级缩进）；
- * 点击目标即执行移动（对话框由调用方关闭）。
- */
-@Composable
-private fun MoveDialog(
-    vaultPath: String?,
-    targets: List<FileNode>?,
-    onDismiss: () -> Unit,
-    onSelect: (String) -> Unit
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.home_move_title)) },
-        text = {
-            if (targets == null) {
-                Box(
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    CircularProgressIndicator()
-                }
-            } else {
-                LazyColumn(modifier = Modifier.heightIn(max = 420.dp)) {
-                    vaultPath?.let { root ->
-                        item(key = "__root__") {
-                            MoveTargetRow(
-                                depth = 0,
-                                label = stringResource(R.string.home_move_root),
-                                onClick = { onSelect(root) }
-                            )
-                        }
-                    }
-                    items(targets, key = { it.absolutePath }) { dir ->
-                        MoveTargetRow(
-                            depth = dir.depth + 1,
-                            label = dir.name,
-                            onClick = { onSelect(dir.absolutePath) }
-                        )
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
-        }
-    )
-}
-
-/** 目标文件夹行：按 depth 缩进展示层级，点击该项即移动。 */
-@Composable
-private fun MoveTargetRow(
-    depth: Int,
-    label: String,
-    onClick: () -> Unit
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
-            .clickable(onClick = onClick)
-            .padding(start = (8 + depth * 16).dp, end = 8.dp, top = 12.dp, bottom = 12.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Icon(
-            imageVector = Icons.Outlined.Folder,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.size(22.dp)
-        )
-        Spacer(Modifier.width(10.dp))
-        Text(
-            text = label,
-            style = MaterialTheme.typography.bodyLarge,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
-    }
 }
 
 /** 阅读进度小圆点：环形弧长表示 1–99% 的阅读进度。 */

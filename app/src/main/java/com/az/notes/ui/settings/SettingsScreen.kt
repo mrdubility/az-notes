@@ -1,6 +1,8 @@
 package com.az.notes.ui.settings
 
 import android.app.Activity
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -28,7 +30,9 @@ import androidx.compose.material.icons.outlined.FormatSize
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Notes
+import androidx.compose.material.icons.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.Palette
+import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.Sync
 import androidx.compose.material.icons.outlined.TextFormat
 import androidx.compose.material3.AlertDialog
@@ -57,6 +61,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.az.notes.R
@@ -65,6 +70,7 @@ import com.az.notes.domain.model.FabAction
 import com.az.notes.domain.model.FontFamilyPreference
 import com.az.notes.domain.model.NoteSortOrder
 import com.az.notes.domain.model.ThemeMode
+import com.az.notes.ui.components.MoveTargetDialog
 import com.az.notes.util.LocaleHelper
 
 /**
@@ -89,7 +95,15 @@ fun SettingsScreen(
     var previewDialog by remember { mutableStateOf(false) }
     var noteNameDialog by remember { mutableStateOf(false) }
     var trashDisableConfirm by remember { mutableStateOf(false) }
+    var shareFolderDialog by remember { mutableStateOf(false) }
     val context = LocalContext.current
+    val moveTargets by viewModel.moveTargets.collectAsStateWithLifecycle()
+    // 当前版本号（关于区展示）：读取失败时留空
+    val versionName = remember {
+        runCatching {
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName
+        }.getOrNull().orEmpty()
+    }
 
     Scaffold(
         topBar = {
@@ -174,9 +188,6 @@ fun SettingsScreen(
                     onClick = { lineHeightDialog = true }
                 )
             }
-
-            // —— 编辑器工具栏：独立设置页入口 ——
-            item { SectionHeader(stringResource(R.string.settings_editor_toolbar)) }
             item {
                 SettingsRow(
                     icon = Icons.Outlined.Build,
@@ -223,6 +234,19 @@ fun SettingsScreen(
                     options = FabAction.entries.map { it to it.label() },
                     selected = settings.fabAction,
                     onSelect = viewModel::setFabAction
+                )
+            }
+            item {
+                SettingsRow(
+                    icon = Icons.Outlined.Share,
+                    title = stringResource(R.string.settings_share_folder),
+                    subtitle = settings.shareFolder?.let {
+                        stringResource(R.string.settings_share_folder_current, it)
+                    } ?: stringResource(R.string.settings_share_folder_root),
+                    onClick = {
+                        viewModel.loadMoveTargets()
+                        shareFolderDialog = true
+                    }
                 )
             }
 
@@ -298,7 +322,19 @@ fun SettingsScreen(
                 SettingsRow(
                     icon = Icons.Outlined.Info,
                     title = stringResource(R.string.app_name),
-                    subtitle = stringResource(R.string.settings_about_subtitle)
+                    subtitle = stringResource(R.string.settings_about_version, versionName)
+                )
+            }
+            item {
+                SettingsRow(
+                    icon = Icons.Outlined.OpenInNew,
+                    title = stringResource(R.string.settings_about_github),
+                    subtitle = GITHUB_URL,
+                    onClick = {
+                        runCatching {
+                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(GITHUB_URL)))
+                        }
+                    }
                 )
             }
         }
@@ -360,6 +396,20 @@ fun SettingsScreen(
                 noteNameDialog = false
             },
             onDismiss = { noteNameDialog = false }
+        )
+    }
+
+    // 分享文件夹选择：列出 Vault 根与全部子目录（选择根目录即恢复默认）
+    if (shareFolderDialog) {
+        MoveTargetDialog(
+            vaultPath = settings.vaultPath,
+            targets = moveTargets,
+            onDismiss = { shareFolderDialog = false },
+            onSelect = { dir ->
+                viewModel.setShareFolderAbsolute(dir)
+                shareFolderDialog = false
+            },
+            title = stringResource(R.string.settings_share_folder)
         )
     }
 
@@ -453,7 +503,9 @@ private fun <T> SettingsChoiceRow(
         )
         DropdownMenu(
             expanded = expanded,
-            onDismissRequest = { expanded = false }
+            onDismissRequest = { expanded = false },
+            // 菜单向右偏移至图标右侧起始，避免紧贴屏幕左缘
+            offset = DpOffset(x = 56.dp, y = 0.dp)
         ) {
             options.forEach { (value, label) ->
                 DropdownMenuItem(
@@ -601,10 +653,14 @@ private fun NoteSortOrder.label(): String = stringResource(
 private fun FabAction.label(): String = stringResource(
     when (this) {
         FabAction.NEW_NOTE -> R.string.settings_fab_action_new_note
+        FabAction.NEW_TASK -> R.string.settings_fab_action_new_task
         FabAction.NEW_FOLDER -> R.string.settings_fab_action_new_folder
         FabAction.SHOW_MENU -> R.string.settings_fab_action_menu
     }
 )
+
+/** 项目仓库地址（关于区展示，点击打开浏览器）。 */
+private const val GITHUB_URL = "https://github.com/mrdubility/az-notes"
 
 /** 回收站自动清理天数候选（0 = 永不清理）。 */
 private val TRASH_RETENTION_OPTIONS = listOf(7, 30, 90, 365, 0)

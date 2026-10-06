@@ -10,7 +10,7 @@ enum class FontFamilyPreference { SANS, SERIF, MONO }
 enum class NoteSortOrder { MODIFIED_DESC, MODIFIED_ASC, NAME_ASC, NAME_DESC }
 
 /** 右下角加号：点击时执行的默认行为（长按始终弹出全部选项） */
-enum class FabAction { NEW_NOTE, NEW_FOLDER, SHOW_MENU }
+enum class FabAction { NEW_NOTE, NEW_FOLDER, NEW_TASK, SHOW_MENU }
 
 /** 应用语言：跟随系统 / 简体中文 / English；[tag] 为 Locale 标签（null = 跟随系统）。 */
 enum class AppLanguage(val tag: String?) { SYSTEM(null), ZH("zh"), EN("en") }
@@ -43,5 +43,9 @@ data class AppSettings(
     /** 编辑器工具栏的工具顺序（存 [EditorTool.id] 列表） */
     val editorToolOrder: List<String> = EditorTool.defaultOrder,
     /** 编辑器工具栏中被禁用的工具 id 集合 */
-    val editorToolDisabled: Set<String> = emptySet()
+    val editorToolDisabled: Set<String> = emptySet(),
+    /** 收藏的笔记相对路径集合（相对 Vault 根；仅本地，不参与同步） */
+    val favoritePaths: Set<String> = emptySet(),
+    /** 分享进入的笔记默认保存文件夹（相对 Vault 根；null = 跟随当前目录） */
+    val shareFolder: String? = null
 )

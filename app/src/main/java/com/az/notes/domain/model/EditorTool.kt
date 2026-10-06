@@ -21,7 +21,8 @@ enum class EditorTool(val id: String) {
     INDENT("indent"),
     UNINDENT("unindent"),
     LINK("link"),
-    IMAGE("image");
+    IMAGE("image"),
+    PROPERTY("property");
 
     companion object {
         /** 默认顺序（启用全部）。 */

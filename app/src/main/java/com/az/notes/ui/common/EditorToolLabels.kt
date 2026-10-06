@@ -26,5 +26,6 @@ internal fun EditorTool.label(): String = stringResource(
         EditorTool.UNINDENT -> R.string.editor_tool_unindent
         EditorTool.LINK -> R.string.editor_tool_link
         EditorTool.IMAGE -> R.string.editor_tool_image
+        EditorTool.PROPERTY -> R.string.editor_tool_property
     }
 )

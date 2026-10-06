@@ -8,6 +8,7 @@ import com.az.notes.data.local.ProgressRepository
 import com.az.notes.data.local.ReadProgressEntity
 import com.az.notes.data.settings.SettingsRepository
 import com.az.notes.data.storage.VaultRepository
+import com.az.notes.domain.markdown.FrontmatterAttribute
 import com.az.notes.domain.markdown.FrontmatterParser
 import com.az.notes.domain.markdown.Heading
 import com.az.notes.domain.markdown.HeadingExtractor
@@ -55,6 +56,8 @@ data class ReaderUiState(
     val docInfo: DocInfo? = null,
     /** frontmatter `note_type` 值（小写）；null = 未声明。 */
     val noteType: String? = null,
+    /** frontmatter 全部属性（保序，多值已解析）；用于预览页属性面板。 */
+    val attributes: List<FrontmatterAttribute> = emptyList(),
     /** 待办条目（仅 task 模式非空）。 */
     val tasks: List<TaskItem> = emptyList(),
     /** 一次性提示（Snackbar），展示后由 [consumeMessage] 清除。 */
@@ -108,7 +111,7 @@ class ReaderViewModel @Inject constructor(
                 val vault = runCatching { settingsRepository.settings.first().vaultPath }.getOrNull()
                 val text = withContext(Dispatchers.IO) { vaultRepository.readText(absolutePath) }
                 val split = withContext(Dispatchers.IO) { FrontmatterParser.split(text) }
-                val noteType = split.attributes["note_type"]?.trim()?.lowercase()
+                val noteType = split.value("note_type")?.trim()?.lowercase()
                 val parsed = withContext(Dispatchers.IO) { HeadingExtractor.parse(split.body) }
                 val tasks = if (noteType == "task") {
                     withContext(Dispatchers.IO) { TaskExtractor.extract(split.body) }
@@ -127,6 +130,7 @@ class ReaderViewModel @Inject constructor(
                         vaultPath = vault,
                         initialProgress = progress,
                         noteType = noteType,
+                        attributes = split.entries,
                         tasks = tasks,
                         error = null
                     )
@@ -174,6 +178,11 @@ class ReaderViewModel @Inject constructor(
     fun addTask(text: String) {
         if (text.isBlank()) return
         mutateBody { body -> TaskExtractor.append(body, text) }
+    }
+
+    /** 重排待办（拖动排序）：[lineOrder] 为任务行号的期望顺序，仅调整这些行之间的相对顺序。 */
+    fun reorderTasks(lineOrder: List<Int>) {
+        mutateBody { body -> TaskExtractor.reorder(body, lineOrder) }
     }
 
     /** 清除已展示的一次性提示。 */

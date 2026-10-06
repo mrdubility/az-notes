@@ -36,6 +36,7 @@
     <string name="home_search_tip">Type keywords to search all notes across folders</string>
     <string name="home_new_note">New note</string>
     <string name="home_new_folder">New folder</string>
+    <string name="home_new_task">New task</string>
     <string name="home_double_back_exit">Press back again to exit</string>
     <string name="home_drop_hint">Release to create a note</string>
     <string name="home_no_vault">No Vault folder selected</string>
@@ -45,6 +46,8 @@
     <string name="action_more">More</string>
     <string name="action_rename">Rename</string>
     <string name="action_delete">Delete</string>
+    <string name="action_favorite">Favorite</string>
+    <string name="action_unfavorite">Unfavorite</string>
     <string name="action_confirm">OK</string>
     <string name="action_cancel">Cancel</string>
     <string name="rename_hint">Name</string>
@@ -81,6 +84,18 @@
     <string name="msg_read_failed">Failed to read</string>
     <string name="msg_save_failed">Failed to save</string>
     <string name="msg_vault_unset">No Vault folder selected</string>
+    <string name="msg_favorited">Added %1$s to Favorites</string>
+    <string name="msg_unfavorited">Removed %1$s from Favorites</string>
+    <string name="msg_favorited_count">Added %1$d notes to Favorites</string>
+    <string name="msg_move_failed">Failed to move</string>
+    <string name="msg_move_failed_exists">Move failed: a file with the same name already exists in the target folder</string>
+
+    <!-- Favorites (local only, not synced) -->
+    <string name="fav_title">Favorites</string>
+    <string name="fav_remove">Remove from favorites</string>
+    <string name="fav_empty">No favorites yet</string>
+    <string name="fav_empty_hint">Tap Favorite in a note menu to find it here across folders.</string>
+    <string name="fav_in_root">Vault root</string>
 
     <!-- Editor -->
     <string name="editor_search_hint">Find in note</string>
@@ -88,8 +103,12 @@
     <string name="editor_search_matches">%1$d matches</string>
     <string name="editor_saved">Saved</string>
     <string name="editor_unsaved">Unsaved</string>
+    <string name="editor_saving">Saving</string>
     <string name="editor_renamed_to">Renamed to "%1$s"</string>
     <string name="editor_back_to_home">Back to list</string>
+    <string name="editor_move">Move to folder</string>
+    <string name="editor_moved_to">Moved to "%1$s"</string>
+    <string name="editor_moved_to_root">Moved to vault root</string>
     <string name="editor_tool_undo">Undo</string>
     <string name="editor_tool_redo">Redo</string>
     <string name="editor_tool_bold">Bold</string>
@@ -107,6 +126,7 @@
     <string name="editor_tool_unindent">Outdent</string>
     <string name="editor_tool_link">Link</string>
     <string name="editor_tool_image">Image</string>
+    <string name="editor_tool_property">Property</string>
 
     <!-- Settings -->
     <string name="settings_theme">Theme</string>
@@ -152,6 +172,10 @@
     <string name="settings_fab_action_new_note">New note</string>
     <string name="settings_fab_action_new_folder">New folder</string>
     <string name="settings_fab_action_menu">Show options menu</string>
+    <string name="settings_fab_action_new_task">New task</string>
+    <string name="settings_share_folder">Share folder</string>
+    <string name="settings_share_folder_current">Current: %1$s</string>
+    <string name="settings_share_folder_root">Default: vault root</string>
     <string name="settings_trash_retention">Auto-clean Trash</string>
     <string name="settings_trash_retention_value">Clean after %1$d days</string>
     <string name="settings_trash_retention_never">Never</string>
@@ -168,6 +192,8 @@
     <string name="settings_vault_subtitle_current">In use: %1$s</string>
     <string name="settings_about">About</string>
     <string name="settings_about_subtitle">Az Notes · local Markdown notes · your data never leaves the device</string>
+    <string name="settings_about_version">Version %1$s</string>
+    <string name="settings_about_github">GitHub repository</string>
 
     <!-- Sync (WebDAV) -->
     <string name="sync_title">WebDAV Sync</string>
@@ -272,11 +298,16 @@
     <string name="reader_info_headings">Headings</string>
     <string name="reader_outline_empty">This note has no headings</string>
     <string name="reader_outline_untitled">(Untitled)</string>
+    <string name="reader_attrs_title">Properties</string>
+    <string name="reader_attrs_collapse">Collapse properties</string>
+    <string name="reader_attrs_expand">Expand properties</string>
 
     <!-- Task list page (frontmatter note_type: task) -->
     <string name="task_add_hint">Add a task…</string>
     <string name="task_add_action">Add</string>
     <string name="task_empty">No tasks yet — add one below</string>
+    <string name="task_only_incomplete">Incomplete only</string>
+    <string name="task_incomplete_empty">No incomplete tasks</string>
     <string name="msg_task_save_failed">Failed to save task, please retry</string>
 
     <!-- Trash -->

@@ -1,6 +1,9 @@
 package com.az.notes.ui.editor
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.clickable
@@ -12,11 +15,13 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.input.InputTransformation
 import androidx.compose.foundation.text.input.TextFieldBuffer
@@ -41,9 +46,11 @@ import androidx.compose.material.icons.filled.FormatSize
 import androidx.compose.material.icons.filled.HorizontalRule
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.InsertLink
+import androidx.compose.material.icons.filled.Label
 import androidx.compose.material.icons.filled.StrikethroughS
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material3.CircularProgressIndicator
@@ -54,10 +61,12 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -88,8 +97,10 @@ import com.az.notes.R
 import com.az.notes.domain.model.EditorTool
 import com.az.notes.ui.common.label
 import com.az.notes.ui.common.resolve
+import com.az.notes.ui.components.MoveTargetDialog
 import com.az.notes.ui.components.RenameDialog
 import com.az.notes.ui.theme.LocalReadingStyle
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -119,6 +130,7 @@ fun EditorScreen(
     var searchActive by rememberSaveable { mutableStateOf(false) }
     var query by rememberSaveable { mutableStateOf("") }
     var renameDialog by remember { mutableStateOf(false) }
+    var moveDialog by remember { mutableStateOf(false) }
 
     // —— 编辑器文本状态：内建 undo/redo 栈与自滚动 ——
     val textState = rememberTextFieldState()
@@ -174,6 +186,30 @@ fun EditorScreen(
         }
     }
 
+    // —— 保存状态反馈：右上角小浮层短暂显示；分享页首次保存弹「回列表」横幅 ——
+    var savedChipVisible by remember { mutableStateOf(false) }
+    var shareBannerShown by rememberSaveable { mutableStateOf(false) }
+    val savedLabel = stringResource(R.string.editor_saved)
+    val backToHomeLabel = stringResource(R.string.editor_back_to_home)
+    LaunchedEffect(state.savedAt) {
+        if (state.savedAt == null) return@LaunchedEffect
+        savedChipVisible = true
+        if (fromShare && !shareBannerShown) {
+            shareBannerShown = true
+            val result = snackbarHostState.showSnackbar(
+                message = savedLabel,
+                actionLabel = backToHomeLabel,
+                duration = SnackbarDuration.Long
+            )
+            savedChipVisible = false
+            if (result == SnackbarResult.ActionPerformed) exitToList()
+        } else {
+            delay(2000)
+            savedChipVisible = false
+        }
+    }
+    val statusVisible = !searchActive && (state.saving || state.dirty || savedChipVisible)
+
     // 匹配区间（查找栏计数与编辑器内高亮共用；纯文本查询不会跨换行）
     val matchRanges = remember(state.text, query) {
         if (query.isBlank()) {
@@ -191,52 +227,20 @@ fun EditorScreen(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
-                title = {
-                    // 点击标题可重命名文件（铅笔图标为可点击提示）
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.clickable { renameDialog = true }
-                    ) {
-                        Text(
-                            text = displayTitle(state.path),
-                            maxLines = 1, overflow = TextOverflow.Ellipsis
-                        )
-                        Spacer(Modifier.width(6.dp))
-                        Icon(
-                            Icons.Outlined.Edit,
-                            contentDescription = stringResource(R.string.action_rename),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
-                },
+                // 文件名标题已移入正文区（见 EditorTitleHeader），顶栏只留页面名
+                title = { Text(stringResource(R.string.action_edit)) },
                 navigationIcon = {
                     IconButton(onClick = exit) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.action_back))
                     }
                 },
                 actions = {
-                    // 分享独立页：返回退出应用，此处提供回列表入口
-                    if (fromShare) {
-                        TextButton(onClick = exitToList) {
-                            Text(stringResource(R.string.editor_back_to_home))
-                        }
-                    }
-                    if (state.saving) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.padding(horizontal = 12.dp).size(18.dp),
-                            strokeWidth = 2.dp
-                        )
-                    } else {
-                        Text(
-                            text = stringResource(
-                                if (state.dirty) R.string.editor_unsaved else R.string.editor_saved
-                            ),
-                            style = MaterialTheme.typography.labelMedium,
-                            color = if (state.dirty) MaterialTheme.colorScheme.tertiary
-                            else MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(horizontal = 4.dp)
-                        )
+                    // 移动到其他文件夹
+                    IconButton(onClick = {
+                        moveDialog = true
+                        viewModel.loadMoveTargets()
+                    }) {
+                        Icon(Icons.Outlined.FolderOpen, stringResource(R.string.editor_move))
                     }
                     IconButton(onClick = {
                         if (searchActive) {
@@ -261,49 +265,65 @@ fun EditorScreen(
             )
         }
     ) { inner ->
-        Column(Modifier.fillMaxSize().padding(inner).imePadding()) {
-            if (searchActive) {
-                FindBar(
-                    query = query,
-                    matchCount = matchRanges.size,
-                    onQueryChange = { query = it }
-                )
-            }
+        Box(Modifier.fillMaxSize().padding(inner)) {
+            Column(Modifier.fillMaxSize().imePadding()) {
+                // 标题（文件名）：随内容排版，与正文用分隔线区分；点击可重命名
+                EditorTitleHeader(path = state.path, onRenameClick = { renameDialog = true })
 
-            Box(Modifier.weight(1f)) {
-                if (!editorVisible) {
-                    Column(
-                        Modifier.fillMaxSize(),
-                        verticalArrangement = Arrangement.Center,
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        CircularProgressIndicator()
-                    }
-                } else {
-                    BasicTextField(
-                        state = textState,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(16.dp)
-                            .drawBehind {
-                                // 查找高亮：绘制在文本下层（drawBehind 先于内容绘制）
-                                if (searchActive) {
-                                    drawSearchHighlights(layoutResult, scrollState, matchRanges, highlightColor)
-                                }
-                            },
-                        textStyle = readingStyle.textStyle.copy(color = MaterialTheme.colorScheme.onSurface),
-                        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                        inputTransformation = MarkdownListContinuation,
-                        scrollState = scrollState,
-                        onTextLayout = { getResult -> layoutResult = getResult() }
+                if (searchActive) {
+                    FindBar(
+                        query = query,
+                        matchCount = matchRanges.size,
+                        onQueryChange = { query = it }
                     )
                 }
-            }
 
-            HorizontalDivider()
-            // 底部工具条：位于键盘上方（由 imePadding 抬升）；
-            // 显示哪些工具、顺序如何均由设置决定（可开关 / 排序）
-            EditorToolbar(textState, state.toolbarTools)
+                Box(Modifier.weight(1f)) {
+                    if (!editorVisible) {
+                        Column(
+                            Modifier.fillMaxSize(),
+                            verticalArrangement = Arrangement.Center,
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            CircularProgressIndicator()
+                        }
+                    } else {
+                        BasicTextField(
+                            state = textState,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(16.dp)
+                                .drawBehind {
+                                    // 查找高亮：绘制在文本下层（drawBehind 先于内容绘制）
+                                    if (searchActive) {
+                                        drawSearchHighlights(layoutResult, scrollState, matchRanges, highlightColor)
+                                    }
+                                },
+                            textStyle = readingStyle.textStyle.copy(color = MaterialTheme.colorScheme.onSurface),
+                            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                            inputTransformation = MarkdownListContinuation,
+                            scrollState = scrollState,
+                            onTextLayout = { getResult -> layoutResult = getResult() }
+                        )
+                    }
+                }
+
+                HorizontalDivider()
+                // 底部工具条：位于键盘上方（由 imePadding 抬升）；
+                // 显示哪些工具、顺序如何均由设置决定（可开关 / 排序）
+                EditorToolbar(textState, state.toolbarTools)
+            }
+            // 保存状态小浮层：右上角（搜索栏展开时让位隐藏）
+            AnimatedVisibility(
+                visible = statusVisible,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = 6.dp, end = 12.dp),
+                enter = fadeIn(),
+                exit = fadeOut()
+            ) {
+                SaveStatusChip(saving = state.saving, dirty = state.dirty)
+            }
         }
     }
 
@@ -316,6 +336,83 @@ fun EditorScreen(
                 renameDialog = false
             }
         )
+    }
+
+    if (moveDialog) {
+        MoveTargetDialog(
+            vaultPath = state.vaultPath,
+            targets = state.moveTargets,
+            onDismiss = { moveDialog = false },
+            onSelect = { target ->
+                moveDialog = false
+                viewModel.moveTo(target)
+            }
+        )
+    }
+}
+
+/** 编辑页标题（文件名）：随内容排版，与正文用分隔线区分；点击可重命名。 */
+@Composable
+private fun EditorTitleHeader(path: String, onRenameClick: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 16.dp, end = 16.dp, top = 12.dp)
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onRenameClick)
+        ) {
+            Text(
+                text = displayTitle(path),
+                style = MaterialTheme.typography.titleLarge,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
+            )
+            Spacer(Modifier.width(6.dp))
+            Icon(
+                Icons.Outlined.Edit,
+                contentDescription = stringResource(R.string.action_rename),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(16.dp)
+            )
+        }
+        Spacer(Modifier.height(8.dp))
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+    }
+}
+
+/** 保存状态小浮层：保存中转圈 + 文案（右上角展示）。 */
+@Composable
+private fun SaveStatusChip(saving: Boolean, dirty: Boolean) {
+    Surface(
+        shape = RoundedCornerShape(10.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.92f),
+        shadowElevation = 2.dp
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+        ) {
+            if (saving) {
+                CircularProgressIndicator(modifier = Modifier.size(10.dp), strokeWidth = 1.5.dp)
+                Spacer(Modifier.width(5.dp))
+            }
+            Text(
+                text = stringResource(
+                    when {
+                        saving -> R.string.editor_saving
+                        dirty -> R.string.editor_unsaved
+                        else -> R.string.editor_saved
+                    }
+                ),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
     }
 }
 
@@ -390,6 +487,7 @@ private fun EditorTool.icon(): ImageVector = when (this) {
     EditorTool.UNINDENT -> Icons.AutoMirrored.Filled.FormatIndentDecrease
     EditorTool.LINK -> Icons.Filled.InsertLink
     EditorTool.IMAGE -> Icons.Filled.Image
+    EditorTool.PROPERTY -> Icons.Filled.Label
 }
 
 /** 执行工具动作：标记插入后光标 / 选区自动跟随。 */
@@ -415,6 +513,7 @@ private fun EditorTool.perform(textState: TextFieldState) {
         EditorTool.UNINDENT -> textState.unindentLines()
         EditorTool.LINK -> textState.wrapSelection("[", "](https://)")
         EditorTool.IMAGE -> textState.insertAtCursor("![]()", 2)
+        EditorTool.PROPERTY -> textState.insertProperty()
     }
 }
 
@@ -495,6 +594,41 @@ private fun TextFieldState.insertAtCursor(text: String, cursorOffset: Int) {
         selection = TextRange(cursor + cursorOffset.coerceIn(0, text.length))
     }
 }
+
+/**
+ * 快捷添加属性记录：文档已有 frontmatter 时在结束分隔行前插入一行占位，
+ * 否则在文首生成 frontmatter 骨架；插入后选中占位的 key，直接输入即可替换。
+ */
+private fun TextFieldState.insertProperty() {
+    edit {
+        val lines = asCharSequence().toString().split('\n')
+        var closingIndex = -1
+        if (lines.firstOrNull()?.trimEnd() == FRONTMATTER_DELIMITER) {
+            for (i in 1 until minOf(lines.size, 61)) {
+                if (lines[i].trimEnd() == FRONTMATTER_DELIMITER) {
+                    closingIndex = i
+                    break
+                }
+            }
+        }
+        if (closingIndex > 0) {
+            // 已有 frontmatter：在结束分隔行之前插入新属性
+            var offset = 0
+            for (i in 0 until closingIndex) offset += lines[i].length + 1
+            replace(offset, offset, "$PROPERTY_PLACEHOLDER\n")
+            selection = TextRange(offset, offset + PLACEHOLDER_KEY_LENGTH)
+        } else {
+            // 无 frontmatter：文首生成骨架并选中 key
+            replace(0, 0, "$FRONTMATTER_DELIMITER\n$PROPERTY_PLACEHOLDER\n$FRONTMATTER_DELIMITER\n")
+            selection = TextRange(4, 4 + PLACEHOLDER_KEY_LENGTH)
+        }
+    }
+}
+
+/** 属性占位模版（插入后 key 部分被选中，直接输入即可替换）。 */
+private const val PROPERTY_PLACEHOLDER = "key: value"
+private const val PLACEHOLDER_KEY_LENGTH = 3
+private const val FRONTMATTER_DELIMITER = "---"
 
 /** 选区覆盖的每一行整体缩进两格（无选区时缩进当前行）。 */
 private fun TextFieldState.indentLines() {

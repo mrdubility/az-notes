@@ -8,6 +8,7 @@ import com.az.notes.data.settings.SettingsRepository
 import com.az.notes.data.storage.VaultRepository
 import com.az.notes.data.sync.SyncEngine
 import com.az.notes.domain.model.EditorTool
+import com.az.notes.domain.model.FileNode
 import com.az.notes.ui.common.UiText
 import com.az.notes.ui.common.toUiText
 import com.az.notes.work.SyncScheduler
@@ -36,7 +37,11 @@ data class EditorUiState(
     /** 一次性提示（Snackbar），消费后清空 */
     val message: UiText? = null,
     /** 工具栏显示的工具（按设置排序、过滤禁用项） */
-    val toolbarTools: List<EditorTool> = EditorTool.entries.toList()
+    val toolbarTools: List<EditorTool> = EditorTool.entries.toList(),
+    /** 当前 Vault 根（移动对话框根目录行用） */
+    val vaultPath: String? = null,
+    /** 移动对话框的目标文件夹列表（null = 尚未加载） */
+    val moveTargets: List<FileNode>? = null
 )
 
 /**
@@ -68,7 +73,10 @@ class EditorViewModel @Inject constructor(
         viewModelScope.launch {
             settingsRepository.settings.collect { s ->
                 _state.update {
-                    it.copy(toolbarTools = EditorTool.resolve(s.editorToolOrder, s.editorToolDisabled))
+                    it.copy(
+                        toolbarTools = EditorTool.resolve(s.editorToolOrder, s.editorToolDisabled),
+                        vaultPath = s.vaultPath
+                    )
                 }
             }
         }
@@ -198,6 +206,63 @@ class EditorViewModel @Inject constructor(
             val vault = runCatching { settingsRepository.settings.first().vaultPath }.getOrNull()
             if (vault.isNullOrBlank()) return@launch
             runCatching { syncEngine.applyRemoteRename(vault, oldAbsPath, newAbsPath) }
+        }
+    }
+
+    /** 打开移动对话框前加载目标文件夹列表（递归全部子目录）。 */
+    fun loadMoveTargets() {
+        if (_state.value.moveTargets != null) return
+        viewModelScope.launch {
+            val vault = runCatching { settingsRepository.settings.first().vaultPath }.getOrNull()
+            if (vault.isNullOrBlank()) return@launch
+            val dirs = withContext(Dispatchers.IO) { vaultRepository.listAllDirectories(vault) }
+            _state.update { it.copy(moveTargets = dirs) }
+        }
+    }
+
+    /**
+     * 将当前笔记移动到 [targetDir]（先落盘未保存内容）；成功后更新内部路径
+     * （后续自动保存写入新位置）并把移动同步到云端；同目录 / 重名时给出提示。
+     */
+    fun moveTo(targetDir: String) {
+        viewModelScope.launch {
+            val current = _state.value
+            if (current.loading) return@launch
+            val src = File(absolutePath)
+            val target = File(targetDir, src.name)
+            if (target.parentFile?.absolutePath == src.parentFile?.absolutePath) return@launch
+            if (target.exists()) {
+                _state.update { it.copy(message = UiText.of(R.string.msg_move_failed_exists)) }
+                return@launch
+            }
+            val vault = runCatching { settingsRepository.settings.first().vaultPath }.getOrNull()
+            val ok = runCatching {
+                withContext(Dispatchers.IO) {
+                    // 先保存未落盘内容，避免移动后丢失编辑
+                    if (current.dirty) vaultRepository.writeTextAtomically(absolutePath, current.text)
+                    vaultRepository.rename(absolutePath, target.absolutePath)
+                }
+            }.getOrDefault(false)
+            if (ok) {
+                val oldPath = absolutePath
+                absolutePath = target.absolutePath
+                val movedMessage = if (!vault.isNullOrBlank() && targetDir == vault) {
+                    UiText.of(R.string.editor_moved_to_root)
+                } else {
+                    UiText.of(R.string.editor_moved_to, File(targetDir).name)
+                }
+                _state.update {
+                    it.copy(
+                        path = absolutePath,
+                        dirty = false,
+                        savedAt = System.currentTimeMillis(),
+                        message = movedMessage
+                    )
+                }
+                syncRemoteRename(oldPath, absolutePath)
+            } else {
+                _state.update { it.copy(message = UiText.of(R.string.msg_move_failed)) }
+            }
         }
     }
 

@@ -36,6 +36,7 @@
     <string name="home_search_tip">输入关键字，跨目录搜索全部笔记</string>
     <string name="home_new_note">新建笔记</string>
     <string name="home_new_folder">新建文件夹</string>
+    <string name="home_new_task">新建待办</string>
     <string name="home_double_back_exit">再按一次返回键退出应用</string>
     <string name="home_drop_hint">松开以新建笔记</string>
     <string name="home_no_vault">未选择 Vault 目录</string>
@@ -45,6 +46,8 @@
     <string name="action_more">更多操作</string>
     <string name="action_rename">重命名</string>
     <string name="action_delete">删除</string>
+    <string name="action_favorite">收藏</string>
+    <string name="action_unfavorite">取消收藏</string>
     <string name="action_confirm">确定</string>
     <string name="action_cancel">取消</string>
     <string name="rename_hint">名称</string>
@@ -81,6 +84,18 @@
     <string name="msg_read_failed">读取失败</string>
     <string name="msg_save_failed">保存失败</string>
     <string name="msg_vault_unset">未选择 Vault 目录</string>
+    <string name="msg_favorited">已收藏「%1$s」</string>
+    <string name="msg_unfavorited">已取消收藏「%1$s」</string>
+    <string name="msg_favorited_count">已收藏 %1$d 条笔记</string>
+    <string name="msg_move_failed">移动失败</string>
+    <string name="msg_move_failed_exists">移动失败：目标文件夹已存在同名文件</string>
+
+    <!-- 收藏夹（仅本地，不参与同步） -->
+    <string name="fav_title">收藏夹</string>
+    <string name="fav_remove">取消收藏</string>
+    <string name="fav_empty">暂无收藏</string>
+    <string name="fav_empty_hint">在笔记条目的菜单中点击「收藏」，即可在这里跨文件夹快速找到它。</string>
+    <string name="fav_in_root">Vault 根目录</string>
 
     <!-- 编辑页 -->
     <string name="editor_search_hint">查找正文</string>
@@ -88,8 +103,12 @@
     <string name="editor_search_matches">共 %1$d 处</string>
     <string name="editor_saved">已保存</string>
     <string name="editor_unsaved">未保存</string>
+    <string name="editor_saving">保存中</string>
     <string name="editor_renamed_to">已重命名为「%1$s」</string>
     <string name="editor_back_to_home">回列表</string>
+    <string name="editor_move">移动到文件夹</string>
+    <string name="editor_moved_to">已移动到「%1$s」</string>
+    <string name="editor_moved_to_root">已移动到根目录</string>
     <string name="editor_tool_undo">撤销</string>
     <string name="editor_tool_redo">重做</string>
     <string name="editor_tool_bold">粗体</string>
@@ -107,6 +126,7 @@
     <string name="editor_tool_unindent">反缩进</string>
     <string name="editor_tool_link">链接</string>
     <string name="editor_tool_image">图片</string>
+    <string name="editor_tool_property">属性</string>
 
     <!-- 设置 -->
     <string name="settings_theme">主题</string>
@@ -152,6 +172,10 @@
     <string name="settings_fab_action_new_note">新建笔记</string>
     <string name="settings_fab_action_new_folder">新建文件夹</string>
     <string name="settings_fab_action_menu">弹出选项菜单</string>
+    <string name="settings_fab_action_new_task">新建待办</string>
+    <string name="settings_share_folder">分享文件夹</string>
+    <string name="settings_share_folder_current">当前：%1$s</string>
+    <string name="settings_share_folder_root">默认：Vault 根目录</string>
     <string name="settings_trash_retention">回收站自动清理</string>
     <string name="settings_trash_retention_value">%1$d 天后清理</string>
     <string name="settings_trash_retention_never">永不清理</string>
@@ -168,6 +192,8 @@
     <string name="settings_vault_subtitle_current">正在使用：%1$s</string>
     <string name="settings_about">关于</string>
     <string name="settings_about_subtitle">Az Notes · 本地 Markdown 笔记 · 数据不离开设备</string>
+    <string name="settings_about_version">当前版本 %1$s</string>
+    <string name="settings_about_github">GitHub 仓库</string>
 
     <!-- 同步（M3：坚果云 / 通用 WebDAV） -->
     <string name="sync_title">WebDAV 同步</string>
@@ -272,11 +298,16 @@
     <string name="reader_info_headings">标题数</string>
     <string name="reader_outline_empty">本文无标题层级</string>
     <string name="reader_outline_untitled">（无标题）</string>
+    <string name="reader_attrs_title">属性</string>
+    <string name="reader_attrs_collapse">收起属性</string>
+    <string name="reader_attrs_expand">展开属性</string>
 
     <!-- 待办清单页（frontmatter note_type: task） -->
     <string name="task_add_hint">添加待办…</string>
     <string name="task_add_action">添加</string>
     <string name="task_empty">暂无待办，在下方输入添加</string>
+    <string name="task_only_incomplete">仅显示未完成</string>
+    <string name="task_incomplete_empty">没有未完成的待办</string>
     <string name="msg_task_save_failed">待办保存失败，请重试</string>
 
     <!-- 回收站（恢复被云端删除波及的本地文件） -->
