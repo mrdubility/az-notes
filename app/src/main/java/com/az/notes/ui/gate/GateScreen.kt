@@ -119,7 +119,7 @@ fun GateScreen(
                 )
                 invalidPath?.let {
                     Text(
-                        text = "目录不存在或不可读：$it",
+                        text = stringResource(R.string.gate_dir_invalid, it),
                         color = MaterialTheme.colorScheme.error,
                         style = MaterialTheme.typography.bodyMedium
                     )
@@ -139,7 +139,7 @@ private fun Header() {
             style = MaterialTheme.typography.headlineMedium
         )
         Text(
-            text = "读取笔记库 · 标准 Markdown 显示/编辑 · 笔记列表与大纲",
+            text = stringResource(R.string.gate_subtitle),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )

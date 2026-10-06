@@ -1,37 +1,52 @@
 package com.az.notes.ui.reader
 
 import android.net.Uri
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.rememberTransformableState
 import androidx.compose.foundation.gestures.transformable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.List
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
@@ -62,6 +77,7 @@ import coil3.request.ImageRequest
 import coil3.request.crossfade
 import com.az.notes.R
 import com.az.notes.domain.markdown.Heading
+import com.az.notes.ui.common.resolve
 import com.mikepenz.markdown.compose.MarkdownElement
 import com.mikepenz.markdown.m3.Markdown
 import com.mikepenz.markdown.model.NoOpImageTransformerImpl
@@ -71,6 +87,9 @@ import com.mikepenz.markdown.model.rememberMarkdownState
 import org.intellij.markdown.flavours.gfm.GFMFlavourDescriptor
 import org.intellij.markdown.parser.MarkdownParser
 import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
@@ -94,7 +113,6 @@ fun ReaderScreen(
     var showOutline by rememberSaveable { mutableStateOf(false) }
     var previewImage by remember { mutableStateOf<File?>(null) }
     var restoredOnce by rememberSaveable { mutableStateOf(false) }
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val scope = rememberCoroutineScope()
 
     // 解析链显式传入稳定实例：若用默认参数，recomposition 时 flavour/parser/linkHandler
@@ -161,6 +179,10 @@ fun ReaderScreen(
                     IconButton(onClick = { showOutline = true }) {
                         Icon(Icons.Outlined.List, stringResource(R.string.action_outline))
                     }
+                    // 文档信息：文件属性与正文统计
+                    IconButton(onClick = { viewModel.loadDocInfo() }) {
+                        Icon(Icons.Outlined.Info, stringResource(R.string.reader_info))
+                    }
                     IconButton(onClick = { onEdit(state.path) }) {
                         Icon(Icons.Filled.Edit, stringResource(R.string.action_edit))
                     }
@@ -171,7 +193,7 @@ fun ReaderScreen(
         when {
             state.loading -> CenterBox { CircularProgressIndicator() }
             state.error != null -> CenterBox {
-                Text(state.error!!, color = MaterialTheme.colorScheme.error)
+                Text(state.error!!.resolve(), color = MaterialTheme.colorScheme.error)
             }
             else -> Box(
                 modifier = Modifier
@@ -217,40 +239,108 @@ fun ReaderScreen(
         ImagePreviewDialog(file = file, onDismiss = { previewImage = null })
     }
 
+    // 大纲浮层：从右侧滑出（全屏 Dialog 承载：右侧面板 + 半透明遮罩）
     if (showOutline) {
-        ModalBottomSheet(onDismissRequest = { showOutline = false }, sheetState = sheetState) {
-            val headings = state.headings
-            // 当前章节：第一个可见块所属的最近标题
-            val activeIndex by remember(headings) {
-                derivedStateOf {
-                    headings.indexOfLast { it.blockIndex <= listState.firstVisibleItemIndex }
-                }
+        OutlineDialog(
+            headings = state.headings,
+            listState = listState,
+            onSelect = { h ->
+                showOutline = false
+                scope.launch { listState.animateScrollToItem(h.blockIndex) }
+            },
+            onDismiss = { showOutline = false }
+        )
+    }
+
+    // 文档信息（点击顶栏 Info 后从 ViewModel 读取）
+    state.docInfo?.let { info ->
+        DocInfoDialog(info = info, onDismiss = viewModel::clearDocInfo)
+    }
+}
+
+/**
+ * 大纲浮层（全屏 Dialog）：正文右侧滑出面板 + 半透明遮罩；
+ * 点击遮罩 / 系统返回收起；点击标题回传由调用方滚动到对应块。
+ */
+@Composable
+private fun OutlineDialog(
+    headings: List<Heading>,
+    listState: LazyListState,
+    onSelect: (Heading) -> Unit,
+    onDismiss: () -> Unit
+) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            decorFitsSystemWindows = false
+        )
+    ) {
+        // 当前章节：第一个可见块所属的最近标题
+        val activeIndex by remember(headings) {
+            derivedStateOf {
+                headings.indexOfLast { it.blockIndex <= listState.firstVisibleItemIndex }
             }
-            Column(Modifier.fillMaxWidth().padding(bottom = 24.dp)) {
-                Text(
-                    stringResource(R.string.action_outline),
-                    style = MaterialTheme.typography.titleLarge,
-                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp)
+        }
+        // 打开后触发一次性进入动画（面板自右滑入、遮罩淡入）
+        var entered by remember { mutableStateOf(false) }
+        LaunchedEffect(Unit) { entered = true }
+        Box(Modifier.fillMaxSize()) {
+            AnimatedVisibility(
+                visible = entered,
+                enter = fadeIn(),
+                modifier = Modifier.fillMaxSize()
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = 0.32f))
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            onClick = onDismiss
+                        )
                 )
-                if (headings.isEmpty()) {
-                    Text(
-                        "本文无标题层级",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 20.dp)
-                    )
-                } else {
-                    headings.forEachIndexed { index, h ->
-                        OutlineItem(
-                            h = h,
-                            active = index == activeIndex,
-                            onClick = {
-                                showOutline = false
-                                scope.launch {
-                                    listState.animateScrollToItem(h.blockIndex)
+            }
+            AnimatedVisibility(
+                visible = entered,
+                enter = slideInHorizontally(initialOffsetX = { it }),
+                modifier = Modifier.align(Alignment.CenterEnd)
+            ) {
+                Surface(
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .fillMaxWidth(0.78f)
+                        .statusBarsPadding()
+                        .navigationBarsPadding(),
+                    shape = RoundedCornerShape(topStart = 16.dp, bottomStart = 16.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    shadowElevation = 8.dp
+                ) {
+                    Column(Modifier.fillMaxHeight()) {
+                        Text(
+                            stringResource(R.string.action_outline),
+                            style = MaterialTheme.typography.titleLarge,
+                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp)
+                        )
+                        if (headings.isEmpty()) {
+                            Text(
+                                stringResource(R.string.reader_outline_empty),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 20.dp)
+                            )
+                        } else {
+                            LazyColumn(Modifier.weight(1f)) {
+                                itemsIndexed(headings) { index, h ->
+                                    OutlineItem(
+                                        h = h,
+                                        active = index == activeIndex,
+                                        onClick = { onSelect(h) }
+                                    )
                                 }
                             }
-                        )
+                        }
                     }
                 }
             }
@@ -280,7 +370,7 @@ private fun OutlineItem(h: Heading, active: Boolean, onClick: () -> Unit) {
         )
         Spacer(Modifier.width(10.dp))
         Text(
-            text = h.text,
+            text = h.text.ifBlank { stringResource(R.string.reader_outline_untitled) },
             style = MaterialTheme.typography.bodyLarge,
             color = if (active) MaterialTheme.colorScheme.primary
             else MaterialTheme.colorScheme.onSurface,
@@ -329,6 +419,58 @@ private fun ImagePreviewDialog(file: File, onDismiss: () -> Unit) {
             )
         }
     }
+}
+
+/** 文档信息对话框：文件名 / 位置 / 大小 / 修改时间 / 字数统计。 */
+@Composable
+private fun DocInfoDialog(info: DocInfo, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.reader_info)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                DocInfoRow(stringResource(R.string.reader_info_name), info.name)
+                DocInfoRow(stringResource(R.string.reader_info_path), info.path)
+                DocInfoRow(stringResource(R.string.reader_info_size), formatSize(info.sizeBytes))
+                DocInfoRow(
+                    stringResource(R.string.reader_info_modified),
+                    SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
+                        .format(Date(info.lastModified))
+                )
+                DocInfoRow(stringResource(R.string.reader_info_chars), info.charCount.toString())
+                DocInfoRow(stringResource(R.string.reader_info_lines), info.lineCount.toString())
+                DocInfoRow(stringResource(R.string.reader_info_headings), info.headingCount.toString())
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_close)) }
+        }
+    )
+}
+
+/** 信息行：左侧固定宽度标签 + 自适应值。 */
+@Composable
+private fun DocInfoRow(label: String, value: String) {
+    Row(Modifier.fillMaxWidth()) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.width(72.dp)
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.weight(1f)
+        )
+    }
+}
+
+/** 文件大小：B / KB / MB（各档保留一位小数）。 */
+private fun formatSize(bytes: Long): String = when {
+    bytes < 1024 -> "$bytes B"
+    bytes < 1024 * 1024 -> "%.1f KB".format(bytes / 1024.0)
+    else -> "%.1f MB".format(bytes / (1024.0 * 1024.0))
 }
 
 @Composable

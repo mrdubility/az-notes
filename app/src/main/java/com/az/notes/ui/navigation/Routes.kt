@@ -20,12 +20,13 @@ object Routes {
     /** 阅读器：path 为编码后的绝对路径 */
     const val READER = "$READER_BASE/{path}"
 
-    /** 编辑器：fresh=true 表示刚从“新建笔记”进入（退出时若仍无内容则清理空文件）。 */
-    const val EDITOR = "$EDITOR_BASE/{path}?fresh={fresh}"
+    /** 编辑器：fresh=true 表示刚从“新建笔记”进入（退出时若仍无内容则清理空文件）；
+     *  share=true 表示从系统分享进入（独立页面：返回即退出应用，顶栏提供回列表）。 */
+    const val EDITOR = "$EDITOR_BASE/{path}?fresh={fresh}&share={share}"
 
     // Uri.encode 会把 '/' 编成 %2F（保持单一路径段），空格编成 %20；
     // NavType.StringType 读取时会自动 Uri.decode 还原为原始路径，故 VM 侧无需再解码。
     fun reader(path: String): String = "$READER_BASE/${Uri.encode(path)}"
-    fun editor(path: String, fresh: Boolean = false): String =
-        "$EDITOR_BASE/${Uri.encode(path)}?fresh=$fresh"
+    fun editor(path: String, fresh: Boolean = false, fromShare: Boolean = false): String =
+        "$EDITOR_BASE/${Uri.encode(path)}?fresh=$fresh&share=$fromShare"
 }

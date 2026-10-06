@@ -15,7 +15,10 @@ import com.az.notes.domain.model.SyncConfig
 import com.az.notes.domain.model.SyncInterval
 import com.az.notes.domain.model.SyncMode
 import com.az.notes.domain.model.SyncPlan
+import com.az.notes.R
 import com.az.notes.domain.model.SyncSummary
+import com.az.notes.ui.common.UiText
+import com.az.notes.ui.common.toUiText
 import com.az.notes.work.SyncScheduler
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CancellationException
@@ -43,14 +46,14 @@ data class SyncUiState(
     /** 配置与偏好是否已从 DataStore 载入；自动开始的同步必须等它就绪，否则会误报“未配置”。 */
     val loaded: Boolean = false,
     val phase: SyncPhase = SyncPhase.IDLE,
-    val statusText: String = "",
+    val statusText: UiText = UiText(),
     val progressDone: Int = 0,
     val progressTotal: Int = 0,
     /** 待确认的执行计划（预览确认），null 表示无 */
     val plan: SyncPlan? = null,
     val summary: SyncSummary? = null,
-    val testMessage: String? = null,
-    val error: String? = null
+    val testMessage: UiText? = null,
+    val error: UiText? = null
 ) {
     val busy: Boolean
         get() = phase == SyncPhase.TESTING || phase == SyncPhase.SCANNING || phase == SyncPhase.EXECUTING
@@ -150,34 +153,38 @@ class SyncViewModel @Inject constructor(
     fun testConnection() {
         val config = _state.value.config
         if (!config.configured) {
-            _state.update { it.copy(testMessage = "请先填写服务器地址与账号") }
+            _state.update { it.copy(testMessage = UiText.of(R.string.sync_test_fill_server)) }
             return
         }
         viewModelScope.launch {
             _state.update {
                 it.copy(
                     phase = SyncPhase.TESTING,
-                    statusText = "正在测试连接…",
+                    statusText = UiText.of(R.string.sync_testing),
                     testMessage = null,
                     error = null
                 )
             }
             // 限流等待（自动重试中）时同步展示到进度区，避免只看到进度条无文字
             val result = syncEngine.testConnection(config) { status ->
-                _state.update { it.copy(statusText = status) }
+                _state.update { it.copy(statusText = UiText.ofRaw(status)) }
             }
             result.fold(
                 onSuccess = {
                     _state.update {
-                        it.copy(phase = SyncPhase.IDLE, statusText = "", testMessage = "连接成功")
+                        it.copy(
+                            phase = SyncPhase.IDLE,
+                            statusText = UiText(),
+                            testMessage = UiText.of(R.string.sync_test_ok)
+                        )
                     }
                 },
                 onFailure = { e ->
                     _state.update {
                         it.copy(
                             phase = SyncPhase.IDLE,
-                            statusText = "",
-                            testMessage = e.message ?: "连接失败：未知错误"
+                            statusText = UiText(),
+                            testMessage = e.toUiText(R.string.sync_test_failed)
                         )
                     }
                 }
@@ -196,14 +203,14 @@ class SyncViewModel @Inject constructor(
      */
     fun startSync() {
         if (_state.value.busy) {
-            _state.update { it.copy(testMessage = "同步正在进行中，请稍候") }
+            _state.update { it.copy(testMessage = UiText.of(R.string.sync_busy)) }
             return
         }
         viewModelScope.launch {
             _state.update {
                 it.copy(
                     phase = SyncPhase.SCANNING,
-                    statusText = "准备中…",
+                    statusText = UiText.of(R.string.sync_preparing),
                     plan = null,
                     summary = null,
                     error = null
@@ -214,15 +221,19 @@ class SyncViewModel @Inject constructor(
                 _state.update {
                     it.copy(
                         phase = SyncPhase.IDLE,
-                        statusText = "",
-                        testMessage = "请先在同步设置中填写服务器地址、账号与应用密码"
+                        statusText = UiText(),
+                        testMessage = UiText.of(R.string.sync_fill_settings)
                     )
                 }
                 return@launch
             }
             if (snapshot.vaultPath.isNullOrBlank()) {
                 _state.update {
-                    it.copy(phase = SyncPhase.IDLE, statusText = "", testMessage = "尚未选择 Vault 目录")
+                    it.copy(
+                        phase = SyncPhase.IDLE,
+                        statusText = UiText(),
+                        testMessage = UiText.of(R.string.msg_vault_unset)
+                    )
                 }
                 return@launch
             }
@@ -231,24 +242,24 @@ class SyncViewModel @Inject constructor(
                 var planResult: SyncPlan? = null
                 val ran = syncEngine.runExclusive {
                     planResult = syncEngine.plan(snapshot.config) { status ->
-                        _state.update { it.copy(statusText = status) }
+                        _state.update { it.copy(statusText = UiText.ofRaw(status)) }
                     }
                 }
                 if (!ran) {
                     _state.update {
                         it.copy(
                             phase = SyncPhase.IDLE,
-                            statusText = "",
-                            testMessage = "其他同步正在进行中，请稍后再试"
+                            statusText = UiText(),
+                            testMessage = UiText.of(R.string.sync_other_running)
                         )
                     }
                     return@launch
                 }
-                _state.update { it.copy(phase = SyncPhase.AWAIT_CONFIRM, plan = planResult, statusText = "") }
+                _state.update { it.copy(phase = SyncPhase.AWAIT_CONFIRM, plan = planResult, statusText = UiText()) }
             } catch (ce: CancellationException) {
                 throw ce
             } catch (t: Exception) {
-                _state.update { it.copy(phase = SyncPhase.ERROR, error = t.message ?: "同步计划生成失败") }
+                _state.update { it.copy(phase = SyncPhase.ERROR, error = t.toUiText(R.string.sync_plan_failed)) }
             }
         }
     }
@@ -267,7 +278,7 @@ class SyncViewModel @Inject constructor(
                 val ran = syncEngine.runExclusive {
                     result = syncEngine.execute(snapshot.config, plan) { done, total, label ->
                         _state.update {
-                            it.copy(progressDone = done, progressTotal = total, statusText = label)
+                            it.copy(progressDone = done, progressTotal = total, statusText = UiText.ofRaw(label))
                         }
                     }
                 }
@@ -276,26 +287,26 @@ class SyncViewModel @Inject constructor(
                         it.copy(
                             phase = SyncPhase.IDLE,
                             plan = null,
-                            statusText = "",
-                            testMessage = "其他同步正在进行中，请稍后再试"
+                            statusText = UiText(),
+                            testMessage = UiText.of(R.string.sync_other_running)
                         )
                     }
                     return@launch
                 }
                 _state.update {
-                    it.copy(phase = SyncPhase.DONE, summary = result, plan = null, statusText = "")
+                    it.copy(phase = SyncPhase.DONE, summary = result, plan = null, statusText = UiText())
                 }
             } catch (ce: CancellationException) {
                 throw ce
             } catch (t: Exception) {
-                _state.update { it.copy(phase = SyncPhase.ERROR, error = t.message ?: "同步执行失败") }
+                _state.update { it.copy(phase = SyncPhase.ERROR, error = t.toUiText(R.string.sync_execute_failed)) }
             }
         }
     }
 
     /** 放弃计划（不执行任何操作）。 */
     fun cancelPlan() {
-        _state.update { it.copy(phase = SyncPhase.IDLE, plan = null, statusText = "") }
+        _state.update { it.copy(phase = SyncPhase.IDLE, plan = null, statusText = UiText()) }
     }
 
     /** 收起完成 / 失败提示。 */

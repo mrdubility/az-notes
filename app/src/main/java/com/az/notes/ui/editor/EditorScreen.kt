@@ -57,6 +57,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -84,6 +85,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.az.notes.R
+import com.az.notes.domain.model.EditorTool
+import com.az.notes.ui.common.label
+import com.az.notes.ui.common.resolve
 import com.az.notes.ui.components.RenameDialog
 import com.az.notes.ui.theme.LocalReadingStyle
 import kotlinx.coroutines.launch
@@ -101,7 +105,11 @@ import kotlinx.coroutines.launch
 fun EditorScreen(
     viewModel: EditorViewModel,
     onBack: () -> Unit,
-    onPreview: (String) -> Unit
+    onPreview: (String) -> Unit,
+    /** 分享独立页模式：返回即退出应用（回到分享来源），顶栏另提供「回列表」 */
+    fromShare: Boolean = false,
+    onExitApp: () -> Unit = {},
+    onBackToHome: () -> Unit = {}
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val readingStyle = LocalReadingStyle.current
@@ -139,19 +147,28 @@ fun EditorScreen(
     }
 
     // 系统返回 / 返回按钮共用：先同步编辑器最新文本给 ViewModel，
-    // 再走原有收尾（空笔记清理 / 未落盘内容写入），完成后才返回，避免丢字
+    // 再走原有收尾（空笔记清理 / 未落盘内容写入），完成后才返回，避免丢字；
+    // 分享独立页模式下返回即退出应用，回列表走 [exitToList]
     val exit: () -> Unit = {
         scope.launch {
             viewModel.onTextChange(textState.text.toString())
             viewModel.flushOnExit()
-            onBack()
+            if (fromShare) onExitApp() else onBack()
+        }
+    }
+    val exitToList: () -> Unit = {
+        scope.launch {
+            viewModel.onTextChange(textState.text.toString())
+            viewModel.flushOnExit()
+            onBackToHome()
         }
     }
     BackHandler { exit() }
 
     // 一次性提示（重命名结果等）
+    val stateMessage = state.message?.resolve()
     LaunchedEffect(state.message) {
-        state.message?.let {
+        stateMessage?.let {
             snackbarHostState.showSnackbar(it)
             viewModel.consumeMessage()
         }
@@ -199,6 +216,12 @@ fun EditorScreen(
                     }
                 },
                 actions = {
+                    // 分享独立页：返回退出应用，此处提供回列表入口
+                    if (fromShare) {
+                        TextButton(onClick = exitToList) {
+                            Text(stringResource(R.string.editor_back_to_home))
+                        }
+                    }
                     if (state.saving) {
                         CircularProgressIndicator(
                             modifier = Modifier.padding(horizontal = 12.dp).size(18.dp),
@@ -206,7 +229,9 @@ fun EditorScreen(
                         )
                     } else {
                         Text(
-                            text = if (state.dirty) "未保存" else "已保存",
+                            text = stringResource(
+                                if (state.dirty) R.string.editor_unsaved else R.string.editor_saved
+                            ),
                             style = MaterialTheme.typography.labelMedium,
                             color = if (state.dirty) MaterialTheme.colorScheme.tertiary
                             else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -276,8 +301,9 @@ fun EditorScreen(
             }
 
             HorizontalDivider()
-            // 底部工具条：位于键盘上方（由 imePadding 抬升），横向可滚动
-            EditorToolbar(textState)
+            // 底部工具条：位于键盘上方（由 imePadding 抬升）；
+            // 显示哪些工具、顺序如何均由设置决定（可开关 / 排序）
+            EditorToolbar(textState, state.toolbarTools)
         }
     }
 
@@ -327,10 +353,10 @@ private fun FindBar(
     }
 }
 
-/** 底部工具条：撤销 / 重做、标记插入（光标 / 选区跟随）、缩进与插入类快捷操作。 */
+/** 底部工具条：工具集与顺序由设置决定（可开关 / 排序），横向可滚动。 */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun EditorToolbar(textState: TextFieldState) {
+private fun EditorToolbar(textState: TextFieldState, tools: List<EditorTool>) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -338,44 +364,57 @@ private fun EditorToolbar(textState: TextFieldState) {
             .padding(horizontal = 4.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // —— 撤销 / 重做（内建 undo 栈；无历史时点击为无操作）——
-        ToolButton(Icons.AutoMirrored.Filled.Undo, "撤销") { textState.undoState.undo() }
-        ToolButton(Icons.AutoMirrored.Filled.Redo, "重做") { textState.undoState.redo() }
-        ToolGroupGap()
-
-        // —— 行内标记：包裹选区；无选区时插入标记对并把光标停在中缝 ——
-        ToolButton(Icons.Filled.FormatBold, "粗体") { textState.wrapSelection("**") }
-        ToolButton(Icons.Filled.FormatItalic, "斜体") { textState.wrapSelection("*") }
-        ToolButton(Icons.Filled.StrikethroughS, "删除线") { textState.wrapSelection("~~") }
-        ToolButton(Icons.Filled.Code, "行内代码") { textState.wrapSelection("`") }
-        ToolGroupGap()
-
-        // —— 块级标记：插入当前行行首，光标随之右移 ——
-        ToolButton(Icons.Filled.FormatSize, "标题") { textState.prefixCurrentLine("# ") }
-        ToolButton(Icons.Filled.FormatQuote, "引用") { textState.prefixCurrentLine("> ") }
-        ToolButton(Icons.Filled.FormatListBulleted, "无序列表") { textState.prefixCurrentLine("- ") }
-        ToolButton(Icons.Filled.FormatListNumbered, "有序列表") { textState.prefixCurrentLine("1. ") }
-        ToolButton(Icons.Filled.Checklist, "任务列表") { textState.prefixCurrentLine("- [ ] ") }
-        ToolButton(Icons.Filled.DataObject, "代码块") { textState.prefixCurrentLine("```\n") }
-        ToolButton(Icons.Filled.HorizontalRule, "分割线") { textState.prefixCurrentLine("---\n") }
-        ToolGroupGap()
-
-        // —— 缩进 ——
-        ToolButton(Icons.AutoMirrored.Filled.FormatIndentIncrease, "缩进") { textState.indentLines() }
-        ToolButton(Icons.AutoMirrored.Filled.FormatIndentDecrease, "反缩进") { textState.unindentLines() }
-        ToolGroupGap()
-
-        // —— 插入 ——
-        ToolButton(Icons.Filled.InsertLink, "链接") { textState.wrapSelection("[", "](https://)") }
-        ToolButton(Icons.Filled.Image, "图片") { textState.insertAtCursor("![]()", 2) }
+        tools.forEach { tool ->
+            ToolButton(tool.icon(), tool.label()) { tool.perform(textState) }
+        }
         Spacer(Modifier.width(8.dp))
     }
 }
 
-/** 工具条分组间隔。 */
-@Composable
-private fun ToolGroupGap() {
-    Spacer(Modifier.width(10.dp))
+/** 工具图标（与 [EditorTool] 一一对应）。 */
+private fun EditorTool.icon(): ImageVector = when (this) {
+    EditorTool.UNDO -> Icons.AutoMirrored.Filled.Undo
+    EditorTool.REDO -> Icons.AutoMirrored.Filled.Redo
+    EditorTool.BOLD -> Icons.Filled.FormatBold
+    EditorTool.ITALIC -> Icons.Filled.FormatItalic
+    EditorTool.STRIKETHROUGH -> Icons.Filled.StrikethroughS
+    EditorTool.INLINE_CODE -> Icons.Filled.Code
+    EditorTool.HEADING -> Icons.Filled.FormatSize
+    EditorTool.QUOTE -> Icons.Filled.FormatQuote
+    EditorTool.LIST_BULLET -> Icons.Filled.FormatListBulleted
+    EditorTool.LIST_NUMBER -> Icons.Filled.FormatListNumbered
+    EditorTool.TASK -> Icons.Filled.Checklist
+    EditorTool.CODE_BLOCK -> Icons.Filled.DataObject
+    EditorTool.HORIZONTAL_RULE -> Icons.Filled.HorizontalRule
+    EditorTool.INDENT -> Icons.AutoMirrored.Filled.FormatIndentIncrease
+    EditorTool.UNINDENT -> Icons.AutoMirrored.Filled.FormatIndentDecrease
+    EditorTool.LINK -> Icons.Filled.InsertLink
+    EditorTool.IMAGE -> Icons.Filled.Image
+}
+
+/** 执行工具动作：标记插入后光标 / 选区自动跟随。 */
+private fun EditorTool.perform(textState: TextFieldState) {
+    when (this) {
+        EditorTool.UNDO -> textState.undoState.undo()
+        EditorTool.REDO -> textState.undoState.redo()
+        // 行内标记：包裹选区；无选区时插入标记对并把光标停在中缝
+        EditorTool.BOLD -> textState.wrapSelection("**")
+        EditorTool.ITALIC -> textState.wrapSelection("*")
+        EditorTool.STRIKETHROUGH -> textState.wrapSelection("~~")
+        EditorTool.INLINE_CODE -> textState.wrapSelection("`")
+        // 块级标记：插入当前行行首，光标随之右移
+        EditorTool.HEADING -> textState.prefixCurrentLine("# ")
+        EditorTool.QUOTE -> textState.prefixCurrentLine("> ")
+        EditorTool.LIST_BULLET -> textState.prefixCurrentLine("- ")
+        EditorTool.LIST_NUMBER -> textState.prefixCurrentLine("1. ")
+        EditorTool.TASK -> textState.prefixCurrentLine("- [ ] ")
+        EditorTool.CODE_BLOCK -> textState.prefixCurrentLine("```\n")
+        EditorTool.HORIZONTAL_RULE -> textState.prefixCurrentLine("---\n")
+        EditorTool.INDENT -> textState.indentLines()
+        EditorTool.UNINDENT -> textState.unindentLines()
+        EditorTool.LINK -> textState.wrapSelection("[", "](https://)")
+        EditorTool.IMAGE -> textState.insertAtCursor("![]()", 2)
+    }
 }
 
 @Composable

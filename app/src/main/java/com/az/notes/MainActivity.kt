@@ -1,5 +1,6 @@
 package com.az.notes
 
+import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.os.SystemClock
@@ -17,6 +18,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.az.notes.ui.MainViewModel
 import com.az.notes.ui.navigation.AzNotesNavHost
 import com.az.notes.ui.theme.AzNotesTheme
+import com.az.notes.util.LocaleHelper
 import dagger.hilt.android.AndroidEntryPoint
 
 /**
@@ -27,6 +29,14 @@ import dagger.hilt.android.AndroidEntryPoint
 class MainActivity : ComponentActivity() {
 
     private val mainViewModel: MainViewModel by viewModels()
+
+    /**
+     * 应用语言必须在本 Activity 构造 Context 时同步生效（DataStore 是异步的），
+     * 因此按 SharedPreferences 镜像覆盖 locales；设置页切换语言后 recreate() 生效。
+     */
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(LocaleHelper.wrap(newBase))
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         val splashScreen = installSplashScreen()

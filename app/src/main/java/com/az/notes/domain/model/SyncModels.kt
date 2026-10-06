@@ -141,39 +141,3 @@ data class SyncSummary(
 /** 预览列表 / 日志中的展示路径：MOVE 显示「源 → 目标」。 */
 val SyncOp.displayPath: String get() = moveFrom?.let { "$it → $path" } ?: path
 
-/** 操作类型的中文名（预览列表 / 进度文案 / 日志共用；与代码库既有 VM 文案风格一致）。 */
-fun SyncOpType.label(): String = when (this) {
-    SyncOpType.UPLOAD -> "上传"
-    SyncOpType.DOWNLOAD -> "下载"
-    SyncOpType.DELETE_REMOTE -> "删除云端"
-    SyncOpType.TRASH_LOCAL -> "移入回收站"
-    SyncOpType.CONFLICT_COPY -> "冲突副本"
-    SyncOpType.MOVE_LOCAL -> "本地改名"
-    SyncOpType.MOVE_REMOTE -> "云端改名"
-}
-
-/** 同步策略的中文名。 */
-fun SyncMode.label(): String = when (this) {
-    SyncMode.BIDIRECTIONAL -> "双向同步"
-    SyncMode.UPLOAD_ONLY -> "仅发送（本地 → 云端）"
-    SyncMode.UPLOAD_OVERWRITE -> "仅发送（覆盖云端）"
-    SyncMode.DOWNLOAD_ONLY -> "仅接收（云端 → 本地）"
-    SyncMode.DOWNLOAD_RESTORE -> "仅接收（还原本地）"
-}
-
-/** 冲突策略的中文名。 */
-fun ConflictStrategy.label(): String = when (this) {
-    ConflictStrategy.CONFLICT_COPY -> "冲突副本（默认）"
-    ConflictStrategy.LOCAL_FIRST -> "本地优先"
-    ConflictStrategy.REMOTE_FIRST -> "坚果云优先"
-}
-
-/** 自动同步周期的中文名。 */
-fun SyncInterval.label(): String = when (this) {
-    SyncInterval.OFF -> "关闭"
-    SyncInterval.M15 -> "每 15 分钟"
-    SyncInterval.M30 -> "每 30 分钟"
-    SyncInterval.H1 -> "每 1 小时"
-    SyncInterval.H4 -> "每 4 小时"
-    SyncInterval.H8 -> "每 8 小时"
-}

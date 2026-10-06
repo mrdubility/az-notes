@@ -3,9 +3,13 @@ package com.az.notes.ui.editor
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.az.notes.R
 import com.az.notes.data.settings.SettingsRepository
 import com.az.notes.data.storage.VaultRepository
 import com.az.notes.data.sync.SyncEngine
+import com.az.notes.domain.model.EditorTool
+import com.az.notes.ui.common.UiText
+import com.az.notes.ui.common.toUiText
 import com.az.notes.work.SyncScheduler
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
@@ -28,9 +32,11 @@ data class EditorUiState(
     val dirty: Boolean = false,
     val saving: Boolean = false,
     val savedAt: Long? = null,
-    val error: String? = null,
+    val error: UiText? = null,
     /** 一次性提示（Snackbar），消费后清空 */
-    val message: String? = null
+    val message: UiText? = null,
+    /** 工具栏显示的工具（按设置排序、过滤禁用项） */
+    val toolbarTools: List<EditorTool> = EditorTool.entries.toList()
 )
 
 /**
@@ -58,11 +64,19 @@ class EditorViewModel @Inject constructor(
     private var autoSaveJob: Job? = null
 
     init {
+        // 工具栏配置：设置页调整顺序 / 启用状态后实时生效
+        viewModelScope.launch {
+            settingsRepository.settings.collect { s ->
+                _state.update {
+                    it.copy(toolbarTools = EditorTool.resolve(s.editorToolOrder, s.editorToolDisabled))
+                }
+            }
+        }
         viewModelScope.launch {
             val text = runCatching {
                 withContext(Dispatchers.IO) { vaultRepository.readText(absolutePath) }
-            }.getOrElse {
-                _state.update { s -> s.copy(loading = false, error = it.message ?: "读取失败") }
+            }.getOrElse { e ->
+                _state.update { s -> s.copy(loading = false, error = e.toUiText(R.string.msg_read_failed)) }
                 return@launch
             }
             _state.update { it.copy(loading = false, text = text, dirty = false) }
@@ -95,7 +109,7 @@ class EditorViewModel @Inject constructor(
                     _state.update { it.copy(saving = false, dirty = false, savedAt = System.currentTimeMillis()) }
                     schedulePostSaveSync()
                 },
-                onFailure = { e -> _state.update { it.copy(saving = false, error = e.message ?: "保存失败") } }
+                onFailure = { e -> _state.update { it.copy(saving = false, error = e.toUiText(R.string.msg_save_failed)) } }
             )
         }
     }
@@ -139,7 +153,7 @@ class EditorViewModel @Inject constructor(
             if (current.loading) return@launch
             val cleaned = VaultRepository.sanitizeEntryName(input)
             if (cleaned == null) {
-                _state.update { it.copy(message = "名称无效") }
+                _state.update { it.copy(message = UiText.of(R.string.msg_invalid_name)) }
                 return@launch
             }
             val newName = VaultRepository.ensureMarkdownName(cleaned)
@@ -147,7 +161,7 @@ class EditorViewModel @Inject constructor(
             if (newName == src.name) return@launch
             val target = File(src.parentFile, newName)
             if (target.exists()) {
-                _state.update { it.copy(message = "已存在同名文件") }
+                _state.update { it.copy(message = UiText.of(R.string.msg_rename_failed_exists)) }
                 return@launch
             }
             val ok = runCatching {
@@ -165,12 +179,12 @@ class EditorViewModel @Inject constructor(
                         path = absolutePath,
                         dirty = false,
                         savedAt = System.currentTimeMillis(),
-                        message = "已重命名为「$newName」"
+                        message = UiText.of(R.string.editor_renamed_to, newName)
                     )
                 }
                 syncRemoteRename(oldPath, absolutePath)
             } else {
-                _state.update { it.copy(message = "重命名失败（可能存在同名项）") }
+                _state.update { it.copy(message = UiText.of(R.string.msg_rename_failed_exists)) }
             }
         }
     }

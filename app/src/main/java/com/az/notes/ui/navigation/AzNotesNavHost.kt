@@ -1,5 +1,6 @@
 package com.az.notes.ui.navigation
 
+import android.app.Activity
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -8,6 +9,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
@@ -67,7 +69,9 @@ fun AzNotesNavHost(
             val sharedText by mainViewModel.sharedText.collectAsStateWithLifecycle()
             HomeScreen(
                 onOpenFile = { navController.navigate(Routes.reader(it)) },
-                onOpenEditor = { path, fresh -> navController.navigate(Routes.editor(path, fresh)) },
+                onOpenEditor = { path, fresh, fromShare ->
+                    navController.navigate(Routes.editor(path, fresh, fromShare))
+                },
                 onOpenTrash = { navController.navigate(Routes.TRASH) },
                 // 主页右上角“立即同步”在本页以弹窗完成（扫描 → 确认 → 执行），无需导航；
                 // 同步配置从抽屉 → 设置 → 同步进入
@@ -96,13 +100,24 @@ fun AzNotesNavHost(
                 navArgument("fresh") {
                     type = NavType.BoolType
                     defaultValue = false
+                },
+                navArgument("share") {
+                    type = NavType.BoolType
+                    defaultValue = false
                 }
             )
-        ) {
+        ) { entry ->
+            val fromShare = entry.arguments?.getBoolean("share") ?: false
+            val context = LocalContext.current
             EditorScreen(
                 viewModel = hiltViewModel(),
                 onBack = { navController.popBackStack() },
-                onPreview = { path -> navController.navigate(Routes.reader(path)) }
+                onPreview = { path -> navController.navigate(Routes.reader(path)) },
+                fromShare = fromShare,
+                // 分享独立页：返回即退出应用（回到分享来源应用）
+                onExitApp = { (context as? Activity)?.finish() },
+                // 回列表：直接弹回主页（分享场景的栈为 [HOME, EDITOR]）
+                onBackToHome = { navController.popBackStack(Routes.HOME, inclusive = false) }
             )
         }
 

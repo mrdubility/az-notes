@@ -2,6 +2,7 @@ package com.az.notes.ui.notes
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.az.notes.R
 import com.az.notes.data.local.ProgressRepository
 import com.az.notes.data.settings.SettingsRepository
 import com.az.notes.data.storage.TrashRepository
@@ -12,9 +13,14 @@ import com.az.notes.domain.model.AppSettings
 import com.az.notes.domain.model.FabAction
 import com.az.notes.domain.model.FileNode
 import com.az.notes.domain.model.NoteSortOrder
+import com.az.notes.ui.common.UiText
+import com.az.notes.ui.common.toUiText
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -25,9 +31,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 import javax.inject.Inject
 import kotlin.math.roundToInt
 
@@ -55,9 +58,18 @@ data class NotesUiState(
     val sortOrder: NoteSortOrder = NoteSortOrder.MODIFIED_DESC,
     /** 右下角加号点击的默认行为（长按始终弹出全部选项） */
     val fabAction: FabAction = FabAction.NEW_NOTE,
-    val error: String? = null,
+    /** 是否启用回收站（关闭时删除直接物理删除、抽屉隐藏入口） */
+    val trashEnabled: Boolean = true,
+    /** 是否还有后续批次未装载（滚动到底自动加载） */
+    val hasMore: Boolean = false,
+    /** 多选模式（长按进入）：批量移动笔记 */
+    val selectMode: Boolean = false,
+    val selectedPaths: Set<String> = emptySet(),
+    /** 批量移动对话框的目标文件夹列表（null = 尚未加载） */
+    val moveTargets: List<FileNode>? = null,
+    val error: UiText? = null,
     /** 一次性提示（Snackbar），消费后清空 */
-    val message: String? = null
+    val message: UiText? = null
 ) {
     val currentDir: String? get() = dirStack.lastOrNull()
     val atRoot: Boolean get() = dirStack.isEmpty()
@@ -94,7 +106,14 @@ class NotesViewModel @Inject constructor(
     private var currentSettings = AppSettings()
     private var initialized = false
     private var loadJob: Job? = null
+    private var loadMoreJob: Job? = null
     private var searchJob: Job? = null
+
+    /** 列表装载世代号：reload 后旧批次（loadMore）的写回作废 */
+    private var listingGeneration = 0
+
+    /** 当前目录尚未装载预览的后续笔记（滚动到底逐批加载） */
+    private var pendingNotes: List<FileNode> = emptyList()
 
     /** 正文预览内存缓存（绝对路径 → 文件 mtime + 预览）：跨目录往返与重复刷新零重读。 */
     private val previewCache = ConcurrentHashMap<String, CachedPreview>()
@@ -108,7 +127,9 @@ class NotesViewModel @Inject constructor(
     private fun applySettings(s: AppSettings) {
         val prev = currentSettings
         currentSettings = s
-        _state.update { it.copy(sortOrder = s.sortOrder, fabAction = s.fabAction) }
+        _state.update {
+            it.copy(sortOrder = s.sortOrder, fabAction = s.fabAction, trashEnabled = s.trashEnabled)
+        }
 
         when {
             s.vaultPath != prev.vaultPath -> {
@@ -118,12 +139,15 @@ class NotesViewModel @Inject constructor(
                         dirStack = emptyList(),
                         items = emptyList(),
                         searchQuery = "",
-                        searchResults = emptyList()
+                        searchResults = emptyList(),
+                        selectMode = false,
+                        selectedPaths = emptySet(),
+                        moveTargets = null
                     )
                 }
                 if (s.vaultPath.isNullOrBlank()) {
                     initialized = false
-                    _state.update { it.copy(loading = false, error = "未选择 Vault 目录") }
+                    _state.update { it.copy(loading = false, error = UiText.of(R.string.home_no_vault)) }
                 } else {
                     initialized = true
                     reloadItems(pullRefresh = false)
@@ -167,7 +191,7 @@ class NotesViewModel @Inject constructor(
         viewModelScope.launch { settingsRepository.setSortOrder(order) }
     }
 
-    /** 搜索输入（去抖 250ms，跨目录递归匹配文件名）。 */
+    /** 搜索输入（去抖 250ms，跨目录全局搜索：文件名 + 正文内容）。 */
     fun onSearchQueryChange(query: String) {
         _state.update { it.copy(searchQuery = query) }
         searchJob?.cancel()
@@ -187,12 +211,13 @@ class NotesViewModel @Inject constructor(
                     withContext(Dispatchers.IO) {
                         val previewChars = currentSettings.previewChars
                         val progress = progressByPath()
-                        vaultRepository.searchNotes(vault, trimmed).map { node ->
+                        vaultRepository.searchNotes(vault, trimmed).map { hit ->
                             NoteListItem(
-                                node = node,
-                                preview = previewFor(node, previewChars),
-                                subtitle = node.relativePath.substringBeforeLast('/', "").ifEmpty { null },
-                                progress = progress[node.absolutePath]
+                                node = hit.node,
+                                // 正文命中展示上下文片段，文件名命中展示正文预览
+                                preview = hit.snippet ?: previewFor(hit.node, previewChars),
+                                subtitle = hit.node.relativePath.substringBeforeLast('/', "").ifEmpty { null },
+                                progress = progress[hit.node.absolutePath]
                             )
                         }
                     }
@@ -212,18 +237,24 @@ class NotesViewModel @Inject constructor(
         viewModelScope.launch {
             val newName = resolveNewName(node, input)
             if (newName == null) {
-                _state.update { it.copy(message = "名称无效") }
+                _state.update { it.copy(message = UiText.of(R.string.msg_invalid_name)) }
                 return@launch
             }
             if (newName == node.name) return@launch
             val parent = File(node.absolutePath).parent
             if (parent == null) {
-                _state.update { it.copy(message = "重命名失败") }
+                _state.update { it.copy(message = UiText.of(R.string.msg_rename_failed)) }
                 return@launch
             }
             val target = File(parent, newName).absolutePath
             val ok = withContext(Dispatchers.IO) { vaultRepository.rename(node.absolutePath, target) }
-            _state.update { it.copy(message = if (ok) "已重命名" else "重命名失败（可能存在同名项）") }
+            _state.update {
+                it.copy(
+                    message = UiText.of(
+                        if (ok) R.string.msg_renamed else R.string.msg_rename_failed_exists
+                    )
+                )
+            }
             if (ok) {
                 reloadItems(pullRefresh = false)
                 syncRemoteRename(node.absolutePath, target)
@@ -244,41 +275,58 @@ class NotesViewModel @Inject constructor(
         }
     }
 
-    /** 删除：移入回收站（可恢复），不物理删除；目录整体入站。 */
+    /** 删除：启用回收站时移入回收站（可恢复）；关闭时直接物理删除（设置页有警示确认）。 */
     fun delete(node: FileNode) {
         viewModelScope.launch {
             val vault = currentSettings.vaultPath
-            val ok = !vault.isNullOrBlank() &&
-                withContext(Dispatchers.IO) { trashRepository.moveToTrash(vault, node.absolutePath) }
-            _state.update { it.copy(message = if (ok) "已移入回收站「${node.name}」" else "删除失败") }
+            if (vault.isNullOrBlank()) {
+                _state.update { it.copy(message = UiText.of(R.string.home_no_vault)) }
+                return@launch
+            }
+            val toTrash = currentSettings.trashEnabled
+            val ok = withContext(Dispatchers.IO) {
+                if (toTrash) trashRepository.moveToTrash(vault, node.absolutePath)
+                else vaultRepository.delete(node.absolutePath)
+            }
+            _state.update {
+                it.copy(
+                    message = when {
+                        !ok -> UiText.of(R.string.msg_delete_failed)
+                        toTrash -> UiText.of(R.string.msg_moved_to_trash, node.name)
+                        else -> UiText.of(R.string.msg_deleted, node.name)
+                    }
+                )
+            }
             if (ok) reloadItems(pullRefresh = false)
         }
     }
 
     /**
-     * 从系统分享 / 内容传送门传入的文本新建笔记：文件名为「分享笔记 yyyy-MM-dd HHmmss」，
-     * 存入当前目录（分享进入时通常位于根目录），成功后回调路径供直接进入编辑页。
+     * 从系统分享 / 内容传送门传入的文本新建笔记：文件名为默认新建笔记名
+     * （与新建笔记同规则，支持 `$日期变量$`），存入当前目录，成功后回调路径供直接进入编辑页。
      */
     fun createNoteFromShare(content: String, onCreated: (String) -> Unit) {
         viewModelScope.launch {
             // 冷启动分享时设置可能尚未回流到 currentSettings：直接读一次最新快照，
             // 避免误报“未选择 Vault 目录”并丢失分享内容
-            val vault = runCatching { settingsRepository.settings.first().vaultPath }
-                .getOrNull() ?: currentSettings.vaultPath
+            val snapshot = runCatching { settingsRepository.settings.first() }.getOrNull()
+            val vault = snapshot?.vaultPath ?: currentSettings.vaultPath
             if (vault.isNullOrBlank()) {
-                _state.update { it.copy(message = "未选择 Vault 目录") }
+                _state.update { it.copy(message = UiText.of(R.string.home_no_vault)) }
                 return@launch
             }
             val dir = _state.value.currentDir ?: vault
             val createdPath = runCatching {
                 withContext(Dispatchers.IO) {
-                    val stamp = SimpleDateFormat("yyyy-MM-dd HHmmss", Locale.getDefault()).format(Date())
-                    val path = vaultRepository.uniqueNotePath(dir, "分享笔记 $stamp")
+                    val baseName = VaultRepository.resolveDateName(
+                        snapshot?.defaultNoteName ?: currentSettings.defaultNoteName
+                    )
+                    val path = vaultRepository.uniqueNotePath(dir, baseName)
                     if (vaultRepository.createFile(path, content)) path else null
                 }
             }.getOrNull()
             if (createdPath == null) {
-                _state.update { it.copy(message = "新建分享笔记失败") }
+                _state.update { it.copy(message = UiText.of(R.string.msg_share_note_failed)) }
                 return@launch
             }
             reloadItems(pullRefresh = false)
@@ -291,7 +339,7 @@ class NotesViewModel @Inject constructor(
         viewModelScope.launch {
             val vault = currentSettings.vaultPath
             if (vault.isNullOrBlank()) {
-                _state.update { it.copy(message = "未选择 Vault 目录") }
+                _state.update { it.copy(message = UiText.of(R.string.home_no_vault)) }
                 return@launch
             }
             val dir = _state.value.currentDir ?: vault
@@ -304,7 +352,7 @@ class NotesViewModel @Inject constructor(
                 }
             }.getOrNull()
             if (createdPath == null) {
-                _state.update { it.copy(message = "新建笔记失败") }
+                _state.update { it.copy(message = UiText.of(R.string.msg_note_create_failed)) }
                 return@launch
             }
             reloadItems(pullRefresh = false)
@@ -317,12 +365,12 @@ class NotesViewModel @Inject constructor(
         viewModelScope.launch {
             val vault = currentSettings.vaultPath
             if (vault.isNullOrBlank()) {
-                _state.update { it.copy(message = "未选择 Vault 目录") }
+                _state.update { it.copy(message = UiText.of(R.string.home_no_vault)) }
                 return@launch
             }
             val name = VaultRepository.sanitizeEntryName(input)
             if (name == null) {
-                _state.update { it.copy(message = "名称无效") }
+                _state.update { it.copy(message = UiText.of(R.string.msg_invalid_name)) }
                 return@launch
             }
             val dir = _state.value.currentDir ?: vault
@@ -331,7 +379,10 @@ class NotesViewModel @Inject constructor(
                 !target.exists() && vaultRepository.createDirectory(target.absolutePath)
             }
             _state.update {
-                it.copy(message = if (ok) "已新建文件夹「$name」" else "新建文件夹失败（可能存在同名项）")
+                it.copy(
+                    message = if (ok) UiText.of(R.string.msg_folder_created, name)
+                    else UiText.of(R.string.msg_folder_create_failed)
+                )
             }
             if (ok) reloadItems(pullRefresh = false)
         }
@@ -347,31 +398,126 @@ class NotesViewModel @Inject constructor(
         return VaultRepository.ensureMarkdownName(cleaned)
     }
 
+    // ——————————————— 多选批量移动（整理笔记） ———————————————
+
+    /** 长按条目：进入多选模式并选中该项。 */
+    fun enterSelectMode(path: String) {
+        _state.update { it.copy(selectMode = true, selectedPaths = setOf(path)) }
+    }
+
+    /** 多选模式下点击条目：切换选中；已无选中项时退出多选模式。 */
+    fun toggleSelected(path: String) {
+        _state.update { s ->
+            if (!s.selectMode) return@update s
+            val selected = if (path in s.selectedPaths) s.selectedPaths - path else s.selectedPaths + path
+            s.copy(selectedPaths = selected, selectMode = selected.isNotEmpty())
+        }
+    }
+
+    /** 退出多选模式。 */
+    fun exitSelectMode() {
+        _state.update { it.copy(selectMode = false, selectedPaths = emptySet()) }
+    }
+
+    /** 全选 / 取消全选当前列表。 */
+    fun toggleSelectAll() {
+        _state.update { s ->
+            val all = s.items.map { it.node.absolutePath }.toSet()
+            if (all.isNotEmpty() && s.selectedPaths.size >= all.size) {
+                s.copy(selectedPaths = emptySet(), selectMode = false)
+            } else {
+                s.copy(selectMode = true, selectedPaths = all)
+            }
+        }
+    }
+
+    /** 打开移动对话框前加载目标文件夹列表（递归全部子目录）。 */
+    fun loadMoveTargets() {
+        val vault = currentSettings.vaultPath ?: return
+        if (_state.value.moveTargets != null) return
+        viewModelScope.launch {
+            val dirs = withContext(Dispatchers.IO) { vaultRepository.listAllDirectories(vault) }
+            _state.update { it.copy(moveTargets = dirs) }
+        }
+    }
+
+    /** 将选中的条目批量移动到 [targetDir]（逐个移动，重名跳过）；完成后退出多选并刷新。 */
+    fun moveSelectedTo(targetDir: String) {
+        viewModelScope.launch {
+            val paths = _state.value.selectedPaths.toList()
+            if (paths.isEmpty()) return@launch
+            var skipped = 0
+            val moved = withContext(Dispatchers.IO) {
+                var ok = 0
+                for (src in paths) {
+                    val name = File(src).name
+                    val target = File(targetDir, name).absolutePath
+                    if (target == src) {
+                        skipped++ // 已在该目录：跳过且不计失败
+                        continue
+                    }
+                    if (vaultRepository.rename(src, target)) {
+                        ok++
+                        syncRemoteRename(src, target)
+                    }
+                }
+                ok
+            }
+            val failed = paths.size - moved - skipped
+            _state.update {
+                it.copy(
+                    message = if (failed == 0) UiText.of(R.string.home_moved_count, moved)
+                    else UiText.of(R.string.home_move_partial, moved, failed)
+                )
+            }
+            exitSelectMode()
+            reloadItems(pullRefresh = false)
+        }
+    }
+
     private fun reloadItems(pullRefresh: Boolean) {
         val vault = currentSettings.vaultPath ?: return
         loadJob?.cancel()
+        loadMoreJob?.cancel()
+        listingGeneration++
+        val generation = listingGeneration
         loadJob = viewModelScope.launch {
             _state.update {
                 it.copy(
                     loading = !pullRefresh && it.items.isEmpty(),
                     refreshing = pullRefresh,
-                    error = null
+                    error = null,
+                    // 目录 / 偏好变化：选择状态可能指向已失效条目，一并重置
+                    selectMode = false,
+                    selectedPaths = emptySet(),
+                    moveTargets = null
                 )
             }
             val dir = _state.value.currentDir ?: vault
             val result = runCatching {
                 withContext(Dispatchers.IO) { loadListing(dir, vault) }
             }
+            if (generation != listingGeneration) return@launch
             result.fold(
-                onSuccess = { items ->
-                    // 列表与预览一次到位：避免目录切换 / 刷新时预览分批填充导致闪动
+                onSuccess = { page ->
+                    pendingNotes = page.pending
                     _state.update { s ->
-                        s.copy(items = items, loading = false, refreshing = false, error = null)
+                        s.copy(
+                            items = page.items,
+                            loading = false,
+                            refreshing = false,
+                            error = null,
+                            hasMore = page.pending.isNotEmpty()
+                        )
                     }
                 },
                 onFailure = { e ->
                     _state.update {
-                        it.copy(loading = false, refreshing = false, error = e.message ?: "读取目录失败")
+                        it.copy(
+                            loading = false,
+                            refreshing = false,
+                            error = e.toUiText(R.string.msg_list_load_failed)
+                        )
                     }
                 }
             )
@@ -379,23 +525,66 @@ class NotesViewModel @Inject constructor(
     }
 
     /**
-     * 列表与预览一次性备齐后再提交状态：目录切换 / 刷新不再经历
-     * “先无预览、后逐批出现”的过程（此前的分批填充会造成肉眼可见的闪动）。
+     * 滚动接近列表末尾时加载下一批：为后续笔记读取预览后追加到列表。
+     * 仅追加不改动已显示条目，避免已渲染内容闪动与滚动位置跳动。
+     */
+    fun loadMore() {
+        val remaining = pendingNotes
+        if (remaining.isEmpty() || loadMoreJob?.isActive == true) return
+        val generation = listingGeneration
+        loadMoreJob = viewModelScope.launch {
+            val batch = remaining.take(PAGE_SIZE)
+            val progress = progressByPath()
+            val previewChars = currentSettings.previewChars
+            val newItems = withContext(Dispatchers.IO) {
+                batch.map { node ->
+                    NoteListItem(
+                        node = node,
+                        preview = previewFor(node, previewChars),
+                        progress = progress[node.absolutePath]
+                    )
+                }
+            }
+            if (generation != listingGeneration) return@launch
+            pendingNotes = remaining.drop(PAGE_SIZE)
+            _state.update { s ->
+                s.copy(items = s.items + newItems, hasMore = pendingNotes.isNotEmpty())
+            }
+        }
+    }
+
+    /** 一页列表数据：已就绪条目（文件夹 + 首批笔记）+ 尚未装载预览的后续笔记。 */
+    private data class ListingPage(val items: List<NoteListItem>, val pending: List<FileNode>)
+
+    /**
+     * 列表分批装载：文件夹无需预览，全部立即包含；笔记按 [PAGE_SIZE] 逐批读取预览，
+     * 首批就绪即提交 UI（首屏等待只与首批相关），其余由 [loadMore] 追加。
+     * 列目录 / 阅读进度 / 首批预览三路并行读取，缩短首屏等待；
      * 预览读取走 [previewFor] 内存缓存，未变化文件不重读、往返目录零等待。
      */
-    private suspend fun loadListing(dirPath: String, vaultPath: String): List<NoteListItem> {
-        val nodes = vaultRepository.listChildren(dirPath, vaultPath)
+    private suspend fun loadListing(dirPath: String, vaultPath: String): ListingPage = coroutineScope {
+        val nodesAsync = async(Dispatchers.IO) { vaultRepository.listChildren(dirPath, vaultPath) }
+        val progressAsync = async(Dispatchers.IO) { progressByPath() }
+        val nodes = nodesAsync.await()
         val folders = nodes.filter { it.isDirectory }.sortedBy { it.name.lowercase() }
         val notes = sortNotes(nodes.filter { it.isMarkdown }, currentSettings.sortOrder)
-        val progress = progressByPath()
+        val progress = progressAsync.await()
         val previewChars = currentSettings.previewChars
-        return folders.map { NoteListItem(it) } + notes.map { node ->
-            NoteListItem(
-                node = node,
-                preview = previewFor(node, previewChars),
-                progress = progress[node.absolutePath]
-            )
-        }
+        val firstBatch = notes.take(PAGE_SIZE)
+        // 首批预览并行读取（单文件为小字节读，并行显著缩短首屏等待；awaitAll 保序）
+        val firstItems = firstBatch
+            .map { node ->
+                async(Dispatchers.IO) {
+                    NoteListItem(
+                        node = node,
+                        preview = previewFor(node, previewChars),
+                        progress = progress[node.absolutePath]
+                    )
+                }
+            }
+            .awaitAll()
+        val items = folders.map { NoteListItem(it) } + firstItems
+        ListingPage(items, notes.drop(PAGE_SIZE))
     }
 
     /** 预览缓存条目：文件 mtime 未变即可复用。 */
@@ -437,5 +626,8 @@ class NotesViewModel @Inject constructor(
     private companion object {
         /** 预览缓存上限：超过后整体清空，控制内存占用。 */
         const val PREVIEW_CACHE_LIMIT = 2000
+
+        /** 列表每批装载的笔记数：首屏只读首批预览，其余滚动到底自动加载。 */
+        const val PAGE_SIZE = 60
     }
 }

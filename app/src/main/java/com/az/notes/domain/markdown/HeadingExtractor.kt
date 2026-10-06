@@ -68,7 +68,7 @@ object HeadingExtractor {
             markdown.substring(node.startOffset, node.endOffset)
                 .lineSequence().first().trimStart('#', ' ', '\n')
         }
-        return raw.trim().ifBlank { "(无标题)" }
+        return raw.trim()
     }
 
     /** 字符偏移 → 行号（0 基）。 */

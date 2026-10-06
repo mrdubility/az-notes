@@ -10,11 +10,14 @@ import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.az.notes.domain.model.AppLanguage
 import com.az.notes.domain.model.AppSettings
+import com.az.notes.domain.model.EditorTool
 import com.az.notes.domain.model.FabAction
 import com.az.notes.domain.model.FontFamilyPreference
 import com.az.notes.domain.model.NoteSortOrder
 import com.az.notes.domain.model.ThemeMode
+import com.az.notes.util.LocaleHelper
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
@@ -45,8 +48,13 @@ class SettingsRepository @Inject constructor(
         val DEFAULT_NOTE_NAME = stringPreferencesKey("default_note_name")
         val TRASH_RETENTION = intPreferencesKey("trash_retention_days")
         val FAB_ACTION = stringPreferencesKey("fab_action")
+        val LANGUAGE = stringPreferencesKey("language")
+        val TRASH_ENABLED = booleanPreferencesKey("trash_enabled")
+        val TOOL_ORDER = stringPreferencesKey("editor_tool_order")
+        val TOOL_DISABLED = stringPreferencesKey("editor_tool_disabled")
     }
 
+    private val appContext = context.applicationContext
     private val dataStore = context.dataStore
 
     val settings: Flow<AppSettings> = dataStore.data
@@ -72,7 +80,21 @@ class SettingsRepository @Inject constructor(
                 trashRetentionDays = prefs[Keys.TRASH_RETENTION] ?: 30,
                 fabAction = prefs[Keys.FAB_ACTION]
                     ?.let { runCatching { FabAction.valueOf(it) }.getOrNull() }
-                    ?: FabAction.NEW_NOTE
+                    ?: FabAction.NEW_NOTE,
+                language = prefs[Keys.LANGUAGE]
+                    ?.let { runCatching { AppLanguage.valueOf(it) }.getOrNull() }
+                    ?: AppLanguage.SYSTEM,
+                trashEnabled = prefs[Keys.TRASH_ENABLED] ?: true,
+                editorToolOrder = prefs[Keys.TOOL_ORDER]
+                    ?.split(',')
+                    ?.filter { EditorTool.fromId(it) != null }
+                    ?.takeIf { it.isNotEmpty() }
+                    ?: EditorTool.defaultOrder,
+                editorToolDisabled = prefs[Keys.TOOL_DISABLED]
+                    ?.split(',')
+                    ?.filter { EditorTool.fromId(it) != null }
+                    ?.toSet()
+                    ?: emptySet()
             )
         }
 
@@ -100,6 +122,25 @@ class SettingsRepository @Inject constructor(
 
     /** 右下角加号点击的默认行为。 */
     suspend fun setFabAction(action: FabAction) = edit { it[Keys.FAB_ACTION] = action.name }
+
+    /** 应用语言：同时写 SharedPreferences 镜像，供 attachBaseContext 同步读取。 */
+    suspend fun setLanguage(language: AppLanguage) {
+        LocaleHelper.persist(appContext, language.tag)
+        edit { it[Keys.LANGUAGE] = language.name }
+    }
+
+    /** 是否启用回收站。 */
+    suspend fun setTrashEnabled(enabled: Boolean) = edit { it[Keys.TRASH_ENABLED] = enabled }
+
+    /** 编辑器工具栏顺序（存工具 id，逗号分隔）。 */
+    suspend fun setEditorToolOrder(order: List<String>) = edit {
+        it[Keys.TOOL_ORDER] = order.filter { id -> EditorTool.fromId(id) != null }.joinToString(",")
+    }
+
+    /** 编辑器工具栏禁用集合（存工具 id，逗号分隔）。 */
+    suspend fun setEditorToolDisabled(disabled: Set<String>) = edit {
+        it[Keys.TOOL_DISABLED] = disabled.filter { id -> EditorTool.fromId(id) != null }.joinToString(",")
+    }
 
     private suspend fun edit(block: (androidx.datastore.preferences.core.MutablePreferences) -> Unit) {
         dataStore.edit(block)

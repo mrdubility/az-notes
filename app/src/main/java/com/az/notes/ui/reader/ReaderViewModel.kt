@@ -3,12 +3,15 @@ package com.az.notes.ui.reader
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.az.notes.R
 import com.az.notes.data.local.ProgressRepository
 import com.az.notes.data.local.ReadProgressEntity
 import com.az.notes.data.settings.SettingsRepository
 import com.az.notes.data.storage.VaultRepository
 import com.az.notes.domain.markdown.Heading
 import com.az.notes.domain.markdown.HeadingExtractor
+import com.az.notes.ui.common.UiText
+import com.az.notes.ui.common.toUiText
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -20,7 +23,22 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 import javax.inject.Inject
+
+/**
+ * 文档信息（预览页“文档信息”对话框数据）：文件属性 + 正文统计。
+ */
+data class DocInfo(
+    val name: String,
+    val path: String,
+    val sizeBytes: Long,
+    val lastModified: Long,
+    /** 非空白字符数 */
+    val charCount: Int,
+    val lineCount: Int,
+    val headingCount: Int
+)
 
 data class ReaderUiState(
     val path: String = "",
@@ -30,7 +48,9 @@ data class ReaderUiState(
     val initialProgress: ReadProgressEntity? = null,
     /** 当前笔记所属 Vault 根（图片相对路径解析用）。 */
     val vaultPath: String? = null,
-    val error: String? = null
+    /** “文档信息”对话框数据（null = 对话框未打开）。 */
+    val docInfo: DocInfo? = null,
+    val error: UiText? = null
 )
 
 /**
@@ -96,11 +116,37 @@ class ReaderViewModel @Inject constructor(
                     )
                 }
             } catch (e: Exception) {
-                _state.update { it.copy(loading = false, error = e.message ?: "读取失败") }
+                _state.update { it.copy(loading = false, error = e.toUiText(R.string.msg_read_failed)) }
             } finally {
                 loadedOnce = true
             }
         }
+    }
+
+    /** 打开“文档信息”对话框：读取文件属性并统计正文字数（一次读取，关闭后清除）。 */
+    fun loadDocInfo() {
+        viewModelScope.launch {
+            val snapshot = _state.value
+            val info = withContext(Dispatchers.IO) {
+                val file = File(absolutePath)
+                val content = snapshot.content
+                DocInfo(
+                    name = file.name,
+                    path = absolutePath,
+                    sizeBytes = file.length(),
+                    lastModified = file.lastModified(),
+                    charCount = content.count { !it.isWhitespace() },
+                    lineCount = if (content.isEmpty()) 0 else content.count { it == '\n' } + 1,
+                    headingCount = snapshot.headings.size
+                )
+            }
+            _state.update { it.copy(docInfo = info) }
+        }
+    }
+
+    /** 关闭“文档信息”对话框。 */
+    fun clearDocInfo() {
+        _state.update { it.copy(docInfo = null) }
     }
 
     /** 预览 LazyColumn 滚动位置变化回调（§5.5；块序号为真实 AST 顶层块索引）。 */

@@ -12,6 +12,9 @@ enum class NoteSortOrder { MODIFIED_DESC, MODIFIED_ASC, NAME_ASC, NAME_DESC }
 /** 右下角加号：点击时执行的默认行为（长按始终弹出全部选项） */
 enum class FabAction { NEW_NOTE, NEW_FOLDER, SHOW_MENU }
 
+/** 应用语言：跟随系统 / 简体中文 / English；[tag] 为 Locale 标签（null = 跟随系统）。 */
+enum class AppLanguage(val tag: String?) { SYSTEM(null), ZH("zh"), EN("en") }
+
 /**
  * 应用偏好设置（DataStore 持久化，§5.6）。
  * 字号同时作用于编辑器正文字号；行高影响阅读与编辑。
@@ -32,5 +35,13 @@ data class AppSettings(
     /** 回收站自动清理天数（0 = 永不清理）；同步启动前执行 */
     val trashRetentionDays: Int = 30,
     /** 右下角加号点击的默认行为（长按始终弹出全部选项） */
-    val fabAction: FabAction = FabAction.NEW_NOTE
+    val fabAction: FabAction = FabAction.NEW_NOTE,
+    /** 应用语言（切换后由设置页重建 Activity 生效） */
+    val language: AppLanguage = AppLanguage.SYSTEM,
+    /** 是否启用回收站；关闭后删除将直接物理删除且抽屉隐藏入口 */
+    val trashEnabled: Boolean = true,
+    /** 编辑器工具栏的工具顺序（存 [EditorTool.id] 列表） */
+    val editorToolOrder: List<String> = EditorTool.defaultOrder,
+    /** 编辑器工具栏中被禁用的工具 id 集合 */
+    val editorToolDisabled: Set<String> = emptySet()
 )

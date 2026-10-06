@@ -64,8 +64,9 @@ import com.az.notes.domain.model.SyncInterval
 import com.az.notes.domain.model.SyncMode
 import com.az.notes.domain.model.SyncOpType
 import com.az.notes.domain.model.SyncSummary
-import com.az.notes.domain.model.label
-import com.az.notes.ui.components.SyncConfirmSheet
+import com.az.notes.ui.common.label
+import com.az.notes.ui.common.resolve
+import com.az.notes.ui.components.SyncConfirmDialog
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -75,7 +76,7 @@ import java.util.Locale
  * 同步策略、手动同步（Scan → 弹窗预览确认 → Execute）、结果汇总与同步日志。
  *
  * 从设置 → 同步进入；主页右上角的“立即同步”不跳本页，而是在主页用同一套
- * 弹窗组件（[SyncConfirmSheet] 等）完成扫描 → 确认 → 执行。
+ * 弹窗组件（[SyncConfirmDialog] 等）完成扫描 → 确认 → 执行。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -91,7 +92,7 @@ fun SyncScreen(
     // 连接测试结果用 Toast 弹出；展示后立即消费，避免重组 / 重建时重复提示
     val context = LocalContext.current
     LaunchedEffect(state.testMessage) {
-        val message = state.testMessage ?: return@LaunchedEffect
+        val message = state.testMessage?.resolve(context) ?: return@LaunchedEffect
         Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
         viewModel.clearTestMessage()
     }
@@ -218,12 +219,12 @@ fun SyncScreen(
             // —— 阶段反馈：扫描 / 执行进度、计划预览、结果汇总 ——
             when (state.phase) {
                 SyncPhase.TESTING, SyncPhase.SCANNING -> item {
-                    ProgressRow(statusText = state.statusText)
+                    ProgressRow(statusText = state.statusText.resolve())
                 }
                 SyncPhase.EXECUTING -> item {
                     ExecutingRow(state = state)
                 }
-                // 变更清单改由底部弹窗展示（见 Scaffold 之后的 SyncConfirmSheet）
+                // 变更清单改由确认弹窗展示（见 Scaffold 之后的 SyncConfirmDialog）
                 SyncPhase.AWAIT_CONFIRM -> Unit
                 SyncPhase.DONE -> item {
                     state.summary?.let { summary ->
@@ -232,7 +233,7 @@ fun SyncScreen(
                 }
                 SyncPhase.ERROR -> item {
                     ErrorCard(
-                        message = state.error ?: "",
+                        message = state.error?.resolve().orEmpty(),
                         onDismiss = viewModel::dismissResult
                     )
                 }
@@ -291,7 +292,7 @@ fun SyncScreen(
     // 变更清单确认弹窗：与主页“立即同步”入口共用同一组件与交互
     if (state.phase == SyncPhase.AWAIT_CONFIRM) {
         state.plan?.let { plan ->
-            SyncConfirmSheet(
+            SyncConfirmDialog(
                 plan = plan,
                 onConfirm = viewModel::confirmExecute,
                 onDismiss = viewModel::cancelPlan
@@ -410,6 +411,7 @@ private fun ProgressRow(statusText: String) {
 
 @Composable
 private fun ExecutingRow(state: SyncUiState) {
+    val statusText = state.statusText.resolve()
     Column(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp)
     ) {
@@ -425,10 +427,10 @@ private fun ExecutingRow(state: SyncUiState) {
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
-        if (state.statusText.isNotEmpty()) {
+        if (statusText.isNotEmpty()) {
             Spacer(Modifier.height(4.dp))
             Text(
-                text = state.statusText,
+                text = statusText,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -523,15 +525,13 @@ private fun ErrorCard(message: String, onDismiss: () -> Unit) {
 
 @Composable
 private fun LogRow(log: SyncLogEntity) {
-    val opLabel = runCatching { SyncOpType.valueOf(log.op).label() }
-        .getOrDefault(
-            when (log.op) {
-                "BASELINE" -> "同步基线"
-                "REMOTE_MOVE" -> "云端重命名"
-                "AUTO_SYNC" -> "自动同步"
-                else -> log.op
-            }
-        )
+    val opType = runCatching { SyncOpType.valueOf(log.op) }.getOrNull()
+    val opLabel = opType?.label() ?: when (log.op) {
+        "BASELINE" -> stringResource(R.string.sync_op_baseline)
+        "REMOTE_MOVE" -> stringResource(R.string.sync_op_remote_move)
+        "AUTO_SYNC" -> stringResource(R.string.sync_op_auto_sync)
+        else -> log.op
+    }
     Column(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp)
     ) {
@@ -621,11 +621,13 @@ private fun ConflictRow(record: ConflictRecordEntity) {
 }
 
 /** 冲突解决方式的可读文案（resolved_by 形如「策略:胜方」）。 */
+@Composable
 private fun resolutionLabel(resolvedBy: String): String = when {
     resolvedBy.startsWith("CONFLICT_COPY") ->
-        if (resolvedBy.endsWith(":local")) "冲突副本 · 保留本地版本" else "冲突副本 · 保留云端版本"
-    resolvedBy.startsWith("LOCAL_FIRST") -> "本地优先"
-    resolvedBy.startsWith("REMOTE_FIRST") -> "云端优先"
+        if (resolvedBy.endsWith(":local")) stringResource(R.string.sync_resolve_conflict_local)
+        else stringResource(R.string.sync_resolve_conflict_remote)
+    resolvedBy.startsWith("LOCAL_FIRST") -> stringResource(R.string.sync_resolve_local_first)
+    resolvedBy.startsWith("REMOTE_FIRST") -> stringResource(R.string.sync_resolve_remote_first)
     else -> resolvedBy
 }
 

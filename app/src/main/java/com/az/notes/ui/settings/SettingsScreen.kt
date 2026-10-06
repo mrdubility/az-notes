@@ -1,5 +1,6 @@
 package com.az.notes.ui.settings
 
+import android.app.Activity
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,6 +17,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.Sort
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.ColorLens
 import androidx.compose.material.icons.outlined.DeleteSweep
@@ -24,6 +27,7 @@ import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.FormatLineSpacing
 import androidx.compose.material.icons.outlined.FormatSize
 import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Notes
 import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.Sync
@@ -51,15 +55,20 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.az.notes.R
+import com.az.notes.domain.model.AppLanguage
+import com.az.notes.domain.model.EditorTool
 import com.az.notes.domain.model.FabAction
 import com.az.notes.domain.model.FontFamilyPreference
 import com.az.notes.domain.model.NoteSortOrder
 import com.az.notes.domain.model.ThemeMode
+import com.az.notes.ui.common.label
+import com.az.notes.util.LocaleHelper
 
 /**
  * 设置页（§5.6 重设计）：图标 + 标题 + 副标题的分组列表。
@@ -81,6 +90,8 @@ fun SettingsScreen(
     var lineHeightDialog by remember { mutableStateOf(false) }
     var previewDialog by remember { mutableStateOf(false) }
     var noteNameDialog by remember { mutableStateOf(false) }
+    var trashDisableConfirm by remember { mutableStateOf(false) }
+    val context = LocalContext.current
 
     Scaffold(
         topBar = {
@@ -123,6 +134,20 @@ fun SettingsScreen(
                     onClick = { viewModel.setDynamicColor(!settings.dynamicColor) }
                 )
             }
+            item {
+                SettingsChoiceRow(
+                    icon = Icons.Outlined.Language,
+                    title = stringResource(R.string.settings_language),
+                    options = AppLanguage.entries.map { it to it.label() },
+                    selected = settings.language,
+                    onSelect = { language ->
+                        // 镜像先同步写入（attachBaseContext 阶段同步读取），再落偏好并重建 Activity
+                        LocaleHelper.persist(context, language.tag)
+                        viewModel.setLanguage(language)
+                        (context as? Activity)?.recreate()
+                    }
+                )
+            }
 
             // —— 编辑器和查看器 ——
             item { SectionHeader(stringResource(R.string.settings_editor_viewer)) }
@@ -150,6 +175,61 @@ fun SettingsScreen(
                     subtitle = stringResource(R.string.settings_line_height_value, settings.lineHeightRatio),
                     onClick = { lineHeightDialog = true }
                 )
+            }
+
+            // —— 编辑器工具栏：开关 + 顺序 ——
+            item { SectionHeader(stringResource(R.string.settings_editor_toolbar)) }
+            item {
+                Text(
+                    text = stringResource(R.string.settings_editor_toolbar_subtitle),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 4.dp, bottom = 4.dp)
+                )
+            }
+            val toolOrder = remember(settings.editorToolOrder) {
+                // 持久化顺序可能缺少新版本追加的工具：补齐到末尾（默认启用）
+                settings.editorToolOrder + EditorTool.defaultOrder.filter { it !in settings.editorToolOrder }
+            }
+            toolOrder.forEachIndexed { index, id ->
+                val tool = EditorTool.fromId(id) ?: return@forEachIndexed
+                item(key = "tool_$id") {
+                    ToolConfigRow(
+                        label = tool.label(),
+                        enabled = id !in settings.editorToolDisabled,
+                        canMoveUp = index > 0,
+                        canMoveDown = index < toolOrder.lastIndex,
+                        onToggle = { enabled ->
+                            val disabled = settings.editorToolDisabled.toMutableSet()
+                            if (enabled) disabled.remove(id) else disabled.add(id)
+                            viewModel.setEditorToolDisabled(disabled)
+                        },
+                        onMoveUp = {
+                            val list = toolOrder.toMutableList()
+                            val tmp = list[index - 1]
+                            list[index - 1] = list[index]
+                            list[index] = tmp
+                            viewModel.setEditorToolOrder(list)
+                        },
+                        onMoveDown = {
+                            val list = toolOrder.toMutableList()
+                            val tmp = list[index + 1]
+                            list[index + 1] = list[index]
+                            list[index] = tmp
+                            viewModel.setEditorToolOrder(list)
+                        }
+                    )
+                }
+            }
+            item {
+                Box(Modifier.fillMaxWidth().padding(horizontal = 20.dp), contentAlignment = Alignment.End) {
+                    TextButton(onClick = {
+                        viewModel.setEditorToolOrder(EditorTool.defaultOrder)
+                        viewModel.setEditorToolDisabled(emptySet())
+                    }) {
+                        Text(stringResource(R.string.settings_editor_toolbar_reset))
+                    }
+                }
             }
 
             // —— 笔记列表 ——
@@ -219,6 +299,29 @@ fun SettingsScreen(
                         }) {
                             Text(stringResource(R.string.settings_change_vault))
                         }
+                    }
+                )
+            }
+            item {
+                SettingsRow(
+                    icon = Icons.Outlined.DeleteSweep,
+                    title = stringResource(R.string.settings_trash_enabled),
+                    subtitle = stringResource(
+                        if (settings.trashEnabled) R.string.settings_trash_enabled_subtitle
+                        else R.string.settings_trash_disabled_subtitle
+                    ),
+                    trailing = {
+                        Switch(
+                            checked = settings.trashEnabled,
+                            onCheckedChange = { enabled ->
+                                if (enabled) viewModel.setTrashEnabled(true)
+                                else trashDisableConfirm = true // 关闭前二次确认（删除将不可恢复）
+                            }
+                        )
+                    },
+                    onClick = {
+                        if (settings.trashEnabled) trashDisableConfirm = true
+                        else viewModel.setTrashEnabled(true)
                     }
                 )
             }
@@ -303,6 +406,31 @@ fun SettingsScreen(
                 noteNameDialog = false
             },
             onDismiss = { noteNameDialog = false }
+        )
+    }
+
+    // 关闭回收站前二次确认：关闭后删除不可恢复
+    if (trashDisableConfirm) {
+        AlertDialog(
+            onDismissRequest = { trashDisableConfirm = false },
+            title = { Text(stringResource(R.string.settings_trash_disable_title)) },
+            text = { Text(stringResource(R.string.settings_trash_disable_message)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.setTrashEnabled(false)
+                    trashDisableConfirm = false
+                }) {
+                    Text(
+                        stringResource(R.string.action_confirm),
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { trashDisableConfirm = false }) {
+                    Text(stringResource(R.string.action_cancel))
+                }
+            }
         )
     }
 }
@@ -524,5 +652,56 @@ private fun FabAction.label(): String = stringResource(
     }
 )
 
+/** 工具配置行：名称（点击行切换开关）+ 上移 / 下移 + 启用开关。 */
+@Composable
+private fun ToolConfigRow(
+    label: String,
+    enabled: Boolean,
+    canMoveUp: Boolean,
+    canMoveDown: Boolean,
+    onToggle: (Boolean) -> Unit,
+    onMoveUp: () -> Unit,
+    onMoveDown: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 20.dp, end = 8.dp, top = 2.dp, bottom = 2.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyLarge,
+            color = if (enabled) MaterialTheme.colorScheme.onSurface
+            else MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f)
+        )
+        IconButton(onClick = onMoveUp, enabled = canMoveUp) {
+            Icon(
+                Icons.Filled.KeyboardArrowUp,
+                stringResource(R.string.settings_toolbar_move_up),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        IconButton(onClick = onMoveDown, enabled = canMoveDown) {
+            Icon(
+                Icons.Filled.KeyboardArrowDown,
+                stringResource(R.string.settings_toolbar_move_down),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Switch(checked = enabled, onCheckedChange = onToggle)
+    }
+}
+
 /** 回收站自动清理天数候选（0 = 永不清理）。 */
 private val TRASH_RETENTION_OPTIONS = listOf(7, 30, 90, 365, 0)
+
+@Composable
+private fun AppLanguage.label(): String = stringResource(
+    when (this) {
+        AppLanguage.SYSTEM -> R.string.settings_language_system
+        AppLanguage.ZH -> R.string.settings_language_zh
+        AppLanguage.EN -> R.string.settings_language_en
+    }
+)

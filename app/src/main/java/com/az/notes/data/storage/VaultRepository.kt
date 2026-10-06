@@ -7,8 +7,12 @@ import java.nio.charset.StandardCharsets
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
+
+/** 全局搜索命中：snippet 为正文命中位置的上下文片段（null = 仅文件名命中）。 */
+data class SearchHit(val node: FileNode, val snippet: String? = null)
 
 /**
  * Vault 文件存储仓库（§4.1 / §2.1）。
@@ -41,6 +45,15 @@ class VaultRepository @Inject constructor() {
 
         /** 日期变量：`$...$` 包裹的片段（内容按 SimpleDateFormat 语法解析）。 */
         private val DATE_VAR = Regex("\\$([^$]+)\\$")
+
+        /** 正文搜索：超过该大小的文件跳过正文匹配（仅参与文件名匹配）。 */
+        private const val CONTENT_SEARCH_MAX_BYTES = 262_144L
+
+        /** 正文搜索缓存上限：超过后整体清空，控制内存占用。 */
+        private const val CONTENT_CACHE_LIMIT = 512
+
+        /** 片段压缩用的连续空白。 */
+        private val WHITESPACE_RUN = Regex("\\s+")
 
         /** 文件名（不含扩展）对应的 Markdown 判断 */
         fun isMarkdownName(name: String): Boolean =
@@ -154,28 +167,86 @@ class VaultRepository @Inject constructor() {
     }
 
     /**
-     * 递归搜索 Vault 中的 Markdown 笔记（主页搜索），
-     * 按文件名不区分大小写包含 [query]，最多返回 [limit] 条。
+     * 递归搜索 Vault 中的 Markdown 笔记（主页全局搜索）：
+     * 第一轮按文件名不区分大小写包含 [query]（全部优先），第二轮按正文内容包含；
+     * 正文读取走 mtime 增量缓存（见 [contentFor]），大文件跳过正文匹配。
+     * 最多返回 [limit] 条；正文命中时附带 [SearchHit.snippet] 上下文片段。
      */
-    fun searchNotes(rootPath: String, query: String, limit: Int = 100): List<FileNode> {
+    fun searchNotes(rootPath: String, query: String, limit: Int = 100): List<SearchHit> {
         val root = File(rootPath)
-        if (!root.isDirectory || query.isBlank()) return emptyList()
-        val out = ArrayList<FileNode>()
-        searchWalk(root, rootPath, query.trim(), limit, out)
+        val trimmed = query.trim()
+        if (!root.isDirectory || trimmed.isEmpty()) return emptyList()
+        val notes = ArrayList<FileNode>()
+        collectNotes(root, rootPath, notes)
+        val out = ArrayList<SearchHit>()
+        // 第一轮：文件名命中（优先展示）
+        for (node in notes) {
+            if (out.size >= limit) break
+            if (node.name.contains(trimmed, ignoreCase = true)) out += SearchHit(node)
+        }
+        // 第二轮：正文命中（文件名已命中的跳过）
+        for (node in notes) {
+            if (out.size >= limit) break
+            if (node.name.contains(trimmed, ignoreCase = true)) continue
+            val text = contentFor(node) ?: continue
+            val index = text.indexOf(trimmed, ignoreCase = true)
+            if (index >= 0) out += SearchHit(node, snippetAround(text, index, trimmed.length))
+        }
         return out
     }
 
-    private fun searchWalk(dir: File, rootPath: String, query: String, limit: Int, out: MutableList<FileNode>) {
-        if (out.size >= limit) return
+    /** 递归收集全部 Markdown 笔记（忽略隐藏项）。 */
+    private fun collectNotes(dir: File, rootPath: String, out: MutableList<FileNode>) {
         val children = dir.listFiles() ?: return
         for (f in children) {
-            if (out.size >= limit) return
             if (!f.isVisibleEntry()) continue
             if (f.isDirectory) {
-                searchWalk(f, rootPath, query, limit, out)
-            } else if (isMarkdownName(f.name) && f.name.contains(query, ignoreCase = true)) {
+                collectNotes(f, rootPath, out)
+            } else if (isMarkdownName(f.name)) {
                 out += toNode(f, relativize(rootPath, f.absolutePath), rootPath, depth = 0)
             }
+        }
+    }
+
+    /** 正文搜索缓存条目：文件 mtime 未变即可复用已读文本。 */
+    private data class CachedContent(val lastModified: Long, val text: String)
+
+    private val contentCache = ConcurrentHashMap<String, CachedContent>()
+
+    /** 读取文件正文（搜索用，mtime 增量缓存）；超大文件返回 null 跳过正文匹配。 */
+    private fun contentFor(node: FileNode): String? {
+        if (node.size > CONTENT_SEARCH_MAX_BYTES) return null
+        val cached = contentCache[node.absolutePath]
+        if (cached != null && cached.lastModified == node.lastModified) return cached.text
+        val text = runCatching { readText(node.absolutePath) }.getOrNull() ?: return null
+        if (contentCache.size >= CONTENT_CACHE_LIMIT) contentCache.clear()
+        contentCache[node.absolutePath] = CachedContent(node.lastModified, text)
+        return text
+    }
+
+    /** 命中位置的上下文片段：前后各截一段并压缩连续空白。 */
+    private fun snippetAround(text: String, index: Int, length: Int): String {
+        val start = (index - 30).coerceAtLeast(0)
+        val end = (index + length + 50).coerceAtMost(text.length)
+        return text.substring(start, end).replace(WHITESPACE_RUN, " ").trim()
+    }
+
+    /** 递归收集全部子目录（忽略隐藏项，含 depth），供批量移动选择目标文件夹。 */
+    fun listAllDirectories(rootPath: String): List<FileNode> {
+        val root = File(rootPath)
+        if (!root.isDirectory) return emptyList()
+        val out = ArrayList<FileNode>()
+        walkDirs(root, rootPath, depth = 0, out)
+        return out
+    }
+
+    private fun walkDirs(dir: File, rootPath: String, depth: Int, out: MutableList<FileNode>) {
+        val children = dir.listFiles() ?: return
+        val sorted = children.filter { it.isDirectory && it.isVisibleEntry() }
+            .sortedBy { it.name.lowercase() }
+        for (f in sorted) {
+            out += toNode(f, relativize(rootPath, f.absolutePath), rootPath, depth)
+            walkDirs(f, rootPath, depth + 1, out)
         }
     }
 

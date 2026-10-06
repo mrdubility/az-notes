@@ -12,14 +12,11 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -33,16 +30,18 @@ import com.az.notes.domain.model.SyncOpType
 import com.az.notes.domain.model.SyncPlan
 import com.az.notes.domain.model.SyncSummary
 import com.az.notes.domain.model.displayPath
-import com.az.notes.domain.model.label
+import com.az.notes.ui.common.UiText
+import com.az.notes.ui.common.label
+import com.az.notes.ui.common.resolve
 
 /** 确认弹窗最多展示的操作条数（更多时仅提示数量）。 */
 private const val MAX_CONFIRM_ROWS = 100
 
 /**
  * 同步流程弹窗（主页「立即同步」与同步页共用）：
- * 进度对话框 → 变更确认底部弹窗 → 结果对话框。
+ * 进度对话框 → 变更确认弹窗 → 结果对话框。
  *
- * 变更清单必须经用户确认才执行（§6.1 预览确认），因此确认弹窗不随点击外部关闭。
+ * 变更清单必须经用户确认才执行（§6.1 预览确认），关闭弹窗即放弃本次计划。
  */
 
 /** 扫描 / 执行进度对话框；进行中不响应返回键与外部点击，避免误触中断同步。 */
@@ -97,105 +96,95 @@ fun SyncProgressDialog(
 }
 
 /**
- * 变更确认底部弹窗：统计 + 待执行操作清单（按语义着色）+ 取消 / 确认执行。
+ * 变更确认弹窗（居中对话框）：统计 + 待执行操作清单（按语义着色）+ 取消 / 确认执行。
  * 计划为空时展示「两端已一致」，只保留一个关闭按钮。
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SyncConfirmSheet(
+fun SyncConfirmDialog(
     plan: SyncPlan,
     onConfirm: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    ModalBottomSheet(
+    AlertDialog(
         onDismissRequest = onDismiss,
-        sheetState = sheetState
-    ) {
-        Column(Modifier.fillMaxWidth().padding(bottom = 24.dp)) {
-            Text(
-                text = stringResource(R.string.sync_plan_title),
-                style = MaterialTheme.typography.titleLarge,
-                modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp)
-            )
-            if (plan.isEmpty) {
-                Text(
-                    text = stringResource(R.string.sync_plan_empty),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp)
-                )
-                TextButton(
-                    onClick = onDismiss,
-                    modifier = Modifier.align(Alignment.End).padding(horizontal = 16.dp)
-                ) {
-                    Text(stringResource(R.string.sync_result_dismiss))
+        title = { Text(stringResource(R.string.sync_plan_title)) },
+        text = {
+            Column {
+                if (plan.isEmpty) {
+                    Text(
+                        text = stringResource(R.string.sync_plan_empty),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    return@Column
                 }
-                return@Column
-            }
-            Text(
-                text = stringResource(
-                    R.string.sync_counts_line,
-                    plan.uploadCount,
-                    plan.downloadCount,
-                    plan.deleteRemoteCount,
-                    plan.trashLocalCount,
-                    plan.conflictCount
-                ),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 24.dp)
-            )
-            if (plan.moveCount > 0 || plan.skippedLarge > 0) {
                 Text(
-                    text = stringResource(R.string.sync_counts_extra, plan.moveCount, plan.skippedLarge),
+                    text = stringResource(
+                        R.string.sync_counts_line,
+                        plan.uploadCount,
+                        plan.downloadCount,
+                        plan.deleteRemoteCount,
+                        plan.trashLocalCount,
+                        plan.conflictCount
+                    ),
                     style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 24.dp)
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-            }
-            plan.warning?.let { warning ->
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    text = warning,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.padding(horizontal = 24.dp)
-                )
-            }
-            HorizontalDivider(Modifier.padding(vertical = 12.dp))
-            LazyColumn(Modifier.fillMaxWidth().heightIn(max = 400.dp)) {
-                itemsIndexed(
-                    plan.ops.take(MAX_CONFIRM_ROWS),
-                    key = { index, _ -> index }
-                ) { _, op ->
-                    SyncOpRow(op)
+                if (plan.moveCount > 0 || plan.skippedLarge > 0) {
+                    Text(
+                        text = stringResource(R.string.sync_counts_extra, plan.moveCount, plan.skippedLarge),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
-                if (plan.ops.size > MAX_CONFIRM_ROWS) {
-                    item {
-                        Text(
-                            text = stringResource(R.string.sync_plan_more, MAX_CONFIRM_ROWS),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(horizontal = 24.dp, vertical = 6.dp)
-                        )
+                plan.warning?.let { warning ->
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text = warning,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+                HorizontalDivider(Modifier.padding(vertical = 12.dp))
+                LazyColumn(Modifier.fillMaxWidth().heightIn(max = 320.dp)) {
+                    itemsIndexed(
+                        plan.ops.take(MAX_CONFIRM_ROWS),
+                        key = { index, _ -> index }
+                    ) { _, op ->
+                        SyncOpRow(op)
+                    }
+                    if (plan.ops.size > MAX_CONFIRM_ROWS) {
+                        item {
+                            Text(
+                                text = stringResource(R.string.sync_plan_more, MAX_CONFIRM_ROWS),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(vertical = 6.dp)
+                            )
+                        }
                     }
                 }
             }
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
+        },
+        confirmButton = {
+            if (plan.isEmpty) {
                 TextButton(onClick = onDismiss) {
-                    Text(stringResource(R.string.action_cancel))
+                    Text(stringResource(R.string.sync_result_dismiss))
                 }
-                Spacer(Modifier.weight(1f))
+            } else {
                 Button(onClick = onConfirm) {
                     Text(stringResource(R.string.sync_confirm_execute))
                 }
             }
+        },
+        dismissButton = {
+            if (!plan.isEmpty) {
+                TextButton(onClick = onDismiss) {
+                    Text(stringResource(R.string.action_cancel))
+                }
+            }
         }
-    }
+    )
 }
 
 /** 单条计划操作：类型（按语义着色）+ 相对路径（改名显示「旧 → 新」）。 */
@@ -208,7 +197,7 @@ fun SyncOpRow(op: SyncOp) {
         SyncOpType.MOVE_LOCAL, SyncOpType.MOVE_REMOTE -> MaterialTheme.colorScheme.secondary
     }
     Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 6.dp),
+        modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
@@ -231,7 +220,7 @@ fun SyncOpRow(op: SyncOp) {
 @Composable
 fun SyncResultDialog(
     summary: SyncSummary?,
-    error: String?,
+    error: UiText?,
     onDismiss: () -> Unit
 ) {
     val failed = error != null
@@ -250,7 +239,7 @@ fun SyncResultDialog(
             Column {
                 val failure = error
                 if (failure != null) {
-                    Text(failure, style = MaterialTheme.typography.bodyMedium)
+                    Text(failure.resolve(), style = MaterialTheme.typography.bodyMedium)
                 } else if (summary != null) {
                     Text(
                         text = stringResource(

@@ -3,6 +3,7 @@ package com.az.notes.ui.settings
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.az.notes.data.settings.SettingsRepository
+import com.az.notes.domain.model.AppLanguage
 import com.az.notes.domain.model.AppSettings
 import com.az.notes.domain.model.FabAction
 import com.az.notes.domain.model.FontFamilyPreference
@@ -51,6 +52,22 @@ class SettingsViewModel @Inject constructor(
     /** 右下角加号点击的默认行为。 */
     fun setFabAction(action: FabAction) =
         viewModelScope.launch { settingsRepository.setFabAction(action) }
+
+    /** 应用语言（写偏好 + 镜像；重建 Activity 由 UI 层触发）。 */
+    fun setLanguage(language: AppLanguage) =
+        viewModelScope.launch { settingsRepository.setLanguage(language) }
+
+    /** 是否启用回收站。 */
+    fun setTrashEnabled(enabled: Boolean) =
+        viewModelScope.launch { settingsRepository.setTrashEnabled(enabled) }
+
+    /** 编辑器工具栏顺序。 */
+    fun setEditorToolOrder(order: List<String>) =
+        viewModelScope.launch { settingsRepository.setEditorToolOrder(order) }
+
+    /** 编辑器工具栏禁用集合。 */
+    fun setEditorToolDisabled(disabled: Set<String>) =
+        viewModelScope.launch { settingsRepository.setEditorToolDisabled(disabled) }
 
     fun resetVault() = viewModelScope.launch { settingsRepository.setVaultPath(null) }
 }

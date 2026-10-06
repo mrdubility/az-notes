@@ -7,6 +7,8 @@
     <string name="permission_grant">去系统设置授权</string>
     <string name="permission_opened_hint">授权完成后返回本应用，选择你的 Vault 目录即可开始。</string>
     <string name="permission_granted">已授权，进入选择目录</string>
+    <string name="gate_dir_invalid">目录不存在或不可读：%1$s</string>
+    <string name="gate_subtitle">读取笔记库 · 标准 Markdown 显示/编辑 · 笔记列表与大纲</string>
 
     <!-- Vault 选择 -->
     <string name="vault_title">选择 Vault 目录</string>
@@ -54,10 +56,57 @@
     <string name="sort_name_asc">名称（A → Z）</string>
     <string name="sort_name_desc">名称（Z → A）</string>
 
+    <!-- 主页多选批量移动（整理笔记） -->
+    <string name="home_selected_count">已选 %1$d 项</string>
+    <string name="home_select_all">全选</string>
+    <string name="home_select_move">移动</string>
+    <string name="home_move_title">移动到文件夹</string>
+    <string name="home_move_root">根目录</string>
+    <string name="home_moved_count">已移动 %1$d 项</string>
+    <string name="home_move_partial">已移动 %1$d 项，%2$d 项失败</string>
+
+    <!-- 一次性操作提示（Snackbar / Toast） -->
+    <string name="msg_invalid_name">名称不合法，请重新输入</string>
+    <string name="msg_renamed">已重命名</string>
+    <string name="msg_rename_failed">重命名失败</string>
+    <string name="msg_rename_failed_exists">重命名失败：同名条目已存在</string>
+    <string name="msg_delete_failed">删除失败</string>
+    <string name="msg_moved_to_trash">已将「%1$s」移入回收站</string>
+    <string name="msg_deleted">已删除「%1$s」</string>
+    <string name="msg_share_note_failed">保存分享内容失败</string>
+    <string name="msg_note_create_failed">新建笔记失败</string>
+    <string name="msg_folder_created">已创建文件夹「%1$s」</string>
+    <string name="msg_folder_create_failed">新建文件夹失败</string>
+    <string name="msg_list_load_failed">列表加载失败</string>
+    <string name="msg_read_failed">读取失败</string>
+    <string name="msg_save_failed">保存失败</string>
+    <string name="msg_vault_unset">未选择 Vault 目录</string>
+
     <!-- 编辑页 -->
     <string name="editor_search_hint">查找正文</string>
     <string name="editor_search_empty">无匹配</string>
     <string name="editor_search_matches">共 %1$d 处</string>
+    <string name="editor_saved">已保存</string>
+    <string name="editor_unsaved">未保存</string>
+    <string name="editor_renamed_to">已重命名为「%1$s」</string>
+    <string name="editor_back_to_home">回列表</string>
+    <string name="editor_tool_undo">撤销</string>
+    <string name="editor_tool_redo">重做</string>
+    <string name="editor_tool_bold">粗体</string>
+    <string name="editor_tool_italic">斜体</string>
+    <string name="editor_tool_strikethrough">删除线</string>
+    <string name="editor_tool_inline_code">行内代码</string>
+    <string name="editor_tool_heading">标题</string>
+    <string name="editor_tool_quote">引用</string>
+    <string name="editor_tool_list_bullet">无序列表</string>
+    <string name="editor_tool_list_number">有序列表</string>
+    <string name="editor_tool_task">任务列表</string>
+    <string name="editor_tool_code_block">代码块</string>
+    <string name="editor_tool_hr">分割线</string>
+    <string name="editor_tool_indent">缩进</string>
+    <string name="editor_tool_unindent">反缩进</string>
+    <string name="editor_tool_link">链接</string>
+    <string name="editor_tool_image">图片</string>
 
     <!-- 设置 -->
     <string name="settings_theme">主题</string>
@@ -75,10 +124,19 @@
     <string name="settings_appearance">外观</string>
     <string name="settings_dynamic_color">Material You 动态取色</string>
     <string name="settings_dynamic_color_subtitle">基于壁纸自动生成配色（Android 12+）</string>
+    <string name="settings_language">语言</string>
+    <string name="settings_language_system">跟随系统</string>
+    <string name="settings_language_zh">简体中文</string>
+    <string name="settings_language_en">English</string>
     <string name="settings_editor_viewer">编辑器和查看器</string>
     <string name="settings_editor_viewer_subtitle">字体大小 / 行间距</string>
     <string name="settings_font_size_value">%1$d sp</string>
     <string name="settings_line_height_value">%.1f 倍</string>
+    <string name="settings_editor_toolbar">编辑器工具栏</string>
+    <string name="settings_editor_toolbar_subtitle">选择在编辑页底部显示的工具，并用箭头调整顺序</string>
+    <string name="settings_editor_toolbar_reset">恢复默认</string>
+    <string name="settings_toolbar_move_up">上移</string>
+    <string name="settings_toolbar_move_down">下移</string>
     <string name="settings_notes_list">笔记列表</string>
     <string name="settings_notes_list_subtitle">更改笔记在主屏幕上的显示方式</string>
     <string name="settings_preview_chars">预览字符数</string>
@@ -97,6 +155,11 @@
     <string name="settings_trash_retention">回收站自动清理</string>
     <string name="settings_trash_retention_value">%1$d 天后清理</string>
     <string name="settings_trash_retention_never">永不清理</string>
+    <string name="settings_trash_enabled">启用回收站</string>
+    <string name="settings_trash_enabled_subtitle">删除的笔记先移入回收站，可随时恢复</string>
+    <string name="settings_trash_disabled_subtitle">已关闭：删除将直接永久删除，抽屉中隐藏回收站入口</string>
+    <string name="settings_trash_disable_title">关闭回收站</string>
+    <string name="settings_trash_disable_message">关闭后，删除的笔记与文件夹将被直接永久删除且无法恢复；确定要关闭回收站吗？</string>
     <string name="settings_sync">同步</string>
     <string name="settings_sync_subtitle">WebDAV / 坚果云配置与手动同步</string>
     <string name="settings_vault">Vault 目录</string>
@@ -156,6 +219,60 @@
     <string name="sync_conflict_desc">以下文件曾发生冲突，败方版本已另存为冲突副本，请人工合并后清除记录。</string>
     <string name="sync_mb_unit">%1$d MB</string>
 
+    <!-- 同步枚举名称（策略 / 操作类型 / 周期 / 冲突解决，供下拉与日志展示） -->
+    <string name="sync_op_upload">上传</string>
+    <string name="sync_op_download">下载</string>
+    <string name="sync_op_delete_remote">删除云端</string>
+    <string name="sync_op_trash_local">移入回收站</string>
+    <string name="sync_op_conflict_copy">冲突副本</string>
+    <string name="sync_op_move_local">本地改名</string>
+    <string name="sync_op_move_remote">云端改名</string>
+    <string name="sync_op_baseline">同步基线</string>
+    <string name="sync_op_remote_move">云端重命名</string>
+    <string name="sync_op_auto_sync">自动同步</string>
+    <string name="sync_mode_bidirectional">双向同步</string>
+    <string name="sync_mode_upload_only">仅发送（本地 → 云端）</string>
+    <string name="sync_mode_upload_overwrite">仅发送（覆盖云端）</string>
+    <string name="sync_mode_download_only">仅接收（云端 → 本地）</string>
+    <string name="sync_mode_download_restore">仅接收（还原本地）</string>
+    <string name="sync_conflict_copy">冲突副本（默认）</string>
+    <string name="sync_conflict_local_first">本地优先</string>
+    <string name="sync_conflict_remote_first">坚果云优先</string>
+    <string name="sync_interval_off">关闭</string>
+    <string name="sync_interval_m15">每 15 分钟</string>
+    <string name="sync_interval_m30">每 30 分钟</string>
+    <string name="sync_interval_h1">每 1 小时</string>
+    <string name="sync_interval_h4">每 4 小时</string>
+    <string name="sync_interval_h8">每 8 小时</string>
+    <string name="sync_resolve_conflict_local">冲突副本 · 保留本地版本</string>
+    <string name="sync_resolve_conflict_remote">冲突副本 · 保留云端版本</string>
+    <string name="sync_resolve_local_first">本地优先</string>
+    <string name="sync_resolve_remote_first">云端优先</string>
+
+    <!-- 同步操作消息（Toast / 进度对话框） -->
+    <string name="sync_test_fill_server">请先填写服务器地址与账号</string>
+    <string name="sync_testing">正在测试连接…</string>
+    <string name="sync_test_ok">连接成功</string>
+    <string name="sync_test_failed">连接失败：未知错误</string>
+    <string name="sync_busy">同步正在进行中，请稍候</string>
+    <string name="sync_preparing">准备中…</string>
+    <string name="sync_fill_settings">请先在同步设置中填写服务器地址、账号与应用密码</string>
+    <string name="sync_other_running">其他同步正在进行中，请稍后再试</string>
+    <string name="sync_plan_failed">同步计划生成失败</string>
+    <string name="sync_execute_failed">同步执行失败</string>
+
+    <!-- 预览页文档信息 -->
+    <string name="reader_info">文档信息</string>
+    <string name="reader_info_name">文件名</string>
+    <string name="reader_info_path">位置</string>
+    <string name="reader_info_size">大小</string>
+    <string name="reader_info_modified">修改时间</string>
+    <string name="reader_info_chars">字符数</string>
+    <string name="reader_info_lines">行数</string>
+    <string name="reader_info_headings">标题数</string>
+    <string name="reader_outline_empty">本文无标题层级</string>
+    <string name="reader_outline_untitled">（无标题）</string>
+
     <!-- 回收站（恢复被云端删除波及的本地文件） -->
     <string name="trash_title">回收站</string>
     <string name="trash_empty">回收站为空</string>
@@ -166,4 +283,8 @@
     <string name="trash_purge_confirm">将清空回收站内的全部文件，此操作不可撤销。</string>
     <string name="trash_delete_confirm">将永久删除「%1$s」，此操作不可撤销。</string>
     <string name="trash_batch_summary">%1$d 个文件</string>
+    <string name="trash_restored">已恢复「%1$s」</string>
+    <string name="trash_restore_failed">恢复失败</string>
+    <string name="trash_purged">回收站已清空</string>
+    <string name="trash_purge_failed">清空失败</string>
 </resources>

@@ -1,0 +1,290 @@
+<resources>
+    <string name="app_name">Az Notes</string>
+
+    <!-- Permission guidance -->
+    <string name="permission_title">Grant all files access</string>
+    <string name="permission_subtitle">Az Notes reads your vault folder directly and needs "All files access". This app is not distributed on Google Play; your notes are only read and written on this device.</string>
+    <string name="permission_grant">Open system settings</string>
+    <string name="permission_opened_hint">Return to the app after granting, then pick your Vault folder to get started.</string>
+    <string name="permission_granted">Granted, choose folder</string>
+    <string name="gate_dir_invalid">Directory not found or unreadable: %1$s</string>
+    <string name="gate_subtitle">Read your vault · standard Markdown preview/edit · note list and outline</string>
+
+    <!-- Vault selection -->
+    <string name="vault_title">Choose Vault folder</string>
+    <string name="vault_path_hint">Vault absolute path</string>
+    <string name="vault_pick_hint">Tap the button below to pick your notes repository (Vault) folder via the system picker.</string>
+    <string name="vault_pick_empty">No folder selected yet</string>
+    <string name="vault_pick_button">Choose folder</string>
+    <string name="vault_pick_common">Common folders</string>
+    <string name="vault_open">Open</string>
+
+    <!-- Directory tree -->
+    <string name="tree_empty">No Markdown files in this folder</string>
+    <string name="action_settings">Settings</string>
+    <string name="action_sync">Sync</string>
+    <string name="action_sync_now">Sync now</string>
+    <string name="action_edit">Edit</string>
+    <string name="action_preview">Preview</string>
+    <string name="action_outline">Outline</string>
+    <string name="action_back">Back</string>
+    <string name="action_save">Save</string>
+
+    <!-- Home note list -->
+    <string name="home_search_hint">Search all notes</string>
+    <string name="home_search_empty">No matching notes</string>
+    <string name="home_search_tip">Type keywords to search all notes across folders</string>
+    <string name="home_new_note">New note</string>
+    <string name="home_new_folder">New folder</string>
+    <string name="home_double_back_exit">Press back again to exit</string>
+    <string name="home_drop_hint">Release to create a note</string>
+    <string name="home_no_vault">No Vault folder selected</string>
+    <string name="home_folder">Folder</string>
+    <string name="action_menu">Menu</string>
+    <string name="action_close">Close</string>
+    <string name="action_more">More</string>
+    <string name="action_rename">Rename</string>
+    <string name="action_delete">Delete</string>
+    <string name="action_confirm">OK</string>
+    <string name="action_cancel">Cancel</string>
+    <string name="rename_hint">Name</string>
+    <string name="delete_note_message">\"%1$s\" will be moved to Trash and can be restored anytime.</string>
+    <string name="delete_folder_message">Folder "%1$s" and its contents will be moved to Trash and can be restored anytime.</string>
+    <string name="sort_by">Sort by</string>
+    <string name="sort_modified_desc">Last modified (new → old)</string>
+    <string name="sort_modified_asc">Last modified (old → new)</string>
+    <string name="sort_name_asc">Name (A → Z)</string>
+    <string name="sort_name_desc">Name (Z → A)</string>
+
+    <!-- Home multi-select batch move -->
+    <string name="home_selected_count">%1$d selected</string>
+    <string name="home_select_all">Select all</string>
+    <string name="home_select_move">Move</string>
+    <string name="home_move_title">Move to folder</string>
+    <string name="home_move_root">Root</string>
+    <string name="home_moved_count">Moved %1$d item(s)</string>
+    <string name="home_move_partial">Moved %1$d, failed %2$d</string>
+
+    <!-- One-shot messages (Snackbar / Toast) -->
+    <string name="msg_invalid_name">Invalid name, please try again</string>
+    <string name="msg_renamed">Renamed</string>
+    <string name="msg_rename_failed">Rename failed</string>
+    <string name="msg_rename_failed_exists">Rename failed: an item with the same name already exists</string>
+    <string name="msg_delete_failed">Delete failed</string>
+    <string name="msg_moved_to_trash">Moved "%1$s" to Trash</string>
+    <string name="msg_deleted">Deleted "%1$s"</string>
+    <string name="msg_share_note_failed">Failed to save shared content</string>
+    <string name="msg_note_create_failed">Failed to create note</string>
+    <string name="msg_folder_created">Created folder "%1$s"</string>
+    <string name="msg_folder_create_failed">Failed to create folder</string>
+    <string name="msg_list_load_failed">Failed to load the list</string>
+    <string name="msg_read_failed">Failed to read</string>
+    <string name="msg_save_failed">Failed to save</string>
+    <string name="msg_vault_unset">No Vault folder selected</string>
+
+    <!-- Editor -->
+    <string name="editor_search_hint">Find in note</string>
+    <string name="editor_search_empty">No matches</string>
+    <string name="editor_search_matches">%1$d matches</string>
+    <string name="editor_saved">Saved</string>
+    <string name="editor_unsaved">Unsaved</string>
+    <string name="editor_renamed_to">Renamed to "%1$s"</string>
+    <string name="editor_back_to_home">Back to list</string>
+    <string name="editor_tool_undo">Undo</string>
+    <string name="editor_tool_redo">Redo</string>
+    <string name="editor_tool_bold">Bold</string>
+    <string name="editor_tool_italic">Italic</string>
+    <string name="editor_tool_strikethrough">Strikethrough</string>
+    <string name="editor_tool_inline_code">Inline code</string>
+    <string name="editor_tool_heading">Heading</string>
+    <string name="editor_tool_quote">Quote</string>
+    <string name="editor_tool_list_bullet">Bulleted list</string>
+    <string name="editor_tool_list_number">Numbered list</string>
+    <string name="editor_tool_task">Task list</string>
+    <string name="editor_tool_code_block">Code block</string>
+    <string name="editor_tool_hr">Divider</string>
+    <string name="editor_tool_indent">Indent</string>
+    <string name="editor_tool_unindent">Outdent</string>
+    <string name="editor_tool_link">Link</string>
+    <string name="editor_tool_image">Image</string>
+
+    <!-- Settings -->
+    <string name="settings_theme">Theme</string>
+    <string name="settings_theme_system">Follow system</string>
+    <string name="settings_theme_light">Light</string>
+    <string name="settings_theme_dark">Dark</string>
+    <string name="settings_font_family">Font family</string>
+    <string name="settings_font_sans">Sans-serif</string>
+    <string name="settings_font_serif">Serif</string>
+    <string name="settings_font_mono">Monospace</string>
+    <string name="settings_font_size">Font size</string>
+    <string name="settings_line_height">Line height</string>
+
+    <!-- Settings (redesign) -->
+    <string name="settings_appearance">Appearance</string>
+    <string name="settings_dynamic_color">Material You dynamic color</string>
+    <string name="settings_dynamic_color_subtitle">Generate colors from your wallpaper (Android 12+)</string>
+    <string name="settings_language">Language</string>
+    <string name="settings_language_system">Follow system</string>
+    <string name="settings_language_zh">简体中文</string>
+    <string name="settings_language_en">English</string>
+    <string name="settings_editor_viewer">Editor &amp; viewer</string>
+    <string name="settings_editor_viewer_subtitle">Font size / line spacing</string>
+    <string name="settings_font_size_value">%1$d sp</string>
+    <string name="settings_line_height_value">%.1fx</string>
+    <string name="settings_editor_toolbar">Editor toolbar</string>
+    <string name="settings_editor_toolbar_subtitle">Choose tools shown at the bottom of the editor and reorder them with the arrows</string>
+    <string name="settings_editor_toolbar_reset">Reset to default</string>
+    <string name="settings_toolbar_move_up">Move up</string>
+    <string name="settings_toolbar_move_down">Move down</string>
+    <string name="settings_notes_list">Note list</string>
+    <string name="settings_notes_list_subtitle">Change how notes appear on the home screen</string>
+    <string name="settings_preview_chars">Preview characters</string>
+    <string name="settings_preview_chars_value">%1$d chars</string>
+    <string name="settings_preview_range_hint">Preview length in the list (20–300)</string>
+    <string name="settings_default_note_name">Default new note name</string>
+    <string name="settings_default_note_name_subtitle">Current: %1$s</string>
+    <string name="settings_default_note_name_hint">Wrap date variables in $: yyyy (year) MM (month) dd (day) HH (hour) mm (minute) ss (second), e.g. Diary$yyyyMMdd$ → Diary20261005; characters outside $ are kept as-is</string>
+    <string name="dialog_note_name_label">Note name</string>
+    <string name="settings_sort_order">Default sort order</string>
+    <string name="settings_sort_subtitle">Can also be changed from the home screen top bar</string>
+    <string name="settings_fab_action">Default + button action</string>
+    <string name="settings_fab_action_new_note">New note</string>
+    <string name="settings_fab_action_new_folder">New folder</string>
+    <string name="settings_fab_action_menu">Show options menu</string>
+    <string name="settings_trash_retention">Auto-clean Trash</string>
+    <string name="settings_trash_retention_value">Clean after %1$d days</string>
+    <string name="settings_trash_retention_never">Never</string>
+    <string name="settings_trash_enabled">Enable Trash</string>
+    <string name="settings_trash_enabled_subtitle">Deleted notes go to Trash first and can be restored anytime</string>
+    <string name="settings_trash_disabled_subtitle">Off: deletions are permanent and the Trash entry is hidden from the drawer</string>
+    <string name="settings_trash_disable_title">Turn off Trash</string>
+    <string name="settings_trash_disable_message">When off, deleted notes and folders are permanently removed and cannot be restored. Turn off Trash?</string>
+    <string name="settings_sync">Sync</string>
+    <string name="settings_sync_subtitle">WebDAV / Nutstore configuration and manual sync</string>
+    <string name="settings_vault">Vault folder</string>
+    <string name="settings_vault_unset">Not set</string>
+    <string name="settings_change_vault">Change folder</string>
+    <string name="settings_vault_subtitle_current">In use: %1$s</string>
+    <string name="settings_about">About</string>
+    <string name="settings_about_subtitle">Az Notes · local Markdown notes · your data never leaves the device</string>
+
+    <!-- Sync (WebDAV) -->
+    <string name="sync_title">WebDAV Sync</string>
+    <string name="sync_section_server">Server</string>
+    <string name="sync_server_url">Server URL</string>
+    <string name="sync_username">Username</string>
+    <string name="sync_password">App password</string>
+    <string name="sync_remote_dir">Remote folder</string>
+    <string name="sync_preset_nutstore">Use Nutstore preset</string>
+    <string name="sync_test">Test connection</string>
+    <string name="sync_section_policy">Sync policy</string>
+    <string name="sync_mode_row">Sync mode</string>
+    <string name="sync_section_run">Manual sync</string>
+    <string name="sync_start">Sync now</string>
+    <string name="sync_no_vault">No Vault folder selected. Please go back to the setup page and choose one.</string>
+    <string name="sync_plan_title">Pending operations preview</string>
+    <string name="sync_dialog_scanning">Scanning for differences</string>
+    <string name="sync_dialog_executing">Syncing</string>
+    <string name="sync_counts_line">Upload %1$d · Download %2$d · Delete remote %3$d · Move to Trash %4$d · Conflict copies %5$d</string>
+    <string name="sync_plan_more">The list is long; showing the first %1$d operations</string>
+    <string name="sync_plan_empty">Both sides are identical. Nothing to do.</string>
+    <string name="sync_confirm_execute">Execute</string>
+    <string name="sync_done_title">Sync complete</string>
+    <string name="sync_summary_failed">%1$d failed, see the log below</string>
+    <string name="sync_error_title">Sync failed</string>
+    <string name="sync_log_title">Sync log</string>
+    <string name="sync_log_empty">No sync records yet</string>
+    <string name="sync_result_dismiss">Dismiss</string>
+
+    <!-- Sync advanced: conflict strategy / filter rules / large files / auto sync / conflict records -->
+    <string name="sync_counts_extra">Renamed %1$d · Skipped large files %2$d</string>
+    <string name="sync_conflict_strategy_row">Conflict handling</string>
+    <string name="sync_max_file_size_row">Max file size</string>
+    <string name="sync_section_filter">Filter rules</string>
+    <string name="sync_filter_edit">Edit filter rules</string>
+    <string name="sync_filter_subtitle">Gitignore-style; the last matching rule wins</string>
+    <string name="sync_filter_dialog_title">Filter rules</string>
+    <string name="sync_filter_dialog_hint">One rule per line: # for comments, ! to re-include, / to match directories only, * within a level, ** across levels</string>
+    <string name="sync_filter_reset">Reset to default</string>
+    <string name="sync_section_auto">Auto sync</string>
+    <string name="sync_auto_on_start">Sync on start</string>
+    <string name="sync_auto_on_start_desc">Automatically sync once about 10 seconds after launch</string>
+    <string name="sync_auto_periodic">Periodic sync</string>
+    <string name="sync_auto_after_save">Sync after save</string>
+    <string name="sync_auto_after_save_desc">Automatically sync about 30 seconds after saving (debounced)</string>
+    <string name="sync_conflict_title">Conflict records</string>
+    <string name="sync_conflict_empty">No conflict records</string>
+    <string name="sync_conflict_clear">Clear all</string>
+    <string name="sync_conflict_desc">The following files had conflicts. The losing version was saved as a conflict copy; merge manually and clear the records.</string>
+    <string name="sync_mb_unit">%1$d MB</string>
+
+    <!-- Sync enum names (policy / op type / interval / conflict resolution) -->
+    <string name="sync_op_upload">Upload</string>
+    <string name="sync_op_download">Download</string>
+    <string name="sync_op_delete_remote">Delete remote</string>
+    <string name="sync_op_trash_local">Move to Trash</string>
+    <string name="sync_op_conflict_copy">Conflict copy</string>
+    <string name="sync_op_move_local">Rename local</string>
+    <string name="sync_op_move_remote">Rename remote</string>
+    <string name="sync_op_baseline">Sync baseline</string>
+    <string name="sync_op_remote_move">Remote rename</string>
+    <string name="sync_op_auto_sync">Auto sync</string>
+    <string name="sync_mode_bidirectional">Two-way</string>
+    <string name="sync_mode_upload_only">Send only (local → cloud)</string>
+    <string name="sync_mode_upload_overwrite">Send only (overwrite cloud)</string>
+    <string name="sync_mode_download_only">Receive only (cloud → local)</string>
+    <string name="sync_mode_download_restore">Receive only (restore local)</string>
+    <string name="sync_conflict_copy">Conflict copy (default)</string>
+    <string name="sync_conflict_local_first">Local first</string>
+    <string name="sync_conflict_remote_first">Nutstore first</string>
+    <string name="sync_interval_off">Off</string>
+    <string name="sync_interval_m15">Every 15 minutes</string>
+    <string name="sync_interval_m30">Every 30 minutes</string>
+    <string name="sync_interval_h1">Every hour</string>
+    <string name="sync_interval_h4">Every 4 hours</string>
+    <string name="sync_interval_h8">Every 8 hours</string>
+    <string name="sync_resolve_conflict_local">Conflict copy · kept local</string>
+    <string name="sync_resolve_conflict_remote">Conflict copy · kept remote</string>
+    <string name="sync_resolve_local_first">Local first</string>
+    <string name="sync_resolve_remote_first">Remote first</string>
+
+    <!-- Sync operation messages (Toast / progress dialog) -->
+    <string name="sync_test_fill_server">Please fill in the server URL and username first</string>
+    <string name="sync_testing">Testing connection…</string>
+    <string name="sync_test_ok">Connection succeeded</string>
+    <string name="sync_test_failed">Connection failed: unknown error</string>
+    <string name="sync_busy">A sync is in progress, please wait</string>
+    <string name="sync_preparing">Preparing…</string>
+    <string name="sync_fill_settings">Please fill in the server URL, username, and app password in Sync settings first</string>
+    <string name="sync_other_running">Another sync is in progress, please try again later</string>
+    <string name="sync_plan_failed">Failed to build the sync plan</string>
+    <string name="sync_execute_failed">Sync execution failed</string>
+
+    <!-- Reader document info -->
+    <string name="reader_info">Document info</string>
+    <string name="reader_info_name">File name</string>
+    <string name="reader_info_path">Location</string>
+    <string name="reader_info_size">Size</string>
+    <string name="reader_info_modified">Modified</string>
+    <string name="reader_info_chars">Characters</string>
+    <string name="reader_info_lines">Lines</string>
+    <string name="reader_info_headings">Headings</string>
+    <string name="reader_outline_empty">This note has no headings</string>
+    <string name="reader_outline_untitled">(Untitled)</string>
+
+    <!-- Trash -->
+    <string name="trash_title">Trash</string>
+    <string name="trash_empty">Trash is empty</string>
+    <string name="trash_empty_hint">Deleted notes and folders are kept here temporarily. Retention can be changed in Settings; items can be restored anytime.</string>
+    <string name="trash_restore">Restore</string>
+    <string name="trash_delete">Delete</string>
+    <string name="trash_purge">Empty Trash</string>
+    <string name="trash_purge_confirm">This will empty the entire Trash. This action cannot be undone.</string>
+    <string name="trash_delete_confirm">This will permanently delete "%1$s". This action cannot be undone.</string>
+    <string name="trash_batch_summary">%1$d files</string>
+    <string name="trash_restored">Restored "%1$s"</string>
+    <string name="trash_restore_failed">Restore failed</string>
+    <string name="trash_purged">Trash emptied</string>
+    <string name="trash_purge_failed">Failed to empty Trash</string>
+</resources>

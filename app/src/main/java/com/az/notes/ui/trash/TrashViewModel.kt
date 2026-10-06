@@ -2,10 +2,12 @@ package com.az.notes.ui.trash
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.az.notes.R
 import com.az.notes.data.settings.SettingsRepository
 import com.az.notes.data.storage.TrashBatch
 import com.az.notes.data.storage.TrashItem
 import com.az.notes.data.storage.TrashRepository
+import com.az.notes.ui.common.UiText
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -22,7 +24,7 @@ data class TrashUiState(
     val loading: Boolean = true,
     val batches: List<TrashBatch> = emptyList(),
     /** 一次性提示（Snackbar），消费后清空 */
-    val message: String? = null
+    val message: UiText? = null
 )
 
 /** 回收站 ViewModel：列表 / 恢复 / 删除 / 清空；文件操作在 IO 上执行。 */
@@ -53,12 +55,15 @@ class TrashViewModel @Inject constructor(
         viewModelScope.launch {
             val vault = _state.value.vaultPath
             if (vault.isNullOrBlank()) {
-                _state.update { it.copy(message = "未选择 Vault 目录") }
+                _state.update { it.copy(message = UiText.of(R.string.msg_vault_unset)) }
                 return@launch
             }
             val ok = withContext(Dispatchers.IO) { trashRepository.restore(vault, item) }
             _state.update {
-                it.copy(message = if (ok) "已恢复「${item.relativePath}」" else "恢复失败")
+                it.copy(
+                    message = if (ok) UiText.of(R.string.trash_restored, item.relativePath)
+                    else UiText.of(R.string.trash_restore_failed)
+                )
             }
             if (ok) refreshBatches()
         }
@@ -68,7 +73,12 @@ class TrashViewModel @Inject constructor(
     fun delete(item: TrashItem) {
         viewModelScope.launch {
             val ok = withContext(Dispatchers.IO) { trashRepository.delete(item) }
-            _state.update { it.copy(message = if (ok) "已删除「${item.relativePath}」" else "删除失败") }
+            _state.update {
+                it.copy(
+                    message = if (ok) UiText.of(R.string.msg_deleted, item.relativePath)
+                    else UiText.of(R.string.msg_delete_failed)
+                )
+            }
             if (ok) refreshBatches()
         }
     }
@@ -77,7 +87,12 @@ class TrashViewModel @Inject constructor(
     fun purgeAll() {
         viewModelScope.launch {
             val ok = withContext(Dispatchers.IO) { trashRepository.purgeAll() }
-            _state.update { it.copy(message = if (ok) "回收站已清空" else "清空失败") }
+            _state.update {
+                it.copy(
+                    message = if (ok) UiText.of(R.string.trash_purged)
+                    else UiText.of(R.string.trash_purge_failed)
+                )
+            }
             if (ok) refreshBatches()
         }
     }
