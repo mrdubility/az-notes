@@ -114,6 +114,10 @@ class DebugLogRepository @Inject constructor(
         scope.launch {
             runCatching { config.collect { snapshot = it } }
         }
+        // 旧版多分片文件一次性并入单文件（升级后日志不丢、目录不残留）
+        scope.launch {
+            runCatching { migrateLegacySegments() }
+        }
     }
 
     suspend fun setEnabled(enabled: Boolean) =
@@ -243,6 +247,26 @@ class DebugLogRepository @Inject constructor(
         return bytes.size
     }
 
+    /**
+     * 升级迁移：把旧版多分片（`debug-*.jsonl`）按文件名序并入单文件后删除。
+     * 无旧分片时只有一次目录列举，零写入。
+     */
+    private fun migrateLegacySegments() {
+        synchronized(lock) {
+            runCatching {
+                val legacy = logDir.listFiles { f ->
+                    f.isFile && f.name.startsWith(LEGACY_PREFIX) && f.name.endsWith(".jsonl")
+                }?.sortedBy { it.name } ?: return
+                if (legacy.isEmpty()) return
+                for (seg in legacy) {
+                    logFile().appendBytes(seg.readBytes())
+                    seg.delete()
+                }
+                trimIfNeeded()
+            }
+        }
+    }
+
     private fun valueToJson(value: Any?): String = when (value) {
         null -> "null"
         is Number, is Boolean -> value.toString()
@@ -270,6 +294,9 @@ class DebugLogRepository @Inject constructor(
 
         private const val DIR_NAME = "debug_logs"
         private const val FILE_NAME = "debug.jsonl"
+
+        /** 旧版分片文件名前缀（debug-<时间戳>.jsonl）。 */
+        private const val LEGACY_PREFIX = "debug-"
 
         /** 裁剪后保留的尾段大小（1 MB）。 */
         private const val KEEP_FILE_BYTES = 1024 * 1024L
