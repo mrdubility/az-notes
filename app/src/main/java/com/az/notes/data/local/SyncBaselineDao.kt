@@ -19,6 +19,10 @@ interface SyncBaselineDao {
     @Query("DELETE FROM sync_baseline")
     suspend fun clear()
 
+    /** 删除单条基线（MOVE 写透时移除源路径条目）。 */
+    @Query("DELETE FROM sync_baseline WHERE path = :path")
+    suspend fun deleteByPath(path: String)
+
     /** 整体替换基线（CommitBaseline 阶段调用）。 */
     @Transaction
     suspend fun replaceAll(entries: List<SyncBaselineEntity>) {

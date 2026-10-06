@@ -70,7 +70,8 @@ fun SettingsScreen(
     onBack: () -> Unit,
     onSync: () -> Unit,
     onChangeVault: () -> Unit,
-    onOpenToolbarSettings: () -> Unit
+    onOpenToolbarSettings: () -> Unit,
+    onOpenDebugLogs: () -> Unit
 ) {
     val settings by viewModel.settings.collectAsStateWithLifecycle()
 
@@ -303,7 +304,8 @@ fun SettingsScreen(
                 SettingsRow(
                     icon = Icons.Outlined.Info,
                     title = stringResource(R.string.app_name),
-                    subtitle = stringResource(R.string.settings_about_version, versionName)
+                    subtitle = stringResource(R.string.settings_about_version, versionName),
+                    onClick = onOpenDebugLogs
                 )
             }
             item {

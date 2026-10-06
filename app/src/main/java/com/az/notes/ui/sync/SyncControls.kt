@@ -266,8 +266,60 @@ internal fun FilterEditDialog(
     )
 }
 
-/** 大文件上限展示文案（上限 500 MB）。 */
-internal fun fileSizeLabel(mb: Int): String = "$mb MB"
+/** 大文件上限展示文案：0 = 不限制。 */
+@Composable
+internal fun fileSizeLabel(mb: Int): String =
+    if (mb <= 0) stringResource(R.string.sync_max_file_size_unlimited)
+    else stringResource(R.string.sync_max_file_size_value, mb)
+
+/**
+ * 大文件上限输入对话框（§6.3）：整数 MB 自由输入，0 = 不限制。
+ * 仅接受数字字符；超出范围时确认按钮禁用并给出提示。
+ */
+@Composable
+internal fun MaxSizeInputDialog(
+    initial: Int,
+    onConfirm: (Int) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var draft by remember(initial) { mutableStateOf(initial.toString()) }
+    val parsed = draft.trim().toIntOrNull()
+    val limit = SyncConfig.MAX_FILE_SIZE_MB_LIMIT
+    val valid = parsed != null && parsed in 0..limit
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.sync_max_file_size_row)) },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = draft,
+                    onValueChange = { input -> draft = input.filter { it.isDigit() }.take(6) },
+                    singleLine = true,
+                    label = { Text(stringResource(R.string.sync_max_file_size_input_label)) },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = if (valid) stringResource(R.string.sync_max_file_size_input_hint, limit)
+                    else stringResource(R.string.sync_max_file_size_input_error, limit),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (valid) MaterialTheme.colorScheme.onSurfaceVariant
+                    else MaterialTheme.colorScheme.error
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(enabled = valid, onClick = { parsed?.let(onConfirm) }) {
+                Text(stringResource(R.string.action_confirm))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.action_cancel))
+            }
+        }
+    )
+}
 
 internal fun formatLogTime(millis: Long): String =
     SimpleDateFormat("MM-dd HH:mm:ss", Locale.getDefault()).format(Date(millis))

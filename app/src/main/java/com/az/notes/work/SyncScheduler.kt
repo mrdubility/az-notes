@@ -77,13 +77,27 @@ class SyncScheduler @Inject constructor(
         }
     }
 
-    private fun enqueueOneTime(name: String, delayMs: Long, trigger: String) {
+    /**
+     * 入队一次性同步任务：同名任务【运行中】时追加而非取消（Fix C）——
+     * REPLACE 会取消正在进行的同步会话，使其跳过基线提交，下一轮把已同步文件
+     * 误判为“首次共存冲突”（自动保存每秒级高频触发时曾复现）；
+     * 未运行时仍用 REPLACE：防抖合并连续保存，只保留最后一次。
+     */
+    private suspend fun enqueueOneTime(name: String, delayMs: Long, trigger: String) {
         val request = OneTimeWorkRequestBuilder<SyncWorker>()
             .setInitialDelay(delayMs, TimeUnit.MILLISECONDS)
             .setConstraints(networkConstraints())
             .setInputData(workDataOf(SyncWorker.KEY_TRIGGER to trigger))
             .build()
-        WorkManager.getInstance(context).enqueueUniqueWork(name, ExistingWorkPolicy.REPLACE, request)
+        val manager = WorkManager.getInstance(context)
+        val running = runCatching {
+            withContext(Dispatchers.IO) { manager.getWorkInfosForUniqueWork(name).get() }
+        }.getOrDefault(emptyList()).any { it.state == WorkInfo.State.RUNNING }
+        manager.enqueueUniqueWork(
+            name,
+            if (running) ExistingWorkPolicy.APPEND_OR_REPLACE else ExistingWorkPolicy.REPLACE,
+            request
+        )
     }
 
     private fun networkConstraints() = Constraints.Builder()

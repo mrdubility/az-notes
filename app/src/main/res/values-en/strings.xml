@@ -197,7 +197,7 @@
     <string name="settings_vault_subtitle_current">In use: %1$s</string>
     <string name="settings_about">About</string>
     <string name="settings_about_subtitle">Az Notes · local Markdown notes · your data never leaves the device</string>
-    <string name="settings_about_version">Version %1$s</string>
+    <string name="settings_about_version">Version %1$s · Tap for debug logs</string>
     <string name="settings_about_github">GitHub repository</string>
 
     <!-- Sync (WebDAV) -->
@@ -232,6 +232,11 @@
     <string name="sync_counts_extra">Renamed %1$d · Skipped large files %2$d</string>
     <string name="sync_conflict_strategy_row">Conflict handling</string>
     <string name="sync_max_file_size_row">Max file size</string>
+    <string name="sync_max_file_size_value">%1$d MB</string>
+    <string name="sync_max_file_size_unlimited">No limit</string>
+    <string name="sync_max_file_size_input_label">Limit (MB)</string>
+    <string name="sync_max_file_size_input_hint">Enter 0 for no limit; up to %1$d MB</string>
+    <string name="sync_max_file_size_input_error">Enter an integer between 0 and %1$d</string>
     <string name="sync_section_filter">Filter rules</string>
     <string name="sync_filter_edit">Edit filter rules</string>
     <string name="sync_filter_subtitle">Gitignore-style; the last matching rule wins</string>
@@ -330,4 +335,37 @@
     <string name="trash_restore_failed">Restore failed</string>
     <string name="trash_purged">Trash emptied</string>
     <string name="trash_purge_failed">Failed to empty Trash</string>
+
+    <!-- Debug logs (off by default; Settings → About → version row) -->
+    <string name="debug_logs_title">Debug logs</string>
+    <string name="debug_logs_warning">Enable only while troubleshooting; keep off for daily use. Logs stay in the app's private storage on this device and are never uploaded.</string>
+    <string name="debug_logs_collect">Collection</string>
+    <string name="debug_logs_enabled">Collect logs</string>
+    <string name="debug_logs_enabled_on">On: recording by level and types below</string>
+    <string name="debug_logs_enabled_off">Off: nothing is recorded</string>
+    <string name="debug_logs_min_level">Minimum level</string>
+    <string name="debug_logs_min_level_desc">Only records at or above this level</string>
+    <string name="debug_logs_types">Types</string>
+    <string name="debug_logs_types_desc">Tap to toggle; at least one type stays on</string>
+    <string name="debug_logs_type_sync">Sync</string>
+    <string name="debug_logs_type_net">Network</string>
+    <string name="debug_logs_type_work">Work</string>
+    <string name="debug_logs_type_file">File</string>
+    <string name="debug_logs_type_app">App</string>
+    <string name="debug_logs_storage">Storage</string>
+    <string name="debug_logs_storage_value">%1$d segments · %2$s</string>
+    <string name="debug_logs_storage_path">Directory: %1$s</string>
+    <string name="debug_logs_actions">Actions</string>
+    <string name="debug_logs_view">View logs</string>
+    <string name="debug_logs_view_desc">Full screen, newest first</string>
+    <string name="debug_logs_line_count">%1$d lines</string>
+    <string name="debug_logs_empty">No logs yet</string>
+    <string name="debug_logs_export">Export to storage</string>
+    <string name="debug_logs_export_desc">Merge all segments into one JSONL file (easy to share with AI)</string>
+    <string name="debug_logs_export_done">Exported %1$d lines</string>
+    <string name="debug_logs_export_failed">Export failed, please retry</string>
+    <string name="debug_logs_clear">Clear logs</string>
+    <string name="debug_logs_clear_desc">Delete all segments; irreversible</string>
+    <string name="debug_logs_clear_confirm">This will delete all log segments. It cannot be undone.</string>
+    <string name="debug_logs_clear_done">Logs cleared</string>
 </resources>

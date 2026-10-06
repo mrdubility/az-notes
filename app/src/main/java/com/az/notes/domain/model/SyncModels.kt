@@ -43,7 +43,7 @@ data class SyncConfig(
     val conflictStrategy: ConflictStrategy = ConflictStrategy.CONFLICT_COPY,
     /** Gitignore 风格过滤规则（多行文本，最后一条匹配规则生效，§6.3） */
     val ignoreRules: String = DEFAULT_IGNORE_RULES,
-    /** 大文件上限（MB），超过则跳过该文件的同步（§6.3） */
+    /** 大文件上限（MB），0 = 不限制；超过则跳过该文件的同步（§6.3） */
     val maxFileSizeMb: Int = 50,
     /** 启动后延迟 10s 自动拉取一次（§6.4，可关） */
     val autoSyncOnStart: Boolean = true,
@@ -56,9 +56,9 @@ data class SyncConfig(
     val configured: Boolean
         get() = serverUrl.isNotBlank() && username.isNotBlank()
 
-    /** 大文件上限（字节）。 */
+    /** 大文件上限（字节）；0 = 不限制（等价 Long.MAX_VALUE，永不跳过）。 */
     val maxFileSizeBytes: Long
-        get() = maxFileSizeMb.toLong() * 1024 * 1024
+        get() = if (maxFileSizeMb <= 0) Long.MAX_VALUE else maxFileSizeMb.toLong() * 1024 * 1024
 
     /** 拼接后的同步根 URL（供 WebDavClient 使用）。 */
     val baseUrl: String
@@ -70,6 +70,9 @@ data class SyncConfig(
 
     companion object {
         const val DEFAULT_SERVER_URL = "https://dav.jianguoyun.com/dav/"
+
+        /** 大文件上限（MB）输入最大值：102400 MB（100 GB），防误输入天文数字；0 = 不限制。 */
+        const val MAX_FILE_SIZE_MB_LIMIT = 102400
 
         /**
          * 默认过滤模板（§6.3）：Obsidian 配置目录与同步插件工作目录、

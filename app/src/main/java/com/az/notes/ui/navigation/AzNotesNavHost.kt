@@ -19,6 +19,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.az.notes.ui.MainViewModel
+import com.az.notes.ui.debug.DebugLogScreen
 import com.az.notes.ui.editor.EditorScreen
 import com.az.notes.ui.favorites.FavoritesScreen
 import com.az.notes.ui.gate.GateScreen
@@ -137,7 +138,8 @@ fun AzNotesNavHost(
                         popUpTo(Routes.HOME) { inclusive = true }
                     }
                 },
-                onOpenToolbarSettings = { navController.navigate(Routes.TOOLBAR_SETTINGS) }
+                onOpenToolbarSettings = { navController.navigate(Routes.TOOLBAR_SETTINGS) },
+                onOpenDebugLogs = { navController.navigate(Routes.DEBUG_LOGS) }
             )
         }
 
@@ -183,6 +185,12 @@ fun AzNotesNavHost(
             SyncLogScreen(
                 onBack = { navController.popBackStack() },
                 viewModel = hiltViewModel()
+            )
+        }
+
+        composable(Routes.DEBUG_LOGS) {
+            DebugLogScreen(
+                onBack = { navController.popBackStack() }
             )
         }
     }

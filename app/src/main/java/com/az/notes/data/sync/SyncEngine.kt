@@ -1,5 +1,8 @@
 package com.az.notes.data.sync
 
+import com.az.notes.data.debug.DebugLogLevel
+import com.az.notes.data.debug.DebugLogRepository
+import com.az.notes.data.debug.DebugLogType
 import com.az.notes.data.local.ConflictRecordDao
 import com.az.notes.data.local.ConflictRecordEntity
 import com.az.notes.data.local.SyncBaselineDao
@@ -54,7 +57,8 @@ class SyncEngine @Inject constructor(
     private val baselineDao: SyncBaselineDao,
     private val syncLogDao: SyncLogDao,
     private val conflictRecordDao: ConflictRecordDao,
-    private val syncRunNotifier: SyncRunNotifier
+    private val syncRunNotifier: SyncRunNotifier,
+    private val debugLogRepository: DebugLogRepository
 ) {
 
     private data class LocalStat(val size: Long, val mtime: Long)
@@ -73,6 +77,13 @@ class SyncEngine @Inject constructor(
 
     /** 同步会话互斥：手动与自动同步不能并发（并发会双写基线、重复传输）。 */
     private val sessionMutex = Mutex()
+
+    /** 调试日志快捷入口（type=SYNC）：未开启收集时仅一次 volatile 读，零开销短路。 */
+    private fun syncLog(
+        level: DebugLogLevel,
+        msg: String,
+        extra: Map<String, Any?> = emptyMap()
+    ) = debugLogRepository.log(level, DebugLogType.SYNC, msg, extra)
 
     /**
      * 独占发起一次同步会话；已有会话（手动 / 自动）进行中时返回 false。
@@ -111,6 +122,12 @@ class SyncEngine @Inject constructor(
         val ignore = IgnoreRules(config.ignoreRules)
         val client = buildClient(config) { attempt ->
             onStatus("触发服务端限流，自动等待重试（第 $attempt 次）…")
+            debugLogRepository.log(
+                DebugLogLevel.WARN,
+                DebugLogType.NET,
+                "服务端限流，自动等待重试",
+                mapOf("attempt" to attempt)
+            )
         }
 
         // 回收站过期批次清理（保留天数可在设置调整，0 = 永不清理）：同步前顺手执行
@@ -138,8 +155,23 @@ class SyncEngine @Inject constructor(
 
         val baseline = withContext(Dispatchers.IO) { baselineDao.getAll() }.associateBy { it.path }
 
+        // 调试埋点：本轮扫描规模与配置（排查“假冲突”等问题时的现场基线）
+        syncLog(
+            DebugLogLevel.INFO,
+            "plan 开始",
+            mapOf(
+                "mode" to config.mode.name,
+                "strategy" to config.conflictStrategy.name,
+                "maxMb" to config.maxFileSizeMb,
+                "localFiles" to local.size,
+                "remoteFiles" to remote.size,
+                "baseline" to baseline.size
+            )
+        )
+
         // 安全阀（§6.5-2）：远端为空而本地有基线 → 疑似凭据 / 目录配置错误，中止删除传播
         if (remote.isEmpty() && baseline.isNotEmpty() && local.isNotEmpty()) {
+            syncLog(DebugLogLevel.ERROR, "远端为空而基线存在，已中止同步（疑似配置错误）")
             throw IOException("远端目录为空而本地已有同步基线，疑似凭据或远端目录配置错误，已中止本次同步")
         }
 
@@ -175,6 +207,25 @@ class SyncEngine @Inject constructor(
                     (local[path]?.mtime ?: 0L) >= (remote[path]?.lastModified ?: 0L)
             }
             val winner = if (localWins) "local" else "remote"
+            // 调试埋点：冲突判定现场（hasBase=false 的“首次共存”是“假冲突”高发形态）
+            val base = baseline[path]
+            syncLog(
+                DebugLogLevel.WARN,
+                "冲突判定",
+                mapOf(
+                    "path" to path,
+                    "hasBase" to (base != null),
+                    "localSize" to local[path]?.size,
+                    "localMtime" to local[path]?.mtime,
+                    "remoteSize" to remote[path]?.size,
+                    "remoteMtime" to remote[path]?.lastModified,
+                    "remoteEtag" to remote[path]?.etag,
+                    "baseLocalSize" to base?.localSize,
+                    "baseLocalMtime" to base?.localMtime,
+                    "baseRemoteSize" to base?.remoteSize,
+                    "winner" to winner
+                )
+            )
             val backup = if (isTextLike(path)) conflictRelativePath(vault, path) else null
             ops += SyncOp(SyncOpType.CONFLICT_COPY, path, detail = winner, backupPath = backup)
             // 副本与主文件同轮上传（CONFLICT_COPY 优先级更高，先落盘再上传）：
@@ -311,6 +362,11 @@ class SyncEngine @Inject constructor(
                         (it.type == SyncOpType.DOWNLOAD && it.path == newPath)
                 }
                 ops += SyncOp(SyncOpType.MOVE_LOCAL, newPath, detail = oldPath, moveFrom = oldPath)
+                syncLog(
+                    DebugLogLevel.INFO,
+                    "识别重命名（远端改名对齐本地）",
+                    mapOf("from" to oldPath, "to" to newPath)
+                )
             }
             // ② 本地改名（在 App 之外改的名）：远端仍是旧路径 → 远端 MOVE 对齐
             val goneLocal = ops.filter { it.type == SyncOpType.DELETE_REMOTE }
@@ -324,6 +380,11 @@ class SyncEngine @Inject constructor(
                         (it.type == SyncOpType.UPLOAD && it.path == newPath)
                 }
                 ops += SyncOp(SyncOpType.MOVE_REMOTE, newPath, detail = oldPath, moveFrom = oldPath)
+                syncLog(
+                    DebugLogLevel.INFO,
+                    "识别重命名（本地改名同步远端）",
+                    mapOf("from" to oldPath, "to" to newPath)
+                )
             }
         }
 
@@ -337,13 +398,28 @@ class SyncEngine @Inject constructor(
         // 快照留给 commitBaseline 复用：同一次同步不再把远端全树扫第二遍
         lastSnapshot = ScanSnapshot(remote, carryOver, local)
         val warning = buildWarning(untrustedDirs, unsafeSkipped, skippedLarge)
-        return SyncPlan(
+        val plan = SyncPlan(
             ops = ordered,
             scannedLocal = local.size,
             scannedRemote = remote.size,
             warning = warning,
             skippedLarge = skippedLarge
         )
+        syncLog(
+            DebugLogLevel.INFO,
+            "plan 完成",
+            mapOf(
+                "ops" to plan.ops.size,
+                "uploads" to plan.uploadCount,
+                "downloads" to plan.downloadCount,
+                "destructive" to plan.destructiveCount,
+                "conflicts" to plan.conflictCount,
+                "moves" to plan.moveCount,
+                "skippedLarge" to skippedLarge,
+                "unsafeSkipped" to unsafeSkipped
+            )
+        )
+        return plan
     }
 
     // ---------------------------------------------------------------- Execute
@@ -395,6 +471,12 @@ class SyncEngine @Inject constructor(
         var progressIndex = 0
         val client = buildClient(config) { attempt ->
             onProgress(progressIndex, total, "触发服务端限流，自动等待重试（第 $attempt 次）…")
+            debugLogRepository.log(
+                DebugLogLevel.WARN,
+                DebugLogType.NET,
+                "服务端限流，自动等待重试（执行阶段）",
+                mapOf("attempt" to attempt)
+            )
         }
 
         plan.ops.forEachIndexed { index, op ->
@@ -434,28 +516,59 @@ class SyncEngine @Inject constructor(
                 when (op.type) {
                     SyncOpType.UPLOAD -> {
                         uploaded++
-                        capturedStat?.let { uploadedStats[op.path] = it }
+                        capturedStat?.let {
+                            uploadedStats[op.path] = it
+                            // 写透：远端内容此刻已与上传时刻的本地一致
+                            persistBaselineEntry(op.path, it)
+                        }
                     }
                     SyncOpType.DOWNLOAD -> {
                         downloaded++
-                        localStatOf(vault, op.path)?.let { downloadedStats[op.path] = it }
+                        localStatOf(vault, op.path)?.let {
+                            downloadedStats[op.path] = it
+                            // 写透：远端值用扫描快照（精确 size / mtime / etag）
+                            persistBaselineEntry(op.path, it, lastSnapshot?.remote?.get(op.path))
+                        }
                     }
                     SyncOpType.DELETE_REMOTE -> deletedRemote++
                     SyncOpType.TRASH_LOCAL -> trashedLocal++
                     SyncOpType.CONFLICT_COPY -> {
                         conflictCopies++
                         conflictOps += op
+                        syncLog(
+                            DebugLogLevel.INFO,
+                            "冲突副本已创建",
+                            mapOf("path" to op.displayPath, "winner" to op.detail, "backup" to op.backupPath)
+                        )
                     }
-                    SyncOpType.MOVE_LOCAL -> moved++
+                    SyncOpType.MOVE_LOCAL -> {
+                        moved++
+                        // 写透：本地新路径建档（远端值取快照），源路径条目移除
+                        localStatOf(vault, op.path)?.let {
+                            persistBaselineEntry(
+                                op.path, it, lastSnapshot?.remote?.get(op.path), removePath = op.moveFrom
+                            )
+                        }
+                    }
                     SyncOpType.MOVE_REMOTE -> {
                         moved++
                         // 远端路径已变且不在 plan 扫描快照中：提交基线时重新 stat 新路径
-                        capturedStat?.let { uploadedStats[op.path] = it }
+                        capturedStat?.let {
+                            uploadedStats[op.path] = it
+                            // 写透：远端新路径内容 = 本地改名后内容；源路径条目移除
+                            persistBaselineEntry(op.path, it, removePath = op.moveFrom)
+                        }
                     }
                 }
             } else {
                 failed++
                 failedPaths += op.path
+                // 调试埋点：失败现场；失败路径保留旧基线，下一轮重新决策
+                syncLog(
+                    DebugLogLevel.WARN,
+                    "操作失败",
+                    mapOf("op" to op.type.name, "path" to op.displayPath, "error" to (error ?: "未知错误"))
+                )
                 // 败方备份未成功：同路径的覆盖操作在后续循环中一并跳过
                 if (op.type == SyncOpType.CONFLICT_COPY && op.backupPath != null) {
                     unprotectedConflict += op.path
@@ -545,6 +658,20 @@ class SyncEngine @Inject constructor(
             }
         }
 
+        syncLog(
+            DebugLogLevel.INFO,
+            "执行完成",
+            mapOf(
+                "uploaded" to uploaded,
+                "downloaded" to downloaded,
+                "deletedRemote" to deletedRemote,
+                "trashedLocal" to trashedLocal,
+                "conflictCopies" to conflictCopies,
+                "moved" to moved,
+                "failed" to failed,
+                "skippedLarge" to plan.skippedLarge
+            )
+        )
         return SyncSummary(
             uploaded = uploaded,
             downloaded = downloaded,
@@ -613,6 +740,8 @@ class SyncEngine @Inject constructor(
      * （[uploaded]）逐个 Depth:0 取最新属性——避免每次同步都把远端全树扫两遍
      * （请求数约减半，无变更时零额外请求）。stat 瞬时失败时用操作前捕获的本地属性
      * 合成条目兜底（etag 置空），避免该条目掉出基线、下一轮被误判为首次共存冲突。
+     * 失败路径（[excludePaths]）不更新条目但【保留旧值】（Fix A）：整条删除会使下一轮
+     * 因无基线而把“双侧共存且内容不同”误判为首次冲突，生成“冲突副本 = 修改前版本”的假冲突。
      * 无快照时回退全量扫描。
      *
      * 本地侧取值（避免把执行期间的编辑误记为“已同步”而静默丢失该编辑）：
@@ -630,6 +759,8 @@ class SyncEngine @Inject constructor(
     ) {
         val local = scanLocal(vaultRoot, ignore)
         val carryOver = snapshot?.carryOver.orEmpty()
+        // 失败路径的旧基线条目（Fix A）：本轮不更新但必须原样保留，留待下一轮重新决策
+        val previous = baselineDao.getAll().associateBy { it.path }
         val remote: Map<String, WebDavClient.RemoteEntry> = if (snapshot != null) {
             val merged = snapshot.remote.toMutableMap()
             for ((path, captured) in uploaded) {
@@ -650,8 +781,15 @@ class SyncEngine @Inject constructor(
         }
         val now = System.currentTimeMillis()
         val entries = ArrayList<SyncBaselineEntity>()
+        var preserved = 0
         for ((path, l) in local) {
-            if (path in excludePaths) continue
+            if (path in excludePaths) {
+                previous[path]?.let {
+                    entries += it
+                    preserved++
+                }
+                continue
+            }
             val r = remote[path]
             if (r == null) {
                 // 远端未列出：可能是分页截断造成的假象，沿用原基线避免反复重传
@@ -673,7 +811,21 @@ class SyncEngine @Inject constructor(
                 syncedAt = now
             )
         }
+        // 失败路径若已不在本地扫描结果中（如上传失败后本地又被删除）：同样保留旧条目
+        for (path in excludePaths) {
+            if (path !in local) {
+                previous[path]?.let {
+                    entries += it
+                    preserved++
+                }
+            }
+        }
         baselineDao.replaceAll(entries)
+        syncLog(
+            DebugLogLevel.DEBUG,
+            "基线提交完成",
+            mapOf("entries" to entries.size, "preservedFailed" to preserved)
+        )
     }
 
     /** 读取本地文件当前属性（size / mtime）；不存在返回 null。 */
@@ -682,6 +834,34 @@ class SyncEngine @Inject constructor(
             File(vaultRoot, relativePath).takeIf { it.isFile }
                 ?.let { LocalStat(it.length(), it.lastModified()) }
         }
+
+    /**
+     * 成功操作后立即写透单条基线（Fix B）：会话被取消 / 进程被杀时 commitBaseline
+     * 可能未执行，及时落盘可防止本轮回执丢失（下轮把已同步文件再判成差异，重演假冲突）。
+     * 零额外网络请求：远端值优先用扫描快照，缺失时按“远端已与本地一致”合成（etag 置空，
+     * 宽松模式下不影响判定）。[removePath] 用于 MOVE：移除源路径的旧基线条目。
+     */
+    private suspend fun persistBaselineEntry(
+        path: String,
+        localStat: LocalStat,
+        remote: WebDavClient.RemoteEntry? = null,
+        removePath: String? = null
+    ) {
+        val entry = SyncBaselineEntity(
+            path = path,
+            localSize = localStat.size,
+            localMtime = localStat.mtime,
+            remoteSize = remote?.size ?: localStat.size,
+            remoteMtime = remote?.lastModified ?: localStat.mtime,
+            remoteEtag = remote?.etag,
+            syncedAt = System.currentTimeMillis()
+        )
+        withContext(Dispatchers.IO) {
+            removePath?.let { baselineDao.deleteByPath(it) }
+            baselineDao.upsertAll(listOf(entry))
+        }
+        syncLog(DebugLogLevel.DEBUG, "基线写透", mapOf("path" to path, "remove" to removePath))
+    }
 
     // ---------------------------------------------------------------- 重命名同步
 

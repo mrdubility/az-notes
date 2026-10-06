@@ -63,7 +63,8 @@ class SyncConfigRepository @Inject constructor(
                     ?.let { runCatching { ConflictStrategy.valueOf(it) }.getOrNull() }
                     ?: ConflictStrategy.CONFLICT_COPY,
                 ignoreRules = prefs[Keys.IGNORE_RULES] ?: SyncConfig.DEFAULT_IGNORE_RULES,
-                maxFileSizeMb = (prefs[Keys.MAX_FILE_SIZE_MB] ?: 50).coerceIn(1, 500),
+                maxFileSizeMb = (prefs[Keys.MAX_FILE_SIZE_MB] ?: 50)
+                    .coerceIn(0, SyncConfig.MAX_FILE_SIZE_MB_LIMIT),
                 autoSyncOnStart = prefs[Keys.AUTO_SYNC_ON_START] ?: true,
                 periodicInterval = prefs[Keys.PERIODIC_INTERVAL]
                     ?.let { runCatching { SyncInterval.valueOf(it) }.getOrNull() }
@@ -84,7 +85,10 @@ class SyncConfigRepository @Inject constructor(
         it[Keys.IGNORE_RULES] = rules.take(4000).ifBlank { SyncConfig.DEFAULT_IGNORE_RULES }
     }
 
-    suspend fun setMaxFileSizeMb(mb: Int) = edit { it[Keys.MAX_FILE_SIZE_MB] = mb.coerceIn(1, 500) }
+    /** 大文件上限（MB）：0 = 不限制（§6.3）。 */
+    suspend fun setMaxFileSizeMb(mb: Int) = edit {
+        it[Keys.MAX_FILE_SIZE_MB] = mb.coerceIn(0, SyncConfig.MAX_FILE_SIZE_MB_LIMIT)
+    }
     suspend fun setAutoSyncOnStart(enabled: Boolean) = edit { it[Keys.AUTO_SYNC_ON_START] = enabled }
     suspend fun setPeriodicInterval(interval: SyncInterval) =
         edit { it[Keys.PERIODIC_INTERVAL] = interval.name }

@@ -197,7 +197,7 @@
     <string name="settings_vault_subtitle_current">正在使用：%1$s</string>
     <string name="settings_about">关于</string>
     <string name="settings_about_subtitle">Az Notes · 本地 Markdown 笔记 · 数据不离开设备</string>
-    <string name="settings_about_version">当前版本 %1$s</string>
+    <string name="settings_about_version">当前版本 %1$s · 点按进入调试日志</string>
     <string name="settings_about_github">GitHub 仓库</string>
 
     <!-- 同步（M3：坚果云 / 通用 WebDAV） -->
@@ -232,6 +232,11 @@
     <string name="sync_counts_extra">改名 %1$d · 跳过大文件 %2$d</string>
     <string name="sync_conflict_strategy_row">冲突处理</string>
     <string name="sync_max_file_size_row">大文件上限</string>
+    <string name="sync_max_file_size_value">%1$d MB</string>
+    <string name="sync_max_file_size_unlimited">不限制</string>
+    <string name="sync_max_file_size_input_label">上限（MB）</string>
+    <string name="sync_max_file_size_input_hint">输入 0 表示不限制；最大 %1$d MB</string>
+    <string name="sync_max_file_size_input_error">请输入 0 到 %1$d 之间的整数</string>
     <string name="sync_section_filter">过滤规则</string>
     <string name="sync_filter_edit">编辑过滤规则</string>
     <string name="sync_filter_subtitle">Gitignore 风格，最后一条匹配规则生效</string>
@@ -327,6 +332,39 @@
     <string name="trash_delete_confirm">将永久删除「%1$s」，此操作不可撤销。</string>
     <string name="trash_batch_summary">%1$d 个文件</string>
     <string name="trash_restored">已恢复「%1$s」</string>
+
+    <!-- 调试日志（默认关闭；设置 → 关于 → 版本条目进入） -->
+    <string name="debug_logs_title">调试日志</string>
+    <string name="debug_logs_warning">仅排查问题时开启；日常使用请保持关闭。日志只保存在本机应用私有目录，不会上传。</string>
+    <string name="debug_logs_collect">收集设置</string>
+    <string name="debug_logs_enabled">收集日志</string>
+    <string name="debug_logs_enabled_on">已开启：按下方等级与类型记录</string>
+    <string name="debug_logs_enabled_off">已关闭：不记录任何日志</string>
+    <string name="debug_logs_min_level">最低等级</string>
+    <string name="debug_logs_min_level_desc">只记录不低于该等级的日志</string>
+    <string name="debug_logs_types">记录类型</string>
+    <string name="debug_logs_types_desc">点按切换；至少保留一种</string>
+    <string name="debug_logs_type_sync">同步</string>
+    <string name="debug_logs_type_net">网络</string>
+    <string name="debug_logs_type_work">调度</string>
+    <string name="debug_logs_type_file">文件</string>
+    <string name="debug_logs_type_app">应用</string>
+    <string name="debug_logs_storage">存储占用</string>
+    <string name="debug_logs_storage_value">%1$d 个分片 · %2$s</string>
+    <string name="debug_logs_storage_path">目录：%1$s</string>
+    <string name="debug_logs_actions">操作</string>
+    <string name="debug_logs_view">查看日志</string>
+    <string name="debug_logs_view_desc">全屏查看，按时间倒序（最新在前）</string>
+    <string name="debug_logs_line_count">共 %1$d 行</string>
+    <string name="debug_logs_empty">暂无日志</string>
+    <string name="debug_logs_export">导出到存储目录</string>
+    <string name="debug_logs_export_desc">合并全部分片为单个 JSONL 文件（便于发给 AI 分析）</string>
+    <string name="debug_logs_export_done">已导出 %1$d 行</string>
+    <string name="debug_logs_export_failed">导出失败，请重试</string>
+    <string name="debug_logs_clear">清空日志</string>
+    <string name="debug_logs_clear_desc">删除全部分片，不可恢复</string>
+    <string name="debug_logs_clear_confirm">将删除全部日志分片，此操作不可撤销。</string>
+    <string name="debug_logs_clear_done">已清空日志</string>
     <string name="trash_restore_failed">恢复失败</string>
     <string name="trash_purged">回收站已清空</string>
     <string name="trash_purge_failed">清空失败</string>

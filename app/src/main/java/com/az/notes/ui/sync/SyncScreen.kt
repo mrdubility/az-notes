@@ -38,9 +38,7 @@ import com.az.notes.domain.model.SyncInterval
 import com.az.notes.domain.model.SyncMode
 import com.az.notes.ui.common.label
 import com.az.notes.ui.common.resolve
-import com.az.notes.ui.components.SliderDialog
 import com.az.notes.ui.components.SyncConfirmDialog
-import kotlin.math.roundToInt
 
 /**
  * 同步页（§6）：WebDAV / 坚果云配置（服务器 / 账号 / 应用密码 / 远端目录）、
@@ -254,16 +252,12 @@ fun SyncScreen(
         )
     }
 
-    // 大文件上限：滑块调整（10-500 MB，步进 10 MB）
+    // 大文件上限：整数输入（MB），0 = 不限制
     if (maxSizeDialog) {
-        SliderDialog(
-            title = stringResource(R.string.sync_max_file_size_row),
-            value = state.config.maxFileSizeMb.coerceIn(10, 500).toFloat(),
-            valueRange = 10f..500f,
-            steps = 48,
-            valueText = { fileSizeLabel((it / 10f).roundToInt() * 10) },
+        MaxSizeInputDialog(
+            initial = state.config.maxFileSizeMb,
             onConfirm = {
-                viewModel.updateMaxFileSizeMb(((it / 10f).roundToInt() * 10).coerceIn(10, 500))
+                viewModel.updateMaxFileSizeMb(it)
                 maxSizeDialog = false
             },
             onDismiss = { maxSizeDialog = false }

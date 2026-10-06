@@ -230,6 +230,19 @@ internal fun TaskListPane(
     val displayTasks = dragOrder ?: visibleTasks
     val latestTasks by rememberUpdatedState(visibleTasks)
 
+    // 稳定 key：写回重载后待办行号全部变化（以 lineIndex 作 key 会整列置换 → item 被
+    // 重建、Checkbox 勾选动画重播，出现「排序后勾闪一下」）。改用「文本 + 同文本出现
+    // 序号」作身份：不含 lineIndex（重排会变）也不含勾选态（勾选只改渲染不改身份）
+    val stableKeys = remember(visibleTasks) {
+        val occurrence = HashMap<String, Int>()
+        visibleTasks.associate { task ->
+            val n = (occurrence[task.text] ?: 0) + 1
+            occurrence[task.text] = n
+            // \u0000 不可能出现在解析后的文本中，用作分隔符避免拼接歧义
+            task.lineIndex to "$n\u0000${task.text}"
+        }
+    }
+
     // 列表前导项数：文件名 + （属性面板）+ 过滤行
     val leadingCount = 2 + if (attrs.isNotEmpty()) 1 else 0
 
@@ -304,7 +317,10 @@ internal fun TaskListPane(
                     )
                 }
             } else {
-                itemsIndexed(items = displayTasks, key = { _, task -> task.lineIndex }) { index, task ->
+                itemsIndexed(
+                    items = displayTasks,
+                    key = { _, task -> stableKeys[task.lineIndex] ?: task.lineIndex.toString() }
+                ) { index, task ->
                     val isDragging = draggedLine != null && task.lineIndex == draggedLine
                     Row(
                         modifier = Modifier

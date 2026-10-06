@@ -14,12 +14,25 @@ android {
     // 固定 debug 签名：CI 每次在全新 runner 上自动生成的调试密钥不同，
     // 会导致前后构建的 APK 无法覆盖安装；改用仓库内置密钥后签名保持一致。
     // （keystore/debug.keystore 为公知密码 android 的调试密钥，发布密钥仍不入库）
+    //
+    // 正式签名（M5）从环境变量读取：密钥文件不入库，CI 由 GitHub Secrets 注入
+    // （见 .github/workflows/release.yml）；未配置时 release 仍可构建（未签名），
+    // 正式发布必须走 release.yml（推 tag 触发）。
     signingConfigs {
         getByName("debug") {
             storeFile = rootProject.file("keystore/debug.keystore")
             storePassword = "android"
             keyAlias = "androiddebugkey"
             keyPassword = "android"
+        }
+        val releaseStoreFile = System.getenv("AZ_RELEASE_STORE_FILE")
+        if (!releaseStoreFile.isNullOrBlank()) {
+            create("release") {
+                storeFile = file(releaseStoreFile)
+                storePassword = System.getenv("AZ_RELEASE_STORE_PASSWORD")
+                keyAlias = System.getenv("AZ_RELEASE_KEY_ALIAS")
+                keyPassword = System.getenv("AZ_RELEASE_KEY_PASSWORD")
+            }
         }
     }
 
@@ -28,7 +41,7 @@ android {
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
         versionCode = 1
-        versionName = "0.1.0-demo"
+        versionName = "1.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -40,14 +53,16 @@ android {
             versionNameSuffix = "-debug"
         }
         release {
-            // Demo 阶段先不混淆，避免反射/序列化被裁剪；正式发布前再接入签名与 R8
+            // 先不混淆，避免反射/序列化被裁剪（后续评估 R8）；
+            // Demo 阶段通过 debug APK side-load，正式渠道仅 Release。
             isMinifyEnabled = false
             isShrinkResources = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            // Debug APK 可直接 side-load；Release 需配置签名后才能产出可安装 APK。
+            // 正式签名：仅当环境变量提供了密钥时应用（默认未签名，发布走 release.yml）
+            signingConfig = signingConfigs.findByName("release")
         }
     }
 

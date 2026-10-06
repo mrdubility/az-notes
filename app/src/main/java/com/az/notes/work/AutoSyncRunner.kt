@@ -1,5 +1,8 @@
 package com.az.notes.work
 
+import com.az.notes.data.debug.DebugLogLevel
+import com.az.notes.data.debug.DebugLogRepository
+import com.az.notes.data.debug.DebugLogType
 import com.az.notes.data.local.SyncBaselineDao
 import com.az.notes.data.local.SyncLogDao
 import com.az.notes.data.local.SyncLogEntity
@@ -26,7 +29,8 @@ class AutoSyncRunner @Inject constructor(
     private val syncConfigRepository: SyncConfigRepository,
     private val syncEngine: SyncEngine,
     private val baselineDao: SyncBaselineDao,
-    private val syncLogDao: SyncLogDao
+    private val syncLogDao: SyncLogDao,
+    private val debugLogRepository: DebugLogRepository
 ) {
 
     /** 执行一次自动同步会话；[trigger] 为触发方式（写入日志便于追溯）。 */
@@ -42,6 +46,11 @@ class AutoSyncRunner @Inject constructor(
                 val veto = safetyVeto(plan, firstSync)
                 if (veto != null) {
                     log("AUTO_SKIP", "$trigger：$veto")
+                    debugLog(
+                        DebugLogLevel.WARN,
+                        "自动同步转人工确认",
+                        mapOf("trigger" to trigger, "reason" to veto)
+                    )
                     return@runExclusive
                 }
                 val summary = syncEngine.execute(config, plan) { _, _, _ -> }
@@ -54,10 +63,28 @@ class AutoSyncRunner @Inject constructor(
                     if (summary.failed > 0) append(" / 失败 ${summary.failed}")
                 }
                 log(if (summary.failed > 0) "FAIL" else "OK", detail)
+                debugLog(
+                    DebugLogLevel.INFO,
+                    "自动同步完成",
+                    mapOf(
+                        "trigger" to trigger,
+                        "uploaded" to summary.uploaded,
+                        "downloaded" to summary.downloaded,
+                        "deletedRemote" to summary.deletedRemote,
+                        "trashedLocal" to summary.trashedLocal,
+                        "conflictCopies" to summary.conflictCopies,
+                        "failed" to summary.failed
+                    )
+                )
             } catch (ce: CancellationException) {
                 throw ce
             } catch (t: Exception) {
                 log("FAIL", "$trigger：${t.message ?: "自动同步失败"}")
+                debugLog(
+                    DebugLogLevel.ERROR,
+                    "自动同步失败",
+                    mapOf("trigger" to trigger, "error" to (t.message ?: t::class.java.simpleName))
+                )
             }
         }
         if (!ran) log("AUTO_SKIP", "$trigger：已有同步会话进行中，本次跳过")
@@ -72,6 +99,10 @@ class AutoSyncRunner @Inject constructor(
             "删除类操作 ${plan.destructiveCount} / ${plan.ops.size} 项，占比超过 $DESTRUCTIVE_RATIO_PERCENT%，需人工确认"
         else -> null
     }
+
+    /** 调试日志快捷入口（type=WORK）。 */
+    private fun debugLog(level: DebugLogLevel, msg: String, extra: Map<String, Any?>) =
+        debugLogRepository.log(level, DebugLogType.WORK, msg, extra)
 
     private suspend fun log(result: String, detail: String) {
         withContext(Dispatchers.IO) {
