@@ -224,7 +224,7 @@ class DebugLogRepository @Inject constructor(
         val file = logFile()
         if (file.length() <= MAX_FILE_BYTES) return
         val bytes = file.readBytes()
-        val start = lineStartAfter(bytes, (bytes.size - KEEP_FILE_BYTES).coerceAtLeast(0))
+        val start = lineStartAfter(bytes, (bytes.size - KEEP_FILE_BYTES).coerceAtLeast(0L).toInt())
         // 越界 = 整段无换行（理论不可能）：放弃本次裁剪，不影响写入
         if (start >= bytes.size) return
         val kept = bytes.copyOfRange(start, bytes.size)
