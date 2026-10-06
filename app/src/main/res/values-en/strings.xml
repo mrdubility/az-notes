@@ -273,6 +273,12 @@
     <string name="reader_outline_empty">This note has no headings</string>
     <string name="reader_outline_untitled">(Untitled)</string>
 
+    <!-- Task list page (frontmatter note_type: task) -->
+    <string name="task_add_hint">Add a task…</string>
+    <string name="task_add_action">Add</string>
+    <string name="task_empty">No tasks yet — add one below</string>
+    <string name="msg_task_save_failed">Failed to save task, please retry</string>
+
     <!-- Trash -->
     <string name="trash_title">Trash</string>
     <string name="trash_empty">Trash is empty</string>

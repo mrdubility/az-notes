@@ -8,8 +8,11 @@ import com.az.notes.data.local.ProgressRepository
 import com.az.notes.data.local.ReadProgressEntity
 import com.az.notes.data.settings.SettingsRepository
 import com.az.notes.data.storage.VaultRepository
+import com.az.notes.domain.markdown.FrontmatterParser
 import com.az.notes.domain.markdown.Heading
 import com.az.notes.domain.markdown.HeadingExtractor
+import com.az.notes.domain.markdown.TaskExtractor
+import com.az.notes.domain.markdown.TaskItem
 import com.az.notes.ui.common.UiText
 import com.az.notes.ui.common.toUiText
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -50,6 +53,12 @@ data class ReaderUiState(
     val vaultPath: String? = null,
     /** “文档信息”对话框数据（null = 对话框未打开）。 */
     val docInfo: DocInfo? = null,
+    /** frontmatter `note_type` 值（小写）；null = 未声明。 */
+    val noteType: String? = null,
+    /** 待办条目（仅 task 模式非空）。 */
+    val tasks: List<TaskItem> = emptyList(),
+    /** 一次性提示（Snackbar），展示后由 [consumeMessage] 清除。 */
+    val message: UiText? = null,
     val error: UiText? = null
 )
 
@@ -98,7 +107,12 @@ class ReaderViewModel @Inject constructor(
             try {
                 val vault = runCatching { settingsRepository.settings.first().vaultPath }.getOrNull()
                 val text = withContext(Dispatchers.IO) { vaultRepository.readText(absolutePath) }
-                val parsed = withContext(Dispatchers.IO) { HeadingExtractor.parse(text) }
+                val split = withContext(Dispatchers.IO) { FrontmatterParser.split(text) }
+                val noteType = split.attributes["note_type"]?.trim()?.lowercase()
+                val parsed = withContext(Dispatchers.IO) { HeadingExtractor.parse(split.body) }
+                val tasks = if (noteType == "task") {
+                    withContext(Dispatchers.IO) { TaskExtractor.extract(split.body) }
+                } else emptyList()
                 val progress = if (showLoading) {
                     withContext(Dispatchers.IO) { progressRepository.load(absolutePath) }
                 } else {
@@ -108,10 +122,12 @@ class ReaderViewModel @Inject constructor(
                 _state.update {
                     it.copy(
                         loading = false,
-                        content = text,
+                        content = split.body,
                         headings = parsed.headings,
                         vaultPath = vault,
                         initialProgress = progress,
+                        noteType = noteType,
+                        tasks = tasks,
                         error = null
                     )
                 }
@@ -147,6 +163,45 @@ class ReaderViewModel @Inject constructor(
     /** 关闭“文档信息”对话框。 */
     fun clearDocInfo() {
         _state.update { it.copy(docInfo = null) }
+    }
+
+    /** 切换待办勾选状态（写回磁盘后静默刷新列表）。 */
+    fun toggleTask(lineIndex: Int, checked: Boolean) {
+        mutateBody { body -> TaskExtractor.toggle(body, lineIndex, checked) }
+    }
+
+    /** 追加一条待办（写回磁盘后静默刷新列表）。 */
+    fun addTask(text: String) {
+        if (text.isBlank()) return
+        mutateBody { body -> TaskExtractor.append(body, text) }
+    }
+
+    /** 清除已展示的一次性提示。 */
+    fun consumeMessage() {
+        _state.update { it.copy(message = null) }
+    }
+
+    /**
+     * 待办写回：重读磁盘最新内容 → 仅变换正文 → 保留 frontmatter 原样 → 原子写盘 → 静默刷新。
+     * 读 / 写失败时通过 [ReaderUiState.message] 提示。
+     */
+    private fun mutateBody(transform: (String) -> String?) {
+        viewModelScope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                runCatching {
+                    val current = vaultRepository.readText(absolutePath)
+                    val split = FrontmatterParser.split(current)
+                    val updated = transform(split.body) ?: return@runCatching true
+                    vaultRepository.writeTextAtomically(absolutePath, split.prefix + updated)
+                    true
+                }.getOrDefault(false)
+            }
+            if (ok) {
+                load(showLoading = false)
+            } else {
+                _state.update { it.copy(message = UiText.of(R.string.msg_task_save_failed)) }
+            }
+        }
     }
 
     /** 预览 LazyColumn 滚动位置变化回调（§5.5；块序号为真实 AST 顶层块索引）。 */

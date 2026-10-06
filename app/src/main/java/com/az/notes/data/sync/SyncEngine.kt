@@ -329,6 +329,11 @@ class SyncEngine @Inject constructor(
 
         // 执行顺序：改名先于其他操作（后续操作以新路径为准）；冲突副本先于同路径的覆盖
         val ordered = ops.sortedBy { opPriority(it.type) }
+        // 两端已完全一致（空计划）时清除历史冲突记录：角标数字源自记录条数，
+        // 残留会导致此后无差异时仍显示角标
+        if (ordered.isEmpty()) {
+            withContext(Dispatchers.IO) { conflictRecordDao.clear() }
+        }
         // 快照留给 commitBaseline 复用：同一次同步不再把远端全树扫第二遍
         lastSnapshot = ScanSnapshot(remote, carryOver, local)
         val warning = buildWarning(untrustedDirs, unsafeSkipped, skippedLarge)

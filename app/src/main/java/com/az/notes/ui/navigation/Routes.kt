@@ -8,6 +8,9 @@ object Routes {
     const val HOME = "home"                 // 主界面（抽屉菜单 + 笔记列表）
     const val SETTINGS = "settings"
 
+    /** 编辑器工具栏设置页（工具开关 / 顺序 / 恢复默认）；从设置页进入。 */
+    const val TOOLBAR_SETTINGS = "toolbar_settings"
+
     /** 同步设置页（服务器 / 账号 / 策略 / 手动同步 / 日志）；从设置 → 同步进入。 */
     const val SYNC = "sync"
 

@@ -1,7 +1,7 @@
 package com.az.notes.domain.markdown
 
 /**
- * 列表预览提取（主页笔记条目）：剥离常见 Markdown 标记，
+ * 列表预览提取（主页笔记条目）：剥离常见 Markdown 标记（头部 frontmatter 属性块也不参与预览），
  * 将多行正文压缩为单行纯文本，并按字符数截断（超出追加省略号）。
  * 仅用于列表速览，不追求完整语法的精确还原。
  */
@@ -28,8 +28,18 @@ object PreviewExtractor {
     /** 链接：保留链接文字 */
     private val LINK = Regex("\\[([^]]*)]\\([^)]*\\)")
 
-    /** 行内代码 / 粗体 / 斜体 / 删除线标记 */
-    private val INLINE_MARKERS = Regex("(\\*\\*|__|~~|`+|\\*|_)")
+    /** 行内成对标记（保内容去标记）：先长后短，避免单项符抢先匹配 */
+    private val INLINE_PAIRS = listOf(
+        Regex("\\*\\*(.+?)\\*\\*"),
+        Regex("__(.+?)__"),
+        Regex("~~(.+?)~~"),
+        Regex("`([^`]+?)`"),
+        Regex("\\*(.+?)\\*"),
+        Regex("(?<!\\w)_([^_]+?)_(?!\\w)")
+    )
+
+    /** 待办行首勾选框（`- [ ] xxx` 去掉列表符后残留的 `[ ]`） */
+    private val TASK_MARKER = Regex("^\\[[ xX]*]\\s*")
 
     /** HTML 标签（简单剥离） */
     private val HTML_TAG = Regex("<[^>]+>")
@@ -43,16 +53,20 @@ object PreviewExtractor {
      */
     fun extract(markdown: String, maxChars: Int): String {
         if (markdown.isBlank() || maxChars <= 0) return ""
+        // frontmatter 属性块不进入预览文本
+        val body = FrontmatterParser.strip(markdown)
 
-        val singleLine = markdown.lineSequence()
+        val singleLine = body.lineSequence()
             .map { cleanLine(it) }
             .filter { it.isNotEmpty() }
             .joinToString(" ")
 
-        val plain = singleLine
-            .replace(INLINE_MARKERS, "")
-            .replace(WHITESPACE, " ")
-            .trim()
+        var plain = singleLine
+        // 成对标记剥离（保内容）：`**粗**` → `粗`；孤立字面符（`snake_case`、`2*3`）保留
+        INLINE_PAIRS.forEach { pair ->
+            plain = pair.replace(plain) { it.groupValues[1] }
+        }
+        plain = plain.replace(WHITESPACE, " ").trim()
 
         if (plain.isEmpty()) return ""
         return if (plain.length <= maxChars) plain
@@ -69,6 +83,7 @@ object PreviewExtractor {
         cleaned = HEADING_MARKER.replaceFirst(cleaned, "")
         cleaned = BLOCKQUOTE_MARKER.replaceFirst(cleaned, "")
         cleaned = LIST_MARKER.replaceFirst(cleaned, "")
+        cleaned = TASK_MARKER.replaceFirst(cleaned, "")
         cleaned = IMAGE.replace(cleaned) { it.groupValues[1] }
         cleaned = LINK.replace(cleaned) { it.groupValues[1] }
         cleaned = HTML_TAG.replace(cleaned, "")

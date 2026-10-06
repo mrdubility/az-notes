@@ -78,6 +78,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draganddrop.DragAndDropEvent
@@ -85,6 +86,8 @@ import androidx.compose.ui.draganddrop.DragAndDropTarget
 import androidx.compose.ui.draganddrop.mimeTypes
 import androidx.compose.ui.draganddrop.toAndroidDragEvent
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.SolidColor
@@ -505,6 +508,15 @@ private fun HomeTopBar(
     onMoveSelected: () -> Unit
 ) {
     var sortMenuOpen by remember { mutableStateOf(false) }
+    // 进入搜索时自动聚焦输入框（弹软键盘）
+    val searchFocus = remember { FocusRequester() }
+    LaunchedEffect(searchActive) {
+        if (searchActive) {
+            // 等输入框完成组合挂载后再请求焦点
+            withFrameNanos {}
+            runCatching { searchFocus.requestFocus() }
+        }
+    }
 
     TopAppBar(
         title = {
@@ -514,7 +526,9 @@ private fun HomeTopBar(
                     value = searchQuery,
                     onValueChange = onSearchQueryChange,
                     singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .focusRequester(searchFocus),
                     textStyle = MaterialTheme.typography.titleMedium.copy(
                         color = MaterialTheme.colorScheme.onSurface
                     ),

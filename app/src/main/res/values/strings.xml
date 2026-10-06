@@ -273,6 +273,12 @@
     <string name="reader_outline_empty">本文无标题层级</string>
     <string name="reader_outline_untitled">（无标题）</string>
 
+    <!-- 待办清单页（frontmatter note_type: task） -->
+    <string name="task_add_hint">添加待办…</string>
+    <string name="task_add_action">添加</string>
+    <string name="task_empty">暂无待办，在下方输入添加</string>
+    <string name="msg_task_save_failed">待办保存失败，请重试</string>
+
     <!-- 回收站（恢复被云端删除波及的本地文件） -->
     <string name="trash_title">回收站</string>
     <string name="trash_empty">回收站为空</string>

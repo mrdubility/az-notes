@@ -24,6 +24,7 @@ import com.az.notes.ui.gate.GateScreen
 import com.az.notes.ui.home.HomeScreen
 import com.az.notes.ui.reader.ReaderScreen
 import com.az.notes.ui.settings.SettingsScreen
+import com.az.notes.ui.settings.ToolbarSettingsScreen
 import com.az.notes.ui.sync.SyncScreen
 import com.az.notes.ui.trash.TrashScreen
 import com.az.notes.util.StoragePermission
@@ -131,7 +132,15 @@ fun AzNotesNavHost(
                     navController.navigate(Routes.GATE) {
                         popUpTo(Routes.HOME) { inclusive = true }
                     }
-                }
+                },
+                onOpenToolbarSettings = { navController.navigate(Routes.TOOLBAR_SETTINGS) }
+            )
+        }
+
+        composable(Routes.TOOLBAR_SETTINGS) {
+            ToolbarSettingsScreen(
+                viewModel = hiltViewModel(),
+                onBack = { navController.popBackStack() }
             )
         }
 

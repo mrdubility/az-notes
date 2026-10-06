@@ -17,9 +17,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.Sort
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Build
 import androidx.compose.material.icons.outlined.ColorLens
 import androidx.compose.material.icons.outlined.DeleteSweep
 import androidx.compose.material.icons.outlined.Edit
@@ -62,12 +61,10 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.az.notes.R
 import com.az.notes.domain.model.AppLanguage
-import com.az.notes.domain.model.EditorTool
 import com.az.notes.domain.model.FabAction
 import com.az.notes.domain.model.FontFamilyPreference
 import com.az.notes.domain.model.NoteSortOrder
 import com.az.notes.domain.model.ThemeMode
-import com.az.notes.ui.common.label
 import com.az.notes.util.LocaleHelper
 
 /**
@@ -82,7 +79,8 @@ fun SettingsScreen(
     viewModel: SettingsViewModel,
     onBack: () -> Unit,
     onSync: () -> Unit,
-    onChangeVault: () -> Unit
+    onChangeVault: () -> Unit,
+    onOpenToolbarSettings: () -> Unit
 ) {
     val settings by viewModel.settings.collectAsStateWithLifecycle()
 
@@ -105,10 +103,6 @@ fun SettingsScreen(
             )
         }
     ) { inner ->
-        // 持久化顺序可能缺少新版本追加的工具：补齐到末尾（默认启用）
-        val toolOrder = remember(settings.editorToolOrder) {
-            settings.editorToolOrder + EditorTool.defaultOrder.filter { it !in settings.editorToolOrder }
-        }
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(inner),
             contentPadding = PaddingValues(bottom = 32.dp)
@@ -181,55 +175,15 @@ fun SettingsScreen(
                 )
             }
 
-            // —— 编辑器工具栏：开关 + 顺序 ——
+            // —— 编辑器工具栏：独立设置页入口 ——
             item { SectionHeader(stringResource(R.string.settings_editor_toolbar)) }
             item {
-                Text(
-                    text = stringResource(R.string.settings_editor_toolbar_subtitle),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 4.dp, bottom = 4.dp)
+                SettingsRow(
+                    icon = Icons.Outlined.Build,
+                    title = stringResource(R.string.settings_editor_toolbar),
+                    subtitle = stringResource(R.string.settings_editor_toolbar_subtitle),
+                    onClick = onOpenToolbarSettings
                 )
-            }
-            toolOrder.forEachIndexed { index, id ->
-                val tool = EditorTool.fromId(id) ?: return@forEachIndexed
-                item(key = "tool_$id") {
-                    ToolConfigRow(
-                        label = tool.label(),
-                        enabled = id !in settings.editorToolDisabled,
-                        canMoveUp = index > 0,
-                        canMoveDown = index < toolOrder.lastIndex,
-                        onToggle = { enabled ->
-                            val disabled = settings.editorToolDisabled.toMutableSet()
-                            if (enabled) disabled.remove(id) else disabled.add(id)
-                            viewModel.setEditorToolDisabled(disabled)
-                        },
-                        onMoveUp = {
-                            val list = toolOrder.toMutableList()
-                            val tmp = list[index - 1]
-                            list[index - 1] = list[index]
-                            list[index] = tmp
-                            viewModel.setEditorToolOrder(list)
-                        },
-                        onMoveDown = {
-                            val list = toolOrder.toMutableList()
-                            val tmp = list[index + 1]
-                            list[index + 1] = list[index]
-                            list[index] = tmp
-                            viewModel.setEditorToolOrder(list)
-                        }
-                    )
-                }
-            }
-            item {
-                Box(Modifier.fillMaxWidth().padding(horizontal = 20.dp), contentAlignment = Alignment.CenterEnd) {
-                    TextButton(onClick = {
-                        viewModel.setEditorToolOrder(EditorTool.defaultOrder)
-                        viewModel.setEditorToolDisabled(emptySet())
-                    }) {
-                        Text(stringResource(R.string.settings_editor_toolbar_reset))
-                    }
-                }
             }
 
             // —— 笔记列表 ——
@@ -651,48 +605,6 @@ private fun FabAction.label(): String = stringResource(
         FabAction.SHOW_MENU -> R.string.settings_fab_action_menu
     }
 )
-
-/** 工具配置行：名称（点击行切换开关）+ 上移 / 下移 + 启用开关。 */
-@Composable
-private fun ToolConfigRow(
-    label: String,
-    enabled: Boolean,
-    canMoveUp: Boolean,
-    canMoveDown: Boolean,
-    onToggle: (Boolean) -> Unit,
-    onMoveUp: () -> Unit,
-    onMoveDown: () -> Unit
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(start = 20.dp, end = 8.dp, top = 2.dp, bottom = 2.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.bodyLarge,
-            color = if (enabled) MaterialTheme.colorScheme.onSurface
-            else MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.weight(1f)
-        )
-        IconButton(onClick = onMoveUp, enabled = canMoveUp) {
-            Icon(
-                Icons.Filled.KeyboardArrowUp,
-                stringResource(R.string.settings_toolbar_move_up),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-        IconButton(onClick = onMoveDown, enabled = canMoveDown) {
-            Icon(
-                Icons.Filled.KeyboardArrowDown,
-                stringResource(R.string.settings_toolbar_move_down),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-        Switch(checked = enabled, onCheckedChange = onToggle)
-    }
-}
 
 /** 回收站自动清理天数候选（0 = 永不清理）。 */
 private val TRASH_RETENTION_OPTIONS = listOf(7, 30, 90, 365, 0)

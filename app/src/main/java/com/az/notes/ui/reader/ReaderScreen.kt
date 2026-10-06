@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -31,18 +32,25 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.List
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -66,6 +74,8 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -77,13 +87,17 @@ import coil3.request.ImageRequest
 import coil3.request.crossfade
 import com.az.notes.R
 import com.az.notes.domain.markdown.Heading
+import com.az.notes.domain.markdown.TaskItem
 import com.az.notes.ui.common.resolve
 import com.mikepenz.markdown.compose.MarkdownElement
 import com.mikepenz.markdown.m3.Markdown
 import com.mikepenz.markdown.model.NoOpImageTransformerImpl
 import com.mikepenz.markdown.model.ReferenceLinkHandlerImpl
 import com.mikepenz.markdown.model.State
+import com.mikepenz.markdown.model.markdownAnnotator
 import com.mikepenz.markdown.model.rememberMarkdownState
+import org.intellij.markdown.MarkdownElementTypes
+import org.intellij.markdown.MarkdownTokenTypes
 import org.intellij.markdown.flavours.gfm.GFMFlavourDescriptor
 import org.intellij.markdown.parser.MarkdownParser
 import java.io.File
@@ -114,12 +128,60 @@ fun ReaderScreen(
     var previewImage by remember { mutableStateOf<File?>(null) }
     var restoredOnce by rememberSaveable { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    // 待办保存失败等一次性提示：展示后清除，避免重组重复弹出
+    val toastMessage = state.message?.let { it.resolve() }
+    LaunchedEffect(toastMessage) {
+        if (toastMessage != null) {
+            snackbarHostState.showSnackbar(toastMessage)
+            viewModel.consumeMessage()
+        }
+    }
 
     // 解析链显式传入稳定实例：若用默认参数，recomposition 时 flavour/parser/linkHandler
     // 会新建实例导致 remember 失效、反复重新解析
     val flavour = remember { GFMFlavourDescriptor() }
     val parser = remember(flavour) { MarkdownParser(flavour) }
     val linkHandler = remember { ReferenceLinkHandlerImpl() }
+
+    // 修复库默认渲染的两个问题：
+    // 1) 软换行（行内 EOL）默认渲染为空格——截获后改为换行输出；
+    // 2) 字面强调符（如 snake_case 的下划线）默认硬编码渲染为 '*'——截获后原样输出。
+    val annotator = remember {
+        markdownAnnotator { content, child ->
+            when {
+                child.type == MarkdownTokenTypes.EOL -> {
+                    val siblings = child.parent?.children
+                    if (siblings == null || siblings.last() === child) {
+                        // 块内最后一个 EOL（含 setext 标题/表格行等）交给默认处理
+                        false
+                    } else {
+                        val next = siblings[siblings.indexOf(child) + 1]
+                        if (next.type == MarkdownTokenTypes.SETEXT_1 ||
+                            next.type == MarkdownTokenTypes.SETEXT_2
+                        ) {
+                            // "Title\n====" 的下划线行：不参与换行
+                            false
+                        } else {
+                            append('\n')
+                            true
+                        }
+                    }
+                }
+
+                child.type == MarkdownTokenTypes.EMPH &&
+                    child.parent?.type != MarkdownElementTypes.EMPH &&
+                    child.parent?.type != MarkdownElementTypes.STRONG -> {
+                    // 配对标记（parent 为 EMPH/STRONG）保持默认（吞掉标记）
+                    append(content.substring(child.startOffset, child.endOffset))
+                    true
+                }
+
+                else -> false
+            }
+        }
+    }
     val markdownState = rememberMarkdownState(
         content = state.content,
         flavour = flavour,
@@ -146,30 +208,31 @@ fun ReaderScreen(
     LaunchedEffect(Unit) { viewModel.reload() }
 
     // 恢复上次滚动位置：仅首次加载恢复一次（从编辑页返回时 listState 自身已恢复位置）
-    LaunchedEffect(state.loading, state.initialProgress, markdownState) {
+    LaunchedEffect(state.loading, state.initialProgress, markdownState, state.noteType) {
         val prog = state.initialProgress
-        if (restoredOnce || state.loading || prog == null) return@LaunchedEffect
+        if (restoredOnce || state.loading || prog == null || state.noteType == "task") {
+            return@LaunchedEffect
+        }
         markdownState.state.first { it is State.Success }
-        listState.scrollToItem(prog.scrollIndex, prog.scrollOffset)
+        // +1：文件名 header 占据下标 0，正文块从下标 1 开始
+        listState.scrollToItem(prog.scrollIndex + 1, prog.scrollOffset)
         restoredOnce = true
     }
 
     // 监听滚动，转成块序号交给 ViewModel（内部 500ms 去抖落库）
     LaunchedEffect(listState, state.content) {
         snapshotFlow { listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset }
-            .collect { (index, offset) -> viewModel.onScrollPosition(index, offset) }
+            // -1：去掉文件名 header 占位，还原为真实块序号
+            .collect { (index, offset) ->
+                viewModel.onScrollPosition((index - 1).coerceAtLeast(0), offset)
+            }
     }
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
-                title = {
-                    Text(
-                        text = state.path.substringAfterLast('/'),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                },
+                title = { Text(stringResource(R.string.action_preview)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.action_back))
@@ -204,32 +267,51 @@ fun ReaderScreen(
                         detectTapGestures(onDoubleTap = { onEdit(state.path) })
                     }
             ) {
-                Markdown(
-                    markdownState = markdownState,
-                    modifier = Modifier.fillMaxSize(),
-                    imageTransformer = imageTransformer,
-                    success = { success, components, _ ->
-                        // 官方 success 插槽为 Column(不虚拟化)；此处换成 LazyColumn：
-                        // 块下标与 AST 顶层块一一对应，大文档只渲染可见块
-                        LazyColumn(
-                            state = listState,
-                            modifier = Modifier.fillMaxSize(),
-                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp)
-                        ) {
-                            items(
-                                items = success.node.children,
-                                key = { node -> node.startOffset }
-                            ) { node ->
-                                MarkdownElement(
-                                    node = node,
-                                    components = components,
-                                    content = success.content,
-                                    skipLinkDefinition = success.linksLookedUp
-                                )
+                if (state.noteType == "task") {
+                    // frontmatter `note_type: task`：待办清单页
+                    TaskListPane(
+                        fileName = state.path.substringAfterLast('/'),
+                        tasks = state.tasks,
+                        onToggle = viewModel::toggleTask,
+                        onAdd = viewModel::addTask
+                    )
+                } else {
+                    Markdown(
+                        markdownState = markdownState,
+                        modifier = Modifier.fillMaxSize(),
+                        imageTransformer = imageTransformer,
+                        annotator = annotator,
+                        success = { success, components, _ ->
+                            // 官方 success 插槽为 Column(不虚拟化)；此处换成 LazyColumn：
+                            // 块下标与 AST 顶层块一一对应，大文档只渲染可见块；
+                            // 文件名作首项（下标 0），正文块整体后移 1 位
+                            LazyColumn(
+                                state = listState,
+                                modifier = Modifier.fillMaxSize(),
+                                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp)
+                            ) {
+                                item(key = "file_name_header") {
+                                    Text(
+                                        text = state.path.substringAfterLast('/'),
+                                        style = MaterialTheme.typography.titleLarge,
+                                        modifier = Modifier.padding(bottom = 12.dp)
+                                    )
+                                }
+                                items(
+                                    items = success.node.children,
+                                    key = { node -> node.startOffset }
+                                ) { node ->
+                                    MarkdownElement(
+                                        node = node,
+                                        components = components,
+                                        content = success.content,
+                                        skipLinkDefinition = success.linksLookedUp
+                                    )
+                                }
                             }
                         }
-                    }
-                )
+                    )
+                }
             }
         }
     }
@@ -246,7 +328,8 @@ fun ReaderScreen(
             listState = listState,
             onSelect = { h ->
                 showOutline = false
-                scope.launch { listState.animateScrollToItem(h.blockIndex) }
+                // +1：文件名 header 占位
+                scope.launch { listState.animateScrollToItem(h.blockIndex + 1) }
             },
             onDismiss = { showOutline = false }
         )
@@ -255,6 +338,103 @@ fun ReaderScreen(
     // 文档信息（点击顶栏 Info 后从 ViewModel 读取）
     state.docInfo?.let { info ->
         DocInfoDialog(info = info, onDismiss = viewModel::clearDocInfo)
+    }
+}
+
+/**
+ * 待办清单页（frontmatter `note_type: task`）：仅渲染待办条目，
+ * 点击勾选完成（写回 `- [x]`），底部输入栏追加新条目（写回 `- [ ]`）。
+ */
+@Composable
+private fun TaskListPane(
+    fileName: String,
+    tasks: List<TaskItem>,
+    onToggle: (Int, Boolean) -> Unit,
+    onAdd: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var input by rememberSaveable { mutableStateOf("") }
+    val listState = rememberLazyListState()
+    Column(modifier.fillMaxSize()) {
+        LazyColumn(
+            state = listState,
+            modifier = Modifier.weight(1f),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp)
+        ) {
+            item(key = "file_name_header") {
+                Text(
+                    text = fileName,
+                    style = MaterialTheme.typography.titleLarge,
+                    modifier = Modifier.padding(bottom = 12.dp)
+                )
+            }
+            if (tasks.isEmpty()) {
+                item(key = "task_empty") {
+                    Text(
+                        text = stringResource(R.string.task_empty),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            } else {
+                items(items = tasks, key = { it.lineIndex }) { task ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Checkbox(
+                            checked = task.checked,
+                            onCheckedChange = { checked -> onToggle(task.lineIndex, checked) }
+                        )
+                        Text(
+                            text = task.text,
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = if (task.checked) MaterialTheme.colorScheme.onSurfaceVariant
+                            else MaterialTheme.colorScheme.onSurface,
+                            textDecoration = if (task.checked) TextDecoration.LineThrough else null,
+                            modifier = Modifier
+                                .weight(1f)
+                                .clickable { onToggle(task.lineIndex, !task.checked) }
+                                .padding(vertical = 10.dp)
+                        )
+                    }
+                }
+            }
+        }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .imePadding()
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            OutlinedTextField(
+                value = input,
+                onValueChange = { input = it },
+                placeholder = { Text(stringResource(R.string.task_add_hint)) },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                keyboardActions = KeyboardActions(onSend = {
+                    if (input.isNotBlank()) {
+                        onAdd(input)
+                        input = ""
+                    }
+                }),
+                modifier = Modifier.weight(1f)
+            )
+            Spacer(Modifier.width(8.dp))
+            IconButton(
+                onClick = {
+                    if (input.isNotBlank()) {
+                        onAdd(input)
+                        input = ""
+                    }
+                },
+                enabled = input.isNotBlank()
+            ) {
+                Icon(Icons.Filled.Add, stringResource(R.string.task_add_action))
+            }
+        }
     }
 }
 
@@ -279,7 +459,8 @@ private fun OutlineDialog(
         // 当前章节：第一个可见块所属的最近标题
         val activeIndex by remember(headings) {
             derivedStateOf {
-                headings.indexOfLast { it.blockIndex <= listState.firstVisibleItemIndex }
+                // -1：去掉文件名 header 占位，还原为真实块序号
+                headings.indexOfLast { it.blockIndex <= listState.firstVisibleItemIndex - 1 }
             }
         }
         // 打开后触发一次性进入动画（面板自右滑入、遮罩淡入）
