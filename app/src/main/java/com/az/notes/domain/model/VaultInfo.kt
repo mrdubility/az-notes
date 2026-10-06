@@ -23,7 +23,7 @@ data class VaultInfo(
     val hidden: Boolean = false
 ) {
     companion object {
-        /** 生成新的仓库 id（十六进制字符集，不会与保留合成 id "legacy" 冲突）。 */
+        /** 生成新的仓库 id（十六进制字符集，不会与内置默认仓库 id "default" 冲突）。 */
         fun newId(): String = "v" + UUID.randomUUID().toString().take(8)
     }
 }

@@ -3,7 +3,6 @@ package com.az.notes.ui
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.az.notes.data.settings.SettingsRepository
-import com.az.notes.data.settings.VaultMigrationRunner
 import com.az.notes.domain.model.AppSettings
 import com.az.notes.work.SyncScheduler
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -21,13 +20,12 @@ import javax.inject.Inject
 @HiltViewModel
 class MainViewModel @Inject constructor(
     private val settingsRepository: SettingsRepository,
-    private val syncScheduler: SyncScheduler,
-    private val vaultMigrationRunner: VaultMigrationRunner
+    private val syncScheduler: SyncScheduler
 ) : ViewModel() {
 
     init {
-        // 升级首启迁移（旧版单仓库数据 → per-vault 数据）；幂等，失败不阻断
-        viewModelScope.launch { vaultMigrationRunner.ensureMigrated() }
+        // 启动时建档仓库注册表：首启创建内置默认仓库（App 私有目录）；幂等，失败不阻断
+        viewModelScope.launch { runCatching { settingsRepository.ensureVaultRegistry() } }
     }
 
     /**

@@ -86,7 +86,7 @@ class SyncViewModel @Inject constructor(
         .map { it.currentVaultId }
         .distinctUntilChanged()
         .flatMapLatest { vaultId ->
-            if (vaultId.isNullOrBlank() || vaultId == SettingsRepository.LEGACY_VAULT_ID) {
+            if (vaultId.isNullOrBlank()) {
                 flowOf(emptyList())
             } else {
                 conflictRecordDao.recent(vaultId, 50)

@@ -35,8 +35,7 @@ data class TrashBatch(
  * [purgeExpired] 负责（保留天数可在设置调整，0 = 永不清理）。
  *
  * 多仓库：批次按仓库 id 分目录隔离（不同仓库的同名相对路径互不冲突），
- * 列表 / 清空均只作用于当前仓库；旧版一层结构（trash/<批次>）由
- * [migrateLegacyTrash] 一次性搬入当前仓库目录。
+ * 列表 / 清空均只作用于当前仓库。
  */
 @Singleton
 class TrashRepository @Inject constructor(
@@ -82,31 +81,26 @@ class TrashRepository @Inject constructor(
 
     /**
      * 清理入站时间早于 [retentionDays] 天的批次（同步启动前调用）。
-     * [retentionDays] <= 0 表示永不清理；同时兼容旧版一层结构。
+     * [retentionDays] <= 0 表示永不清理。
      */
     fun purgeExpired(retentionDays: Int) {
         if (retentionDays <= 0) return
         runCatching {
             val cutoff = System.currentTimeMillis() - retentionDays * 24L * 60 * 60 * 1000
-            root().listFiles()?.forEach { first ->
-                if (!first.isDirectory) return@forEach
-                if (STAMP_REGEX.matches(first.name)) {
-                    // 旧版一层结构：直接子级即批次
-                    if (first.lastModified() < cutoff) first.deleteRecursively()
-                } else {
-                    // 多仓库两层结构：<仓库 id>/<批次>
-                    first.listFiles()?.forEach { batch ->
-                        if (batch.isDirectory && batch.lastModified() < cutoff) batch.deleteRecursively()
-                    }
-                    if (first.listFiles().isNullOrEmpty()) first.delete()
+            // 两层结构：root/<仓库 id>/<批次>
+            root().listFiles()?.forEach { vaultDir ->
+                if (!vaultDir.isDirectory) return@forEach
+                vaultDir.listFiles()?.forEach { batch ->
+                    if (batch.isDirectory && batch.lastModified() < cutoff) batch.deleteRecursively()
                 }
+                if (vaultDir.listFiles().isNullOrEmpty()) vaultDir.delete()
             }
         }
     }
 
     /** 指定仓库的全部批次（新 → 旧；空批次跳过）。条目 = 所有文件 + 空目录（空文件夹也可恢复）。 */
     fun batches(vaultId: String?): List<TrashBatch> {
-        if (vaultId.isNullOrBlank() || vaultId == SettingsRepository.LEGACY_VAULT_ID) return emptyList()
+        if (vaultId.isNullOrBlank()) return emptyList()
         return runCatching {
             File(root(), vaultId).listFiles()?.filter { it.isDirectory }?.mapNotNull { batch ->
                 val items = batch.walkTopDown()
@@ -156,40 +150,18 @@ class TrashRepository @Inject constructor(
 
     /** 清空指定仓库的回收站（二次确认由 UI 负责）；null / 无效仓库不动作。 */
     fun purgeAll(vaultId: String?): Boolean {
-        if (vaultId.isNullOrBlank() || vaultId == SettingsRepository.LEGACY_VAULT_ID) return false
+        if (vaultId.isNullOrBlank()) return false
         return runCatching { File(root(), vaultId).deleteRecursively() }.getOrDefault(false)
-    }
-
-    /**
-     * 一次性迁移（幂等）：旧版一层批次目录（trash/<批次>）→ trash/<仓库 id>/ 下。
-     * 同名批次（极端：迁移前同秒产生过新结构批次）追加序号，绝不合并覆盖。
-     */
-    fun migrateLegacyTrash(vaultId: String) {
-        if (vaultId == SettingsRepository.LEGACY_VAULT_ID) return
-        runCatching {
-            val root = root()
-            val target = File(root, vaultId).apply { mkdirs() }
-            root.listFiles()?.forEach { legacy ->
-                if (!legacy.isDirectory || !STAMP_REGEX.matches(legacy.name)) return@forEach
-                val dest = File(target, legacy.name)
-                val finalDest = if (dest.exists()) uniqueMoveTarget(target, legacy.name) else dest
-                if (!legacy.renameTo(finalDest)) {
-                    legacy.copyRecursively(finalDest, overwrite = false)
-                    legacy.deleteRecursively()
-                }
-            }
-            if (target.listFiles().isNullOrEmpty()) target.delete()
-        }
     }
 
     // ---------------------------------------------------------------- 内部工具
 
-    /** 由仓库路径反查注册表 id；迁移窗口先补建档（见 [SettingsRepository.requireCurrentVaultId]）。 */
+    /** 由仓库路径反查注册表 id；路径未命中时兜底用当前仓库（经 requireCurrentVaultId 先建档）。 */
     private suspend fun vaultIdOf(vaultPath: String): String? {
         val settings = settingsRepository.settings.first()
         val normalized = vaultPath.trimEnd('/')
         settings.vaults
-            .firstOrNull { it.path == normalized && it.id != SettingsRepository.LEGACY_VAULT_ID }
+            .firstOrNull { it.path == normalized }
             ?.let { return it.id }
         // 路径未命中注册表时兜底用当前仓库，保证删除不被阻断
         return settingsRepository.requireCurrentVaultId()
@@ -264,24 +236,15 @@ class TrashRepository @Inject constructor(
         }
     }
 
-    /** [deleted] 所在批次目录（新结构 trash/<仓库 id>/<批次> 或旧结构 trash/<批次>）；找不到返回 null。 */
+    /** [deleted] 所在批次目录（trash/<仓库 id>/<批次>）；找不到返回 null。 */
     private fun batchDirOf(deleted: File): File? {
         val rootPath = root().absolutePath
         var dir = deleted.parentFile
         while (dir != null && dir.absolutePath.startsWith(rootPath) && dir.absolutePath != rootPath) {
-            val parent = dir.parentFile
-            if (parent != null && (parent.absolutePath == rootPath ||
-                    parent.parentFile?.absolutePath == rootPath)
-            ) {
-                return dir
-            }
-            dir = parent
+            // 批次目录的祖父即 root（trash/<仓库 id>/<批次>）
+            if (dir.parentFile?.parentFile?.absolutePath == rootPath) return dir
+            dir = dir.parentFile
         }
         return null
-    }
-
-    private companion object {
-        /** 批次目录名格式（yyyy-MM-dd HHmmss）。 */
-        val STAMP_REGEX = Regex("""^\d{4}-\d{2}-\d{2} \d{6}$""")
     }
 }

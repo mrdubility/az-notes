@@ -44,8 +44,8 @@ private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(na
  * 多仓库模型：
  * - 全局键：[Keys.VAULTS]（仓库注册表 JSON）与 [Keys.CURRENT_VAULT_ID]（当前仓库），
  *   保证「记忆当前仓库」；分享落点 / WebDAV 等 per-vault 设置存专属键（按仓库 id）。
- * - 旧版单仓库键（vault_path / favorite_paths / share_folder）保留为升级迁移窗口的
- *   回退读取，由 [VaultMigrationRunner] 一次性迁移后清除（见 migrate* 方法）。
+ * - 发布前无历史版本包袱：不做旧版单仓库数据的迁移兼容，注册表为空时直接
+ *   创建内置默认仓库（见 [ensureVaultRegistry]）。
  */
 @Singleton
 class SettingsRepository @Inject constructor(
@@ -72,11 +72,6 @@ class SettingsRepository @Inject constructor(
 
         /** 当前使用的仓库 id（「记忆当前仓库」） */
         val CURRENT_VAULT_ID = stringPreferencesKey("current_vault_id")
-
-        // ---- 旧版全局键：仅迁移窗口回退读取 / 一次性迁移，迁移完成后删除 ----
-        val LEGACY_VAULT_PATH = stringPreferencesKey("vault_path")
-        val LEGACY_FAVORITES = stringSetPreferencesKey("favorite_paths")
-        val LEGACY_SHARE_FOLDER = stringPreferencesKey("share_folder")
     }
 
     private val appContext = context.applicationContext
@@ -93,15 +88,9 @@ class SettingsRepository @Inject constructor(
 
     private fun settingsFrom(prefs: Preferences): AppSettings {
         val registered = parseVaults(prefs[Keys.VAULTS])
-        val legacyPath = prefs[Keys.LEGACY_VAULT_PATH]?.trim()?.trimEnd('/')?.takeIf { it.isNotEmpty() }
-        // 迁移窗口：注册表尚未建立但存在旧版路径 → 临时合成一条仓库记录保证功能可用；
-        // 全新安装（无任何旧数据）→ 合成内置默认仓库（App 私有目录），首帧即有仓库可用；
-        // 两者的落盘建档均由 ensureVaultRegistry() 在启动时完成
-        val vaults = registered.ifEmpty {
-            legacyPath?.let {
-                listOf(VaultInfo(LEGACY_VAULT_ID, File(it).name.ifBlank { it }, it))
-            } ?: listOf(defaultVaultInfo())
-        }
+        // 注册表尚未建档（首启竞态）→ 合成内置默认仓库（App 私有目录），首帧即有仓库可用；
+        // 落盘建档由 ensureVaultRegistry() 在启动时完成
+        val vaults = registered.ifEmpty { listOf(defaultVaultInfo()) }
         val currentId = prefs[Keys.CURRENT_VAULT_ID]?.takeIf { id -> vaults.any { it.id == id } }
             ?: vaults.firstOrNull()?.id
         return AppSettings(
@@ -155,8 +144,7 @@ class SettingsRepository @Inject constructor(
 
     /**
      * 幂等建档：保证仓库注册表与「当前仓库」处于可用状态。
-     * - 注册表为空且存在旧版 vault_path → 生成 [VaultInfo] 落盘并设为当前；
-     * - 注册表为空且无旧数据（全新安装）→ 创建内置默认仓库（App 私有目录）并设为当前；
+     * - 注册表为空（全新安装）→ 创建内置默认仓库（App 私有目录）并设为当前；
      * - 注册表非空但 current 缺失 / 失效 → 修复为注册表首项。
      * @return 建档后的当前仓库 id
      */
@@ -165,37 +153,27 @@ class SettingsRepository @Inject constructor(
         edit { prefs ->
             val vaults = parseVaults(prefs[Keys.VAULTS]).toMutableList()
             if (vaults.isEmpty()) {
-                val legacy = prefs[Keys.LEGACY_VAULT_PATH]?.trim()?.trimEnd('/')?.takeIf { it.isNotEmpty() }
-                if (legacy != null) {
-                    vaults += VaultInfo(VaultInfo.newId(), File(legacy).name.ifBlank { legacy }, legacy)
-                } else {
-                    // 全新安装：启用内置默认仓库（App 私有目录），首次进入即可直接记笔记
-                    val fallback = defaultVaultInfo()
-                    runCatching { File(fallback.path).mkdirs() }
-                    vaults += fallback
-                }
+                // 全新安装：创建内置默认仓库（App 私有目录），首次进入即可直接记笔记
+                val fallback = defaultVaultInfo()
+                runCatching { File(fallback.path).mkdirs() }
+                vaults += fallback
             }
-            if (vaults.isNotEmpty()) {
-                persistVaults(prefs, vaults)
-                val stored = prefs[Keys.CURRENT_VAULT_ID]
-                val resolved = if (stored != null && vaults.any { it.id == stored }) stored
-                else vaults.first().id
-                prefs[Keys.CURRENT_VAULT_ID] = resolved
-                current = resolved
-            }
+            persistVaults(prefs, vaults)
+            val stored = prefs[Keys.CURRENT_VAULT_ID]
+            val resolved = if (stored != null && vaults.any { it.id == stored }) stored
+            else vaults.first().id
+            prefs[Keys.CURRENT_VAULT_ID] = resolved
+            current = resolved
         }
         return current
     }
 
     /**
-     * 解析「当前仓库 id」并保证可用（per-vault 数据写入前的统一入口）：
-     * 无仓库返回 null；迁移窗口（临时合成 id）先落盘建档，避免写入丢失。
+     * 解析「当前仓库 id」（per-vault 数据写入前的统一入口）：
+     * 读取口在注册表为空时会合成内置默认仓库，正常恒有值；极端兜底先落盘建档再返回。
      */
-    suspend fun requireCurrentVaultId(): String? {
-        val stored = settings.first().currentVaultId ?: return null
-        if (stored != LEGACY_VAULT_ID) return stored
-        return ensureVaultRegistry()?.takeIf { it != LEGACY_VAULT_ID }
-    }
+    suspend fun requireCurrentVaultId(): String? =
+        settings.first().currentVaultId ?: ensureVaultRegistry()
 
     /**
      * 添加仓库并设为当前；路径已在注册表中时仅切换过去（不重复添加）。
@@ -280,37 +258,6 @@ class SettingsRepository @Inject constructor(
             if (currentVaultIdOf(prefs) == id) return@edit
         }
         persistVaults(prefs, vaults.map { if (it.id == id) it.copy(hidden = hidden) else it })
-    }
-
-    // ---------------------------------------------------------------- 迁移
-
-    /**
-     * 一次性迁移（幂等）：旧版全局收藏 / 分享目录 → 当前仓库的 per-vault 键，
-     * 随后删除旧键与旧版 vault_path。仅在旧键存在时生效。
-     */
-    suspend fun migrateLegacyVaultScoped() = edit { prefs ->
-        if (prefs[Keys.LEGACY_VAULT_PATH] == null &&
-            prefs[Keys.LEGACY_FAVORITES] == null &&
-            prefs[Keys.LEGACY_SHARE_FOLDER] == null
-        ) {
-            return@edit
-        }
-        val currentId = currentVaultIdOf(prefs)
-        if (currentId != null) {
-            val favKey = favoritesKey(currentId)
-            val legacyFavs = prefs[Keys.LEGACY_FAVORITES]
-            if (legacyFavs != null && legacyFavs.isNotEmpty() && prefs[favKey].isNullOrEmpty()) {
-                prefs[favKey] = legacyFavs
-            }
-            val shareKey = shareFolderKey(currentId)
-            val legacyShare = prefs[Keys.LEGACY_SHARE_FOLDER]
-            if (legacyShare != null && legacyShare.isNotBlank() && prefs[shareKey] == null) {
-                prefs[shareKey] = legacyShare
-            }
-        }
-        prefs.remove(Keys.LEGACY_FAVORITES)
-        prefs.remove(Keys.LEGACY_SHARE_FOLDER)
-        prefs.remove(Keys.LEGACY_VAULT_PATH)
     }
 
     // ------------------------------------------------------- 普通设置写入
@@ -399,8 +346,7 @@ class SettingsRepository @Inject constructor(
     // ---------------------------------------------------------------- 内部
 
     /**
-     * 在编辑事务内解析「当前仓库 id」（注册表内校验后回落首项；无仓库为 null）。
-     * 注：与 [settingsFrom] 的读取口回退保持一致（差异仅在迁移窗口的合成 id）。
+     * 在编辑事务内解析「当前仓库 id」（注册表内校验后回落首项；注册表为空为 null）。
      */
     private fun currentVaultIdOf(prefs: MutablePreferences): String? {
         val vaults = parseVaults(prefs[Keys.VAULTS])
@@ -408,15 +354,13 @@ class SettingsRepository @Inject constructor(
             ?: vaults.firstOrNull()?.id
     }
 
-    /** 收藏键：当前仓库专属；迁移窗口（合成 id）与无仓库时回退旧版全局键。 */
+    /** 收藏键：按仓库 id 隔离；id 缺失（建档前极早期）回退内置默认仓库，与其读取口合成一致。 */
     private fun favoritesKey(vaultId: String?): Preferences.Key<Set<String>> =
-        if (vaultId == null || vaultId == LEGACY_VAULT_ID) Keys.LEGACY_FAVORITES
-        else stringSetPreferencesKey("favorite_paths_$vaultId")
+        stringSetPreferencesKey("favorite_paths_${vaultId ?: DEFAULT_VAULT_ID}")
 
-    /** 分享目录键：当前仓库专属；迁移窗口与无仓库时回退旧版全局键。 */
+    /** 分享目录键：按仓库 id 隔离；回退规则同 [favoritesKey]。 */
     private fun shareFolderKey(vaultId: String?): Preferences.Key<String> =
-        if (vaultId == null || vaultId == LEGACY_VAULT_ID) Keys.LEGACY_SHARE_FOLDER
-        else stringPreferencesKey("share_folder_$vaultId")
+        stringPreferencesKey("share_folder_${vaultId ?: DEFAULT_VAULT_ID}")
 
     private fun parseVaults(raw: String?): List<VaultInfo> =
         raw?.let { runCatching { json.decodeFromString<List<VaultInfo>>(it) }.getOrNull() } ?: emptyList()
@@ -430,9 +374,6 @@ class SettingsRepository @Inject constructor(
     }
 
     companion object {
-        /** 迁移窗口内临时合成的仓库 id（不满足 newId 的十六进制空间，不会与真实仓库冲突）。 */
-        const val LEGACY_VAULT_ID = "legacy"
-
         /** 内置默认仓库的固定 id（不满足 newId 的 "v"+8 位十六进制格式，不会冲突）。 */
         const val DEFAULT_VAULT_ID = "default"
 

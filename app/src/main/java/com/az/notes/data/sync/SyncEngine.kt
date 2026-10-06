@@ -1062,12 +1062,12 @@ class SyncEngine @Inject constructor(
 
     // ---------------------------------------------------------------- 基础依赖
 
-    /** 解析当前仓库（id + 路径）；未选择仓库 / 处于升级迁移窗口时抛出，同步不可用。 */
+    /** 解析当前仓库（id + 路径）；未选择仓库时抛出，同步不可用。 */
     private suspend fun requireVaultRef(): VaultRef {
         val settings = settingsRepository.settings.first()
         val id = settings.currentVaultId
         val path = settings.vaultPath
-        if (id == null || id == SettingsRepository.LEGACY_VAULT_ID || path.isNullOrBlank()) {
+        if (id == null || path.isNullOrBlank()) {
             throw IOException("未选择仓库目录")
         }
         return VaultRef(id, path)

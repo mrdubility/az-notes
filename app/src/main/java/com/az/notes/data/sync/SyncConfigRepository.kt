@@ -3,10 +3,8 @@ package com.az.notes.data.sync
 import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
-import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
-import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.az.notes.data.settings.SettingsRepository
@@ -22,7 +20,6 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
@@ -35,38 +32,17 @@ private val Context.syncDataStore: DataStore<Preferences> by preferencesDataStor
  * 密码（坚果云“应用密码”）单独走 [CredentialStore] 加密存储，不落明文。
  *
  * 多仓库：配置按仓库 id 序列化为 JSON 存「config_<id>」键，跟随当前仓库切换；
- * 旧版全局键组（server_url 等）仅作升级迁移窗口的回退读取，
- * 由 [VaultMigrationRunner] 一次性迁入 per-vault JSON 后删除。
+ * 未设置过的仓库读取为默认值。
  */
 @Singleton
 class SyncConfigRepository @Inject constructor(
     @ApplicationContext context: Context,
     private val settingsRepository: SettingsRepository
 ) {
-    private object Keys {
-        // ---- 旧版全局键组：仅迁移读取 / 一次性迁移，勿在正常流程写入 ----
-        val SERVER_URL = stringPreferencesKey("server_url")
-        val USERNAME = stringPreferencesKey("username")
-        val REMOTE_DIR = stringPreferencesKey("remote_dir")
-        val MODE = stringPreferencesKey("mode")
-        val CONFLICT_STRATEGY = stringPreferencesKey("conflict_strategy")
-        val IGNORE_RULES = stringPreferencesKey("ignore_rules")
-        val MAX_FILE_SIZE_MB = intPreferencesKey("max_file_size_mb")
-        val AUTO_SYNC_ON_START = booleanPreferencesKey("auto_sync_on_start")
-        val PERIODIC_INTERVAL = stringPreferencesKey("periodic_interval")
-        val SYNC_AFTER_SAVE = booleanPreferencesKey("sync_after_save")
-    }
-
-    private val legacyKeys = listOf(
-        Keys.SERVER_URL, Keys.USERNAME, Keys.REMOTE_DIR, Keys.MODE, Keys.CONFLICT_STRATEGY,
-        Keys.IGNORE_RULES, Keys.MAX_FILE_SIZE_MB, Keys.AUTO_SYNC_ON_START,
-        Keys.PERIODIC_INTERVAL, Keys.SYNC_AFTER_SAVE
-    )
-
     private val dataStore = context.syncDataStore
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
-    /** 当前仓库的同步配置（切换仓库自动切换；无仓库时回退迁移数据 / 默认值）。 */
+    /** 当前仓库的同步配置（切换仓库自动切换；未设置过 → 默认值）。 */
     val config: Flow<SyncConfig> = combine(
         settingsRepository.settings.map { it.currentVaultId }.distinctUntilChanged(),
         dataStore.data.catch { e ->
@@ -100,62 +76,19 @@ class SyncConfigRepository @Inject constructor(
     suspend fun clearVault(vaultId: String) =
         dataStore.edit { prefs -> prefs.remove(configKey(vaultId)) }
 
-    // ---------------------------------------------------------------- 迁移
-
-    /**
-     * 一次性迁移（幂等）：旧版全局键组 → 当前仓库的「config_<id>」JSON，随后删除旧键。
-     * 若当前仓库已存在 JSON（升级后用户已先改过设置），保留 JSON、仅删旧键。
-     */
-    suspend fun migrateLegacyConfig() {
-        val vaultId = settingsRepository.settings.first().currentVaultId ?: return
-        if (vaultId == SettingsRepository.LEGACY_VAULT_ID) return
-        dataStore.edit { prefs ->
-            if (legacyKeys.none { prefs[it] != null }) return@edit
-            val key = configKey(vaultId)
-            if (prefs[key] == null) prefs[key] = json.encodeToString(readLegacyConfig(prefs))
-            legacyKeys.forEach { prefs.remove(it) }
-        }
-    }
-
     // ---------------------------------------------------------------- 内部
 
     private fun configKey(vaultId: String) = stringPreferencesKey("config_$vaultId")
 
+    /** 指定仓库的配置（未设置 / JSON 损坏 → 默认值）。 */
     private fun readConfig(prefs: Preferences, vaultId: String?): SyncConfig {
-        val raw = vaultId
-            ?.takeIf { it != SettingsRepository.LEGACY_VAULT_ID }
-            ?.let { prefs[configKey(it)] }
-        if (raw != null) {
-            runCatching { json.decodeFromString<SyncConfig>(raw) }.getOrNull()?.let { return it }
-        }
-        // 迁移窗口（合成 id）/ 无仓库 / JSON 损坏：回退旧版全局键（无则全默认）
-        return readLegacyConfig(prefs)
+        val raw = vaultId?.let { prefs[configKey(it)] } ?: return SyncConfig()
+        return runCatching { json.decodeFromString<SyncConfig>(raw) }.getOrNull() ?: SyncConfig()
     }
 
-    /** 旧版全局键组 → [SyncConfig]（缺项取默认；仅供迁移窗口与迁移方法使用）。 */
-    private fun readLegacyConfig(prefs: Preferences): SyncConfig = SyncConfig(
-        serverUrl = prefs[Keys.SERVER_URL]?.takeIf { it.isNotBlank() } ?: SyncConfig.DEFAULT_SERVER_URL,
-        username = prefs[Keys.USERNAME].orEmpty(),
-        remoteDir = prefs[Keys.REMOTE_DIR]?.takeIf { it.isNotBlank() } ?: "az-notes",
-        mode = prefs[Keys.MODE]
-            ?.let { runCatching { SyncMode.valueOf(it) }.getOrNull() }
-            ?: SyncMode.BIDIRECTIONAL,
-        conflictStrategy = prefs[Keys.CONFLICT_STRATEGY]
-            ?.let { runCatching { ConflictStrategy.valueOf(it) }.getOrNull() }
-            ?: ConflictStrategy.CONFLICT_COPY,
-        ignoreRules = prefs[Keys.IGNORE_RULES] ?: SyncConfig.DEFAULT_IGNORE_RULES,
-        maxFileSizeMb = (prefs[Keys.MAX_FILE_SIZE_MB] ?: 50)
-            .coerceIn(0, SyncConfig.MAX_FILE_SIZE_MB_LIMIT),
-        autoSyncOnStart = prefs[Keys.AUTO_SYNC_ON_START] ?: true,
-        periodicInterval = prefs[Keys.PERIODIC_INTERVAL]
-            ?.let { runCatching { SyncInterval.valueOf(it) }.getOrNull() }
-            ?: SyncInterval.OFF,
-        syncAfterSave = prefs[Keys.SYNC_AFTER_SAVE] ?: true
-    )
-
     /**
-     * 在当前仓库的配置上应用变更；无仓库时忽略。
-     * 迁移窗口内先补建档，避免写入丢失（见 [SettingsRepository.requireCurrentVaultId]）。
+     * 在当前仓库的配置上应用变更；无仓库时忽略
+     * （写入前先建档，见 [SettingsRepository.requireCurrentVaultId]）。
      */
     private suspend fun update(transform: (SyncConfig) -> SyncConfig) {
         val vaultId = settingsRepository.requireCurrentVaultId() ?: return
@@ -163,7 +96,7 @@ class SyncConfigRepository @Inject constructor(
             val key = configKey(vaultId)
             val current = prefs[key]
                 ?.let { runCatching { json.decodeFromString<SyncConfig>(it) }.getOrNull() }
-                ?: readLegacyConfig(prefs)
+                ?: SyncConfig()
             prefs[key] = json.encodeToString(transform(current))
         }
     }

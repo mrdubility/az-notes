@@ -7,7 +7,6 @@ import com.az.notes.data.local.SyncBaselineDao
 import com.az.notes.data.local.SyncLogDao
 import com.az.notes.data.local.SyncLogEntity
 import com.az.notes.data.settings.SettingsRepository
-import com.az.notes.data.settings.VaultMigrationRunner
 import com.az.notes.data.sync.SyncConfigRepository
 import com.az.notes.data.sync.SyncEngine
 import com.az.notes.domain.model.SyncPlan
@@ -29,7 +28,6 @@ import javax.inject.Singleton
 @Singleton
 class AutoSyncRunner @Inject constructor(
     private val settingsRepository: SettingsRepository,
-    private val vaultMigrationRunner: VaultMigrationRunner,
     private val syncConfigRepository: SyncConfigRepository,
     private val syncEngine: SyncEngine,
     private val baselineDao: SyncBaselineDao,
@@ -39,8 +37,6 @@ class AutoSyncRunner @Inject constructor(
 
     /** 执行一次自动同步会话；[trigger] 为触发方式（写入日志便于追溯）。 */
     suspend fun run(trigger: String) {
-        // 升级迁移优先：保证 per-vault 配置 / 基线 / 回收站就位后再读取
-        vaultMigrationRunner.ensureMigrated()
         val vaultId = settingsRepository.requireCurrentVaultId() ?: return
         val config = runCatching { syncConfigRepository.config.first() }.getOrNull() ?: return
         if (!config.configured) return
