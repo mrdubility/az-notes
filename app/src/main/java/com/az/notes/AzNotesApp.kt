@@ -54,6 +54,12 @@ class AzNotesApp : Application(), SingletonImageLoader.Factory {
      * App 级单例 ImageLoader：网络图片（http/https/data）经 [CoilHolder] 的受控 OkHttp
      * 客户端加载（体积上限 + 超时 + 不跟随重定向 + 请求头白名单，见 NetworkImageGuard）；
      * 关闭磁盘缓存，避免仓库外图片内容长期落盘。本地文件加载不受影响。
+     *
+     * 注意：严禁设置 networkCachePolicy(DISABLED)——Coil 会把「网络读 + 磁盘读均关闭」
+     * 翻译成请求头 `Cache-Control: no-cache, only-if-cached`（coil-network-core 的
+     * NetworkFetcher.newRequest），无 HTTP 缓存的 OkHttp 由 CacheInterceptor 直接
+     * 本地合成 504 Unsatisfiable Request：请求不发出、无头无体、毫秒级失败，远程图
+     * 全灭且不产生任何网络层日志（2026-10 实机事故根因，见 conn 诊断字段）。
      */
     override fun newImageLoader(context: PlatformContext): ImageLoader {
         return ImageLoader.Builder(context)
@@ -66,7 +72,6 @@ class AzNotesApp : Application(), SingletonImageLoader.Factory {
             }
             .diskCache(null)
             .diskCachePolicy(CachePolicy.DISABLED)
-            .networkCachePolicy(CachePolicy.DISABLED)
             .build()
     }
 
