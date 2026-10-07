@@ -221,7 +221,7 @@
     <!-- Images (import compression / attachment prompt / network image guard) -->
     <string name="settings_image_section">Images</string>
     <string name="settings_image_compress">Compress imported images</string>
-    <string name="settings_image_compress_subtitle">Fixed: longest edge 1920 · JPEG quality 80</string>
+    <string name="settings_image_compress_subtitle">Fixed: longest edge 1568 · JPEG quality 80</string>
     <string name="settings_image_attachment_prompt">Prompt about attachments on delete/move</string>
     <string name="settings_image_attachment_prompt_subtitle">Count referenced attachments when deleting or moving a note</string>
     <string name="settings_image_remote_max">Remote image size limit (MB)</string>

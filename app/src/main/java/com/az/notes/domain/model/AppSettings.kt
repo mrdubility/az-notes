@@ -51,7 +51,7 @@ data class AppSettings(
     val favoritePaths: Set<String> = emptySet(),
     /** 分享进入的笔记默认保存文件夹（相对当前仓库根；null = 跟随当前目录） */
     val shareFolder: String? = null,
-    /** 导入图片时是否压缩（固定参数：长边 1920 / JPEG 质量 80；关闭则原样复制）。 */
+    /** 导入图片时是否压缩（固定参数：长边 1568 / JPEG 质量 80；关闭则原样复制）。 */
     val imageCompressEnabled: Boolean = true,
     /** 删除 / 移动笔记时是否提示附件引用情况（关闭则不查询、不联动）。 */
     val attachmentPromptEnabled: Boolean = true,

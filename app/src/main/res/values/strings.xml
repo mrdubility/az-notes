@@ -221,7 +221,7 @@
     <!-- 图片（导入压缩 / 附件引用 / 网络图片护栏 / 孤儿图片） -->
     <string name="settings_image_section">图片</string>
     <string name="settings_image_compress">图片压缩导入</string>
-    <string name="settings_image_compress_subtitle">固定参数：长边 1920 · JPEG 质量 80</string>
+    <string name="settings_image_compress_subtitle">固定参数：长边 1568 · JPEG 质量 80</string>
     <string name="settings_image_attachment_prompt">删除/移动时提示附件</string>
     <string name="settings_image_attachment_prompt_subtitle">删除或移动笔记时统计其引用的附件</string>
     <string name="settings_image_remote_max">远端图片大小上限（MB）</string>

@@ -8,7 +8,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -113,6 +115,8 @@ class VaultImageTransformer(
         val request = remember(file, platformContext) {
             ImageRequest.Builder(platformContext)
                 .data(Uri.fromFile(file))
+                // 与远程分支 / 官方实现一致：按原始尺寸解码，保证上报的 intrinsicSize 即原图像素尺寸
+                .size(CoilSize.ORIGINAL)
                 .crossfade(true)
                 .build()
         }
@@ -124,6 +128,23 @@ class VaultImageTransformer(
                 .fillMaxWidth()
                 .clickable { onImageClick(file) }
         )
+    }
+
+    /**
+     * 内联图片尺寸上报：渲染库（0.35.0）在 `createImageInlineTextContent` 中以
+     * `LaunchedEffect(intrinsicSize) { imageState.updateImageSize(...) }` 驱动段落占位重排。
+     * 必须与官方 Coil3ImageTransformerImpl 一样订阅 painter 状态并记忆最后一次有效尺寸：
+     * 只取一次当前值的话，图片异步加载完成后不触发重组，占位将永远停在库兜底尺寸
+     * （全宽 × 180sp），表现为预览中图片被固定块裁切、同段落文字重排异常。
+     */
+    @Composable
+    override fun intrinsicSize(painter: Painter): Size {
+        var size by remember(painter) { mutableStateOf(painter.intrinsicSize) }
+        if (painter is AsyncImagePainter) {
+            val painterState = painter.state.collectAsState()
+            painterState.value.painter?.intrinsicSize?.also { size = it }
+        }
+        return size
     }
 
     /** 失败 / 拒绝原因文案；[retryable] 时追加「点击重试」提示行。 */
@@ -159,7 +180,13 @@ private class ReasonPainter(
     private val color: Color
 ) : Painter() {
 
-    override val intrinsicSize: Size get() = Size.Unspecified
+    /**
+     * 横幅尺寸（像素语义，渲染库经 toSp 折算后仍是该像素值）：宽 960 与容器宽取小、
+     * 高随比例收敛，最终呈现为一条「接近满宽、约 160px 高」的横幅。
+     * 返回 [Size.Unspecified]（旧实现）会落入渲染库兜底分支（容器宽 × 180sp 巨型块），
+     * 且文案容易溢出到相邻正文行上（红字浮位）。
+     */
+    override val intrinsicSize: Size get() = Size(960f, 160f)
 
     override fun DrawScope.onDraw() {
         val layout = textMeasurer.measure(

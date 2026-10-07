@@ -28,7 +28,7 @@ class ImageCompressorTest {
 
     @Test
     fun `targetSize scales longest edge down proportionally`() {
-        assertEquals(1920 to 1280, ImageCompressor.targetSize(3000, 2000))
+        assertEquals(1568 to 1045, ImageCompressor.targetSize(3000, 2000))
         // 已在阈值内：原尺寸返回
         assertEquals(1000 to 800, ImageCompressor.targetSize(1000, 800))
         // 非法尺寸原样返回

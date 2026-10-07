@@ -18,7 +18,7 @@ import java.io.FileOutputStream
 object ImageCompressor {
 
     /** 长边上限（像素）。 */
-    const val MAX_DIMENSION = 1920
+    const val MAX_DIMENSION = 1568
 
     /** JPEG 编码质量。 */
     const val JPEG_QUALITY = 80
