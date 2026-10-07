@@ -401,11 +401,11 @@
     <string name="debug_logs_storage_path">目录：%1$s</string>
     <string name="debug_logs_actions">操作</string>
     <string name="debug_logs_view">查看日志</string>
-    <string name="debug_logs_view_desc">全屏查看，按时间倒序（最新在前）</string>
+    <string name="debug_logs_view_desc">全屏查看，按时间倒序（最新在前）；长按行内文本可选择复制</string>
     <string name="debug_logs_line_count">共 %1$d 行</string>
     <string name="debug_logs_empty">暂无日志</string>
     <string name="debug_logs_export">导出到存储目录</string>
-    <string name="debug_logs_export_desc">合并全部分片为单个 JSONL 文件（便于发给 AI 分析）</string>
+    <string name="debug_logs_export_desc">合并全部分片为单个 JSONL 文件</string>
     <string name="debug_logs_export_done">已导出 %1$d 行</string>
     <string name="debug_logs_export_failed">导出失败，请重试</string>
     <string name="debug_logs_clear">清空日志</string>

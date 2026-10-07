@@ -154,7 +154,10 @@ fun ReaderScreen(
     val vaultRoot = state.vaultPath
     val noteDir = remember(state.path) { File(state.path).parentFile }
     val remoteMaxBytes = state.remoteImageMaxBytes
-    val imageTransformer = remember(vaultRoot, noteDir, remoteMaxBytes) {
+    // LazyColumn 单侧水平内边距：与下方 contentPadding 共用；同时传给 transformer 以修正
+    // 库从 parentLayoutCoordinates 拿到的 containerSize 包含 padding 导致的竖图右侧溢出。
+    val contentHPad = 16.dp
+    val imageTransformer = remember(vaultRoot, noteDir, remoteMaxBytes, contentHPad) {
         if (vaultRoot.isNullOrBlank() || noteDir == null) {
             NoOpImageTransformerImpl()
         } else {
@@ -163,7 +166,8 @@ fun ReaderScreen(
                 baseDir = noteDir,
                 maxBytes = remoteMaxBytes,
                 onImageClick = { file -> previewImage = file },
-                log = viewModel::imageLog
+                log = viewModel::imageLog,
+                containerHorizontalPaddingDp = contentHPad
             )
         }
     }
@@ -234,7 +238,7 @@ fun ReaderScreen(
                             LazyColumn(
                                 state = listState,
                                 modifier = Modifier.fillMaxSize(),
-                                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp)
+                                contentPadding = PaddingValues(horizontal = contentHPad, vertical = 12.dp)
                             ) {
                                 item(key = "file_name_header") {
                                     FileNameHeader(state.path.substringAfterLast('/'))

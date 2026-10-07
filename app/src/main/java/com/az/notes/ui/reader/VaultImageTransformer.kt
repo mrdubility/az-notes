@@ -25,6 +25,8 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImagePainter
 import coil3.compose.LocalPlatformContext
@@ -66,7 +68,11 @@ class VaultImageTransformer(
     private val maxBytes: Long,
     private val onImageClick: (File) -> Unit,
     /** 图片加载链路日志回调（写入调试日志 IMAGE 类型；未开启收集时静默丢弃）。 */
-    private val log: (DebugLogLevel, String, Map<String, Any?>) -> Unit = { _, _, _ -> }
+    private val log: (DebugLogLevel, String, Map<String, Any?>) -> Unit = { _, _, _ -> },
+    /** 预览页 LazyColumn 单侧水平内边距（与 ReaderScreen.contentPadding.horizontal 保持一致）。
+     *  库从 parentLayoutCoordinates 拿到的 containerSize 为规整视口宽（包含 padding），
+     *  直接参与占位计算会让竖图右侧溢出可见区域。placeholderConfig 中会从此基确扣减 2 倍。 */
+    private val containerHorizontalPaddingDp: Dp = 0.dp
 ) : ImageTransformer {
 
     /** 网络图片失败后的重试计数（link → 次数）：点击错误占位累加，驱动请求重建 */
@@ -240,18 +246,28 @@ class VaultImageTransformer(
     }
 
     /**
-     * 占位对齐覆写：库默认 [PlaceholderVerticalAlign.Bottom]（占位底边对齐基线、向上延伸）。
-     * 竖图（占位高度数百 sp）时占位向上凸出，把上方文字行整体盖住——表现为"图片上方
-     * 文字消失、图片只剩视口内下半部分、列表已在顶部无法继续上滑"。改为 Top：占位从
-     * 行顶向下延伸，图片完整落在自身行内，上下文字都不受影响。
+     * 占位对齐与宽基修正：
+     * 1) 库默认 [PlaceholderVerticalAlign.Bottom]（占位底边对齐基线、向上延伸）——竖图时占位
+     *    向上凸出数百 sp 把上方文字行整体盖住。改为 Top：占位从行顶向下延伸。
+     * 2) 库拿到的 containerSize 为规整视口宽（包含 LazyColumn contentPadding）——竖图
+     *    intrinsic.width ≥ 视口宽时，placeholder.width = containerSize.width = 视口宽，而
+     *    实际可见区域 = 视口宽 - 2×contentPadding，因此右侧溢出（用户描述“图右边一小部分
+     *    被撑出去”）。计算前从 containerSize.width 中扣减 2×容器内边距，与可见区域对齐。
      */
     override fun placeholderConfig(
         density: Density,
         containerSize: Size,
         intrinsicImageSize: Size
-    ): PlaceholderConfig =
-        super.placeholderConfig(density, containerSize, intrinsicImageSize)
+    ): PlaceholderConfig {
+        val padPx = with(density) { containerHorizontalPaddingDp.toPx() } * 2f
+        // Size 类无 isUnspecified / isNaN 属性；用 data class 的 equals 与
+        // Size.Unspecified（NaN, NaN）对比。Unspecified 时 super 落入 180×180
+        // 兑底分支，无需扣 padding。
+        val effectiveContainer = if (containerSize == Size.Unspecified) containerSize
+        else containerSize.copy(width = (containerSize.width - padPx).coerceAtLeast(1f))
+        return super.placeholderConfig(density, effectiveContainer, intrinsicImageSize)
             .copy(verticalAlign = PlaceholderVerticalAlign.Top)
+    }
 
     /**
      * 失败 / 拒绝原因文案；[retryable] 时追加「点击重试」提示行。

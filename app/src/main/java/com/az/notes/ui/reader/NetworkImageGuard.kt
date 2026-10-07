@@ -1,5 +1,6 @@
 package com.az.notes.ui.reader
 
+import java.io.IOException
 import java.net.InetAddress
 import java.util.concurrent.TimeUnit
 import okio.Buffer
@@ -41,14 +42,21 @@ object NetworkImageGuard {
     /** data: 内联图片的字符长度上限（超大 base64 不渲染）。 */
     const val DATA_URI_MAX_CHARS = 1_000_000
 
-    /** 拒绝请求的异常（[failure] 可直接映射到用户可读文案）。 */
-    class BlockedReason(val failure: Failure) : Exception(failure.name)
+    /**
+     * 拒绝请求的异常（[failure] 可直接映射到用户可读文案）。
+     *
+     * 必须继承 [IOException]：OkHttp Interceptor 契约只允许报 IOException，其他
+     * Exception 会直接穿透到 Coil 的 OkHttpNetworkFetcher；Coil 对非 IO 异常会 rethrow 到 IO 协程
+     * 造成未捕获崩溃。改为 IOException 后 Coil 会将其收敛为 AsyncImagePainter.State.Error，
+     * UI 展示为失败横幅，不闪退。
+     */
+    class BlockedReason(val failure: Failure) : IOException(failure.name)
 
-    /** 服务端返回非 2xx 状态码（403/404 等），具体码由 [code] 携带。 */
-    class HttpStatusException(val code: Int) : Exception("HTTP $code")
+    /** 服务端返回非 2xx 状态码（403/404 等），具体码由 [code] 携带（同属 IOException 家族，理由同上）。 */
+    class HttpStatusException(val code: Int) : IOException("HTTP $code")
 
-    /** 体积超限异常（流式读满上限时抛出，由 Coil 收敛为加载失败）。 */
-    class TooLargeException(val maxBytes: Long) : Exception("image exceeds $maxBytes bytes")
+    /** 体积超限异常（流式读满上限时抛出，由 Coil 收敛为加载失败；同属 IOException 家族）。 */
+    class TooLargeException(val maxBytes: Long) : IOException("image exceeds $maxBytes bytes")
 
     /** 失败分类（UI 侧映射文案，不暴露底层异常细节）。 */
     enum class Failure {

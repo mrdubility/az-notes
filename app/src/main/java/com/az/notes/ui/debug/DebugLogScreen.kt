@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
@@ -493,17 +494,22 @@ private fun LogViewerDialog(lines: List<String>, onDismiss: () -> Unit) {
                     }
                 } else {
                     val reversed = remember(lines) { lines.asReversed() }
-                    LazyColumn(
-                        modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
-                    ) {
-                        items(reversed) { line ->
-                            Text(
-                                text = line,
-                                style = MaterialTheme.typography.bodySmall,
-                                fontFamily = FontFamily.Monospace,
-                                modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)
-                            )
+                    // SelectionContainer 包裹滚动内容：长按行内文本即可选择/单选或拖选多行，
+                    // 弹系统菜单“复制”——适合从手机里取一两条到剪贴板发给 AI 分析，
+                    // 不需要每次跑完整导出流程。
+                    SelectionContainer(modifier = Modifier.fillMaxSize()) {
+                        LazyColumn(
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+                        ) {
+                            items(reversed) { line ->
+                                Text(
+                                    text = line,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontFamily = FontFamily.Monospace,
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)
+                                )
+                            }
                         }
                     }
                 }
