@@ -332,10 +332,7 @@ object NetworkImageGuard {
             info["url"] = chain.request().url.toString().take(180)
             chain.connection()?.let { c ->
                 info["proto"] = c.protocol().toString()
-                c.handshake()?.let { h ->
-                    info["tls"] = h.tlsVersion
-                    h.serverName?.let { info["sni"] = it }
-                }
+                c.handshake()?.let { h -> info["tls"] = h.tlsVersion }
                 runCatching {
                     val r = c.route()
                     info["peer"] =
@@ -343,7 +340,6 @@ object NetworkImageGuard {
                     if (r.proxy.type() != Proxy.Type.DIRECT) {
                         info["proxy"] = r.proxy.toString().take(120)
                     }
-                    info["tls?"] = r.requiresTls
                 }
             }
             val resp = chain.proceed(chain.request())
