@@ -3,6 +3,7 @@ package com.az.notes.ui.reader
 import java.io.IOException
 import java.net.InetAddress
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import okio.Buffer
 import okio.BufferedSource
 import okio.ForwardingSource
@@ -51,6 +52,17 @@ object NetworkImageGuard {
     /** 浏览器级语言头：与 UA 配套，进一步贴近真实浏览器请求。 */
     private const val DEFAULT_ACCEPT_LANGUAGE = "zh-CN,zh;q=0.9,en;q=0.8"
 
+    /** 受控客户端序号：每次 [newClient] 构建自增，诊断中用于辨识「哪个客户端实例」。 */
+    private val clientSeq = AtomicInteger(0)
+
+    /** 连接诊断快照（线程本地）：[ConnectionProbe] 返回响应后写入，[SizeCapInterceptor]
+     *  抛非 2xx 异常时读取——同一调用链同一线程，读到的是本次请求的采样。 */
+    private val threadConnInfo = ThreadLocal<String?>()
+
+    /** 最近一次探针采样（跨线程兜底）：用于识别「探针从未执行过」的情形。 */
+    @Volatile
+    private var lastConnInfo: String? = null
+
     /**
      * 拒绝请求的异常（[failure] 可直接映射到用户可读文案）。
      *
@@ -68,13 +80,17 @@ object NetworkImageGuard {
      * [requestUrl]：实际请求的完整 URL（验证链接解析是否被截断）；
      * [responseHeaders]：**全部**响应头拼接（截 400 字符）——头全空往往意味着
      * 错误由本地/就近的拦截组件伪造而非目标站返回；
-     * [bodyPreview]：响应体少量摘要（错误页常注明拦截原因，最多 240 字符）。
+     * [bodyPreview]：响应体少量摘要（错误页常注明拦截原因，最多 240 字符）；
+     * [connInfo]：抛出时刻的连接事实快照（客户端身份 / 探针是否执行 / 对端 IP / 代理 /
+     * 协议 / 耗时 / 缓存判定，见 [ConnectionProbe]）——即使 image-conn 日志意外缺失，
+     * 错误日志仍能回答「探针是否执行、连到了哪里」。
      */
     class HttpStatusException(
         val code: Int,
         val requestUrl: String? = null,
         val responseHeaders: String? = null,
-        val bodyPreview: String? = null
+        val bodyPreview: String? = null,
+        val connInfo: String? = null
     ) : IOException("HTTP $code")
 
     /** 体积超限异常（流式读满上限时抛出，由 Coil 收敛为加载失败；同属 IOException 家族）。 */
@@ -170,6 +186,7 @@ object NetworkImageGuard {
         logEvent: (Map<String, Any?>) -> Unit = {}
     ): OkHttpClient {
         val timeout = timeoutSeconds.coerceIn(1, 30).toLong()
+        val clientId = "c" + clientSeq.incrementAndGet()
         return OkHttpClient.Builder()
             .connectTimeout(CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS)
             .readTimeout(timeout, TimeUnit.SECONDS)
@@ -184,12 +201,11 @@ object NetworkImageGuard {
             // 主流图片库（实测其他笔记 App 同 URL 能加载，差异在我们的配置）。
             .retryOnConnectionFailure(true)
             .addInterceptor(HeaderWhitelistInterceptor)
-            .addInterceptor(SizeCapInterceptor(maxBytesProvider))
-            // 网络拦截器：连接已建立且位于产生 504 的同一条代码路径上，一定能执行，
-            // 据此采集实际连接信息（对端 IP/代理/协商协议/TLS）并落日志。
-            // 不用 EventListener：Coil 走同步 execute()，OkHttp 在该路径不保证回调
-            // callEnd/callFailed，汇总输出会落空。
-            .addNetworkInterceptor(ConnectionProbe(logEvent))
+            .addInterceptor(SizeCapInterceptor(clientId, maxBytesProvider))
+            // 网络拦截器：位于产生 504 的同一条调用链、连接已建立，每请求必执行，
+            // 采集实际连接信息（对端 IP/代理/协商协议/TLS）并写日志与错误快照。
+            // 连接快照（threadConnInfo/lastConnInfo）独立于日志落盘——诊断不再依赖单一通道。
+            .addNetworkInterceptor(ConnectionProbe(clientId, logEvent))
             .build()
     }
 
@@ -217,7 +233,10 @@ object NetworkImageGuard {
     /**
      * 体积上限拦截器：声明体积快速失败 + 实际字节流式硬限 + 状态码/重定向判定。
      */
-    private class SizeCapInterceptor(private val maxBytesProvider: () -> Long) : Interceptor {
+    private class SizeCapInterceptor(
+        private val clientId: String,
+        private val maxBytesProvider: () -> Long
+    ) : Interceptor {
         override fun intercept(chain: Interceptor.Chain): Response {
             val maxBytes = maxBytesProvider()
             if (maxBytes <= 0L) throw BlockedReason(Failure.DISABLED)
@@ -238,7 +257,16 @@ object NetworkImageGuard {
                 bodyPreview = runCatching {
                     resp.peekBody(1200L).string()
                         .replace('\n', ' ').replace('\r', ' ').trim().take(240)
-                }.getOrNull()?.ifBlank { null }
+                }.getOrNull()?.ifBlank { null },
+                // 连接事实快照：同线程探针采样优先；缺失时以本异常所属客户端身份 +
+                // 「最近一次是否执行过」兜底。附缓存响应判定与伺服耗时——一次落盘定死来源层。
+                connInfo = buildString {
+                    append(threadConnInfo.get() ?: (clientId + " probe=NONE"))
+                    append(" last=").append(lastConnInfo ?: "never")
+                    append(" cacheResp=").append(resp.cacheResponse != null)
+                    append(" netResp=").append(resp.networkResponse != null)
+                    append(" ms=").append(resp.receivedResponseAtMillis - resp.sentRequestAtMillis)
+                }.take(360)
             )
             val declared = resp.headers["Content-Length"]?.toLongOrNull()
             if (declared != null && declared > maxBytes) throw TooLargeException(maxBytes)
@@ -323,12 +351,17 @@ object NetworkImageGuard {
      * 用途：远程图命中来源不明的 504/403 时，据此判断 App 到底连到了哪个 IP / 是否经本地
      * 代理 / 走了哪种协议——把「目标站 vs 中间网关 vs 本地代理」定位到具体一层。
      * 每个请求（含成功）都会输出一条，便于拿成功样本对比失败样本。
+     *
+     * 采样同时写入线程本地快照（threadConnInfo）与全局兜底（lastConnInfo），由
+     * [SizeCapInterceptor] 在抛非 2xx 异常时携带进 [HttpStatusException.connInfo]——
+     * 即使本类日志落盘意外缺失，连接事实仍能随错误日志到达。
      */
     private class ConnectionProbe(
+        private val clientId: String,
         private val emit: (Map<String, Any?>) -> Unit
     ) : Interceptor {
         override fun intercept(chain: Interceptor.Chain): Response {
-            val info = HashMap<String, Any?>()
+            val info = LinkedHashMap<String, Any?>()
             info["url"] = chain.request().url.toString().take(180)
             chain.connection()?.let { c ->
                 info["proto"] = c.protocol().toString()
@@ -344,6 +377,14 @@ object NetworkImageGuard {
             }
             val resp = chain.proceed(chain.request())
             info["status"] = resp.code
+            // 连接事实快照：写线程本地（供同调用链的 SizeCapInterceptor 抛错时携带）+
+            // 全局兜底（识别「探针从未执行」）。独立于 emit，落盘失败也不丢事实。
+            val snapshot = buildString {
+                append(clientId).append(" probe-ok")
+                for ((k, v) in info) append(' ').append(k).append('=').append(v)
+            }.take(320)
+            threadConnInfo.set(snapshot)
+            lastConnInfo = snapshot
             runCatching { emit(info) }
             return resp
         }

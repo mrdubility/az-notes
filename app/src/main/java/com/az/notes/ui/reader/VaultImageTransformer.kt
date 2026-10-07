@@ -168,6 +168,7 @@ class VaultImageTransformer(
                                     ex.requestUrl?.let { put("reqUrl", it.take(200)) }
                                     ex.responseHeaders?.let { put("respHeaders", it.take(240)) }
                                     ex.bodyPreview?.let { put("body", it.take(160)) }
+                                    ex.connInfo?.let { put("conn", it.take(360)) }
                                 }
                             }
                         )
