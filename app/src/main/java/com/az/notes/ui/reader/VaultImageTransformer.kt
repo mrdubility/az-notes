@@ -19,10 +19,12 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.PlaceholderVerticalAlign
 import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImagePainter
 import coil3.compose.LocalPlatformContext
@@ -31,9 +33,11 @@ import coil3.request.ImageRequest
 import coil3.request.crossfade
 import coil3.size.Size as CoilSize
 import com.az.notes.R
+import com.az.notes.data.debug.DebugLogLevel
 import com.az.notes.domain.markdown.ImageReference
 import com.mikepenz.markdown.model.ImageData
 import com.mikepenz.markdown.model.ImageTransformer
+import com.mikepenz.markdown.model.PlaceholderConfig
 import java.io.File
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
@@ -60,7 +64,9 @@ class VaultImageTransformer(
     private val vaultRoot: String,
     private val baseDir: File,
     private val maxBytes: Long,
-    private val onImageClick: (File) -> Unit
+    private val onImageClick: (File) -> Unit,
+    /** 图片加载链路日志回调（写入调试日志 IMAGE 类型；未开启收集时静默丢弃）。 */
+    private val log: (DebugLogLevel, String, Map<String, Any?>) -> Unit = { _, _, _ -> }
 ) : ImageTransformer {
 
     /** 网络图片失败后的重试计数（link → 次数）：点击错误占位累加，驱动请求重建 */
@@ -79,14 +85,21 @@ class VaultImageTransformer(
             val blocked = remember(safeLink, maxBytes) { NetworkImageGuard.check(safeLink, maxBytes) }
             if (blocked != null) {
                 // 护栏拒绝为确定性结果：给出原因，不提供重试
+                log(
+                    DebugLogLevel.INFO,
+                    "remote-image-blocked",
+                    mapOf("link" to link.take(80), "failure" to blocked.name)
+                )
                 return ImageData(painter = reasonPainter(reasonText(blocked, retryable = false)))
             }
             val retry = retries[link] ?: 0
             val request = remember(safeLink, retry, platformContext) {
                 ImageRequest.Builder(platformContext)
                     .data(safeLink)
-                    .size(CoilSize.ORIGINAL)
-                    .crossfade(true)
+                    // 远程图未经过导入压缩，常为数 MB 原图：限制解码尺寸（最长边 2048 px，
+                    // 默认 Scale.FIT 等比缩放），避免 ORIGINAL 全尺寸解码 OOM 闪退；
+                    // intrinsicSize 上报的是解码后尺寸，占位与显示不受影响
+                    .size(CoilSize(2048, 2048))
                     .build()
             }
             val painter = rememberAsyncImagePainter(model = request)
@@ -96,6 +109,14 @@ class VaultImageTransformer(
                     val cause = s.result.throwable
                     val failure = NetworkImageGuard.classify(cause)
                         ?: NetworkImageGuard.Failure.UNSUPPORTED
+                    log(
+                        DebugLogLevel.WARN,
+                        "remote-image-error",
+                        mapOf(
+                            "link" to link.take(80),
+                            "cause" to (cause?.javaClass?.simpleName ?: "null")
+                        )
+                    )
                     ImageData(
                         painter = reasonPainter(
                             reasonText(
@@ -110,6 +131,20 @@ class VaultImageTransformer(
                     )
                 }
 
+                is AsyncImagePainter.State.Success -> {
+                    val w = painter.intrinsicSize.width
+                    val h = painter.intrinsicSize.height
+                    log(
+                        DebugLogLevel.INFO,
+                        "remote-image-success",
+                        mapOf("link" to link.take(80), "w" to w, "h" to h)
+                    )
+                    ImageData(
+                        painter = painter,
+                        contentDescription = link.substringAfterLast('/')
+                    )
+                }
+
                 else -> ImageData(
                     painter = painter,
                     contentDescription = link.substringAfterLast('/')
@@ -121,6 +156,7 @@ class VaultImageTransformer(
             ImageReference.resolveExisting(link, root, baseDir)
         }
         if (file == null) {
+            log(DebugLogLevel.INFO, "local-image-missing", mapOf("link" to link.take(80)))
             return ImageData(painter = reasonPainter(reasonText(null, retryable = false)))
         }
         val request = remember(file, platformContext) {
@@ -153,10 +189,34 @@ class VaultImageTransformer(
         var size by remember(painter) { mutableStateOf(painter.intrinsicSize) }
         if (painter is AsyncImagePainter) {
             val painterState = painter.state.collectAsState()
-            painterState.value.painter?.intrinsicSize?.also { size = it }
+            painterState.value.painter?.intrinsicSize?.also {
+                if (it != size) {
+                    // 占位尺寸收敛日志：仅尺寸变化时记录，定位"占位不更新/裁切"类问题
+                    log(
+                        DebugLogLevel.INFO,
+                        "image-intrinsic-size",
+                        mapOf("w" to it.width, "h" to it.height)
+                    )
+                    size = it
+                }
+            }
         }
         return size
     }
+
+    /**
+     * 占位对齐覆写：库默认 [PlaceholderVerticalAlign.Bottom]（占位底边对齐基线、向上延伸）。
+     * 竖图（占位高度数百 sp）时占位向上凸出，把上方文字行整体盖住——表现为"图片上方
+     * 文字消失、图片只剩视口内下半部分、列表已在顶部无法继续上滑"。改为 Top：占位从
+     * 行顶向下延伸，图片完整落在自身行内，上下文字都不受影响。
+     */
+    override fun placeholderConfig(
+        density: Density,
+        containerSize: Size,
+        intrinsicImageSize: Size
+    ): PlaceholderConfig =
+        super.placeholderConfig(density, containerSize, intrinsicImageSize)
+            .copy(verticalAlign = PlaceholderVerticalAlign.Top)
 
     /**
      * 失败 / 拒绝原因文案；[retryable] 时追加「点击重试」提示行。

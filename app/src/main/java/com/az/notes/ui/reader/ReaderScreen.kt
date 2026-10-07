@@ -162,7 +162,8 @@ fun ReaderScreen(
                 vaultRoot = vaultRoot,
                 baseDir = noteDir,
                 maxBytes = remoteMaxBytes,
-                onImageClick = { file -> previewImage = file }
+                onImageClick = { file -> previewImage = file },
+                log = viewModel::imageLog
             )
         }
     }

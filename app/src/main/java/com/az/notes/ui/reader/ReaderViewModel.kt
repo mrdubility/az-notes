@@ -4,6 +4,9 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.az.notes.R
+import com.az.notes.data.debug.DebugLogLevel
+import com.az.notes.data.debug.DebugLogRepository
+import com.az.notes.data.debug.DebugLogType
 import com.az.notes.data.settings.SettingsRepository
 import com.az.notes.data.storage.VaultRepository
 import com.az.notes.domain.markdown.FrontmatterAttribute
@@ -70,7 +73,8 @@ data class ReaderUiState(
 class ReaderViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
     private val vaultRepository: VaultRepository,
-    private val settingsRepository: SettingsRepository
+    private val settingsRepository: SettingsRepository,
+    private val debugLogRepository: DebugLogRepository
 ) : ViewModel() {
 
     private val absolutePath: String =
@@ -155,6 +159,11 @@ class ReaderViewModel @Inject constructor(
     /** 关闭“文档信息”对话框。 */
     fun clearDocInfo() {
         _state.update { it.copy(docInfo = null) }
+    }
+
+    /** 图片加载链路日志（写入调试日志 IMAGE 类型；未开启收集时静默丢弃）。 */
+    fun imageLog(level: DebugLogLevel, msg: String, extra: Map<String, Any?>) {
+        debugLogRepository.log(level, DebugLogType.IMAGE, msg, extra)
     }
 
     /** 切换待办勾选状态（写回磁盘后静默刷新列表）。 */
