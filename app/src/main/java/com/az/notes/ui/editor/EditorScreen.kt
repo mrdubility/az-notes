@@ -80,7 +80,7 @@ fun EditorScreen(
     viewModel: EditorViewModel,
     onBack: () -> Unit,
     onPreview: (String) -> Unit,
-    /** 分享独立页模式：返回即退出应用（回到分享来源），顶栏另提供「回列表」 */
+    /** 分享独立页模式：返回即退出应用（回到分享来源）；入页后的「已保存」横幅提供「回列表」出路 */
     fromShare: Boolean = false,
     onExitApp: () -> Unit = {},
     onBackToHome: () -> Unit = {}
@@ -177,21 +177,22 @@ fun EditorScreen(
         }
     }
 
-    // —— 保存状态反馈：顶栏标题旁文字常驻显示；分享页首次保存弹「回列表」横幅 ——
+    // —— 保存状态反馈：顶栏标题旁文字常驻显示；分享创建的笔记在进入编辑页时
+    // 已经写盘（第一次保存随创建完成），加载成功后首次弹「已保存 + 回列表」横幅 ——
     var shareBannerShown by rememberSaveable { mutableStateOf(false) }
     val savedLabel = stringResource(R.string.editor_saved)
     val backToHomeLabel = stringResource(R.string.editor_back_to_home)
-    LaunchedEffect(state.savedAt) {
-        if (state.savedAt == null) return@LaunchedEffect
-        if (fromShare && !shareBannerShown) {
-            shareBannerShown = true
-            val result = snackbarHostState.showSnackbar(
-                message = savedLabel,
-                actionLabel = backToHomeLabel,
-                duration = SnackbarDuration.Long
-            )
-            if (result == SnackbarResult.ActionPerformed) exitToList()
-        }
+    LaunchedEffect(state.loading, state.error) {
+        if (!fromShare || shareBannerShown) return@LaunchedEffect
+        // 加载失败不提示；加载成功即“第一次保存成功”时刻（分享创建时内容已落盘）
+        if (state.loading || state.error != null) return@LaunchedEffect
+        shareBannerShown = true
+        val result = snackbarHostState.showSnackbar(
+            message = savedLabel,
+            actionLabel = backToHomeLabel,
+            duration = SnackbarDuration.Long
+        )
+        if (result == SnackbarResult.ActionPerformed) exitToList()
     }
 
     // 匹配区间（查找栏计数与编辑器内高亮共用；纯文本查询不会跨换行）

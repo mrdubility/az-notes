@@ -433,8 +433,9 @@ class NotesViewModel @Inject constructor(
 
     /**
      * 从系统分享（ACTION_SEND，image 类型）新建图文笔记：先把图片按导入管线落到
-     * 笔记同目录 `assets/`（受压缩开关控制，默认开），成功后写 `# 标题 + 图片` 正文，
-     * 失败则不创建笔记（不留孤儿笔记）；导入成功但写正文失败则回滚刚导入的图片。
+     * 笔记同目录 `assets/`（受压缩开关控制，默认开），成功后写纯图片引用正文
+     * （不带自动标题），失败则不创建笔记（不留孤儿笔记）；导入成功但写正文失败
+     * 则回滚刚导入的图片。
      */
     fun createNoteFromSharedImage(uri: Uri, onCreated: (String) -> Unit) {
         viewModelScope.launch {
@@ -460,7 +461,7 @@ class NotesViewModel @Inject constructor(
                 _state.update { it.copy(message = UiMessage(UiText.of(R.string.share_image_failed))) }
                 return@launch
             }
-            val body = "# $baseName\n\n![](${media.link})\n"
+            val body = "![](${media.link})\n"
             val createdPath = runCatching {
                 withContext(Dispatchers.IO) {
                     if (vaultRepository.createFile(noteFile.absolutePath, body)) noteFile.absolutePath else null

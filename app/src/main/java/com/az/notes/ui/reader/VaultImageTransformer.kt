@@ -1,5 +1,6 @@
 package com.az.notes.ui.reader
 
+import android.graphics.BitmapFactory
 import android.net.Uri
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -28,6 +29,7 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.exifinterface.media.ExifInterface
 import coil3.compose.AsyncImagePainter
 import coil3.compose.LocalPlatformContext
 import coil3.compose.rememberAsyncImagePainter
@@ -40,6 +42,7 @@ import com.mikepenz.markdown.model.ImageData
 import com.mikepenz.markdown.model.ImageTransformer
 import com.mikepenz.markdown.model.PlaceholderConfig
 import java.io.File
+import java.util.WeakHashMap
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 /**
@@ -81,10 +84,53 @@ class VaultImageTransformer(
         /** 远程图解码边长上限（px）。全屏预览必须复用同一尺寸：内存缓存按请求参数做 key，
          *  同 URL + 同 size 才能命中行内已解码的位图，避免预览时二次下载/解码。 */
         const val REMOTE_DECODE_EDGE = 2048
+
+        /**
+         * 预读图片像素尺寸：BitmapFactory 只解码文件头（inJustDecodeBounds），不加载位图；
+         * 再按 EXIF 方向补偿宽高——Coil 解码 JPEG 时会应用 EXIF 摆正，其上报的
+         * intrinsicSize 为摆正后尺寸，两者必须同口径，占位初值才能与最终值一致。
+         * 压缩导入的图已在编码阶段摆正（方向 NORMAL），不涉及交换；
+         * 非位图或读取失败返回 null（调用方保持原异步收敛路径）。
+         */
+        private fun readImageSizePx(file: File): Size? {
+            val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            return runCatching {
+                BitmapFactory.decodeFile(file.absolutePath, opts)
+                var w = opts.outWidth
+                var h = opts.outHeight
+                if (w <= 0 || h <= 0) return@runCatching null
+                val orientation = ExifInterface(file.absolutePath).getAttributeInt(
+                    ExifInterface.TAG_ORIENTATION,
+                    ExifInterface.ORIENTATION_NORMAL
+                )
+                when (orientation) {
+                    ExifInterface.ORIENTATION_ROTATE_90,
+                    ExifInterface.ORIENTATION_ROTATE_270,
+                    ExifInterface.ORIENTATION_TRANSPOSE,
+                    ExifInterface.ORIENTATION_TRANSVERSE -> {
+                        val t = w
+                        w = h
+                        h = t
+                    }
+                }
+                Size(w.toFloat(), h.toFloat())
+            }.getOrNull()
+        }
     }
 
     /** 网络图片失败后的重试计数（link → 次数）：点击错误占位累加，驱动请求重建 */
     private val retries = mutableStateMapOf<String, Int>()
+
+    /**
+     * 本地图片预读像素尺寸（painter → 尺寸）：Coil 异步解码完成前，[intrinsicSize]
+     * 以它作为占位初值——首帧占位高度即最终高度，快速滑动（item 反复组合/回收）时
+     * 不再出现「占位 → 实尺寸」的段落高度突变（下方内容被顶出）。
+     * 键为弱引用：item 回收后 painter 可正常被 GC，条目随 WeakHashMap 自行清退。
+     */
+    private val preSizes = WeakHashMap<Painter, Size>()
+
+    /** 预读尺寸缓存（绝对路径 → 尺寸）：滑动中 item 来回重建时免去重复读文件头。 */
+    private val preSizeCache = mutableMapOf<String, Size>()
 
     @Composable
     override fun transform(link: String): ImageData? {
@@ -242,6 +288,10 @@ class VaultImageTransformer(
                 .build()
         }
         val painter = rememberAsyncImagePainter(model = request)
+        // 占位一次到位：组合期同步预读像素尺寸（只读文件头）注册给 [intrinsicSize]；
+        // 读取失败（null）时保持原异步收敛路径，仅该图退化为“加载完成后再定格”
+        val preSize = remember(file) { preSizeOf(file) }
+        if (preSize != null) preSizes[painter] = preSize
         return ImageData(
             painter = painter,
             contentDescription = file.name,
@@ -250,6 +300,10 @@ class VaultImageTransformer(
                 .clickable { onImageClick(file) }
         )
     }
+
+    /** 预读本地图片尺寸（带缓存：同文件只读一次文件头；失败不缓存，避免掩盖后续变化）。 */
+    private fun preSizeOf(file: File): Size? = preSizeCache[file.absolutePath]
+        ?: readImageSizePx(file)?.also { preSizeCache[file.absolutePath] = it }
 
     /**
      * 内联图片尺寸上报：渲染库（0.35.0）在 `createImageInlineTextContent` 中以
@@ -260,7 +314,10 @@ class VaultImageTransformer(
      */
     @Composable
     override fun intrinsicSize(painter: Painter): Size {
-        var size by remember(painter) { mutableStateOf(painter.intrinsicSize) }
+        // 本地图首选预读尺寸（transform 先于本函数执行，同一次组合内已注册）：
+        // 解码完成前的占位即为真实尺寸，与解码后的实际尺寸一致则零重组；
+        // 远程图与失败占位画笔无预读项，走原有异步收敛路径
+        var size by remember(painter) { mutableStateOf(preSizes[painter] ?: painter.intrinsicSize) }
         if (painter is AsyncImagePainter) {
             val painterState = painter.state.collectAsState()
             painterState.value.painter?.intrinsicSize?.also {
