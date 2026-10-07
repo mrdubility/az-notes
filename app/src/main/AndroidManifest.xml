@@ -52,6 +52,12 @@
                 <data android:mimeType="text/plain" />
                 <data android:mimeType="image/*" />
             </intent-filter>
+            <!-- 相册多选分享（多图）→ 取首张图片走导入管线 -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="image/*" />
+            </intent-filter>
             <!-- 文本选择菜单的“处理文字”（含 ColorOS 传送门等系统入口）→ 新建笔记 -->
             <intent-filter>
                 <action android:name="android.intent.action.PROCESS_TEXT" />

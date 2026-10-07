@@ -88,9 +88,10 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * 系统分享（ACTION_SEND 文本/图片）与文本选择菜单的“处理文字”（ACTION_PROCESS_TEXT）入口：
-     * 文本交纯文本新建笔记；图片（MIME 以 image 开头）取 EXTRA_STREAM（多选取首张）走图片导入建笔记。
-     * 两个分支互斥消费后清掉启动 intent；其它 Intent 忽略。
+     * 系统分享（ACTION_SEND / ACTION_SEND_MULTIPLE 文本/图片）与文本选择菜单的“处理文字”
+     * （ACTION_PROCESS_TEXT）入口：文本交纯文本新建笔记；图片（MIME 以 image 开头）取
+     * EXTRA_STREAM（多选取首张）走图片导入建笔记。各分支互斥消费后清掉启动 intent；
+     * 其它 Intent 忽略。
      */
     private fun handleShareIntent(intent: Intent?) {
         when (intent?.action) {
@@ -107,6 +108,18 @@ class MainActivity : ComponentActivity() {
                     val text = intent.getStringExtra(Intent.EXTRA_TEXT)
                     if (!text.isNullOrBlank()) {
                         mainViewModel.setSharedText(text)
+                        setIntent(Intent())
+                    }
+                }
+            }
+            Intent.ACTION_SEND_MULTIPLE -> {
+                // 相册多选分享：取首张走与 SEND 相同的图片导入管线
+                if (intent.type.orEmpty().startsWith("image/")) {
+                    @Suppress("DEPRECATION")
+                    val uris = intent.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM)
+                    val first = uris?.firstOrNull()
+                    if (first != null) {
+                        mainViewModel.setSharedImageUri(first)
                         setIntent(Intent())
                     }
                 }

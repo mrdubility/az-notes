@@ -91,6 +91,9 @@ object ImageCompressor {
      */
     fun compressToTempFile(source: File, isBitmap: Boolean): Result {
         val originalSize = source.length()
+        // 解码前置早退（与 [decisionFor] 同一判定）：非位图 / 体积已足够小本就不重编码，
+        // 免去 bounds 与完整解码两轮文件读取；0 字节不在此列，走原流程的解码失败兜底
+        if (!isBitmap || originalSize in 1..SKIP_BELOW_BYTES) return Result(source, false)
         val bounds = runCatching {
             BitmapFactory.Options().apply { inJustDecodeBounds = true }
                 .also { BitmapFactory.decodeFile(source.absolutePath, it) }

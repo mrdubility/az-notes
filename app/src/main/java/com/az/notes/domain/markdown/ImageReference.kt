@@ -11,12 +11,13 @@ import java.net.URLDecoder
  * 也复用同一套解析规则，避免两处逻辑漂移。
  *
  * 支持的写法：
- * - `![alt](path "title")`、`[alt](path)`；
+ * - `![alt](path "title")`、`[alt](path)`；路径含空格时支持 `<path with space>` 包裹与 `%20` 编码；
  * - `<img src="path">`；
  * - Obsidian 嵌入 `![[name]]` / `![[name|宽]]` 与双链 `[[name]]`（无扩展名时按常见图片后缀猜测）；
  * - 相对路径（相对笔记所在目录，含 `./`、`../`）与 `/` 仓库根路径。
  *
- * 百分号解码、`#`/`?` 后缀剥离与 `VaultImageTransformer` 完全一致。
+ * 百分号解码、`#`/`?` 后缀剥离与 `VaultImageTransformer` 完全一致；
+ * 写入侧（生成正文链接 / 手动插入）用 [encodeTarget] 做对应的编码。
  */
 object ImageReference {
 
@@ -26,8 +27,8 @@ object ImageReference {
     /** HTML img 标签。 */
     private val HTML_IMG = Regex("<img\\s+[^>]*?src\\s*=\\s*[\"']([^\"']+)[\"'][^>]*>", RegexOption.IGNORE_CASE)
 
-    /** Obsidian 嵌入 / 双链：`![[target]]`、`[[target]]`（先长后短，避免 `![[` 被 `[[` 抢先）。 */
-    private val WIKI = Regex("!?\\[\\[([^]|]+)(?:|[^]]*)?]]")
+    /** Obsidian 嵌入 / 双链：`![[target]]`、`[[target|别名]]`（先长后短，避免 `![[` 被 `[[` 抢先）。 */
+    private val WIKI = Regex("!?\\[\\[([^]|]+)(?:\\|[^]]*)?]]")
 
     /** 无扩展名时按这些后缀猜测目标文件（Obsidian 习惯）。 */
     private val GUESS_EXTENSIONS = listOf("png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "avif")
@@ -84,10 +85,11 @@ object ImageReference {
                     .normalize().within(root)?.let { out += it }
             }
         }
-        // 无扩展名：按常见图片后缀补齐
-        val first = out.firstOrNull()
-        if (first != null && first.name.substringAfterLast('.', "").isBlank()) {
-            GUESS_EXTENSIONS.forEach { ext -> out += File("${first.absolutePath}.$ext") }
+        // 无扩展名：按常见图片后缀补齐——对全部无扩展候选（含笔记旁 assets/ 候选）。
+        // 只猜首个候选会让「![[名字]] 的图在 assets/」在渲染层（不传 nameIndex）解析不到，
+        // 与索引层（有 nameIndex）结论漂移。
+        out.filter { it.name.substringAfterLast('.', "").isBlank() }.forEach { base ->
+            GUESS_EXTENSIONS.forEach { ext -> out += File("${base.absolutePath}.$ext") }
         }
         // 文件名全库匹配：只写名字（或名字+后缀）的引用同样能定位，避免把在用附件误判为孤儿
         if (nameIndex.isNotEmpty()) {
@@ -115,15 +117,49 @@ object ImageReference {
         nameIndex: Map<String, List<String>> = emptyMap()
     ): File? = candidates(ref, vaultRoot, noteDir, nameIndex).firstOrNull { it.isFile }
 
-    /** 去掉 title、锚点、查询串并做百分号解码（与 VaultImageTransformer 一致）。 */
+    /** 去掉 title、锚点、查询串并做百分号解码（与 VaultImageTransformer 一致）。
+     *  title 判定遵循 CommonMark 常见形态：`<>` 包裹的路径取其内部（可含空格）；
+     *  否则仅当空格后紧跟 `"` / `'` / `(` 时视为 title 起点——路径本身含空格则原样保留。 */
     private fun cleanTarget(raw: String): String {
-        val withoutTitle = raw.trim().substringBefore(' ').let { head ->
-            // `path "title"`：head 取空格前的路径部分；路径本身含空格时不带引号 title，原样返回
-            if (raw.trim().length == head.length) raw.trim() else head
-        }.removePrefix("<").removeSuffix(">")
+        val trimmed = raw.trim()
+        val withoutTitle = if (trimmed.startsWith("<")) {
+            // `<path with space> "title"`：先剥尖括号取路径，其余（title）丢弃
+            val close = trimmed.indexOf('>')
+            if (close > 0) trimmed.substring(1, close) else trimmed.removePrefix("<")
+        } else {
+            val titleStart = findTitleStart(trimmed)
+            if (titleStart > 0) trimmed.substring(0, titleStart) else trimmed
+        }
         val withoutAnchor = withoutTitle.substringBefore('#').substringBefore('?')
-        return decode(withoutAnchor)
+        return decode(withoutAnchor.trim())
     }
+
+    /** title 起点：首个「空格后紧跟引号 / 括号」的位置；不存在返回 -1。 */
+    private fun findTitleStart(s: String): Int {
+        for (i in 0 until s.length - 1) {
+            if (s[i] == ' ' && (s[i + 1] == '"' || s[i + 1] == '\'' || s[i + 1] == '(')) return i
+        }
+        return -1
+    }
+
+    /**
+     * 把引用目标编码为可安全写入 Markdown `(...)` 的形态：空格 → `%20`、`#` → `%23`、
+     * `(` → `%28`、`)` → `%29`，并对 `%` 做转义——[escapePercent] 为 true（本 App 生成的
+     * 路径，可保证解码往返）时一律 `%` → `%25`；为 false（用户手动输入）时，输入已含
+     * `%XX` 编码片段则原样返回（避免双重编码），否则同样把 `%` 转义。
+     */
+    fun encodeTarget(raw: String, escapePercent: Boolean = false): String {
+        val t = raw.trim()
+        if (!escapePercent && PERCENT_ESCAPE.containsMatchIn(t)) return t
+        return t.replace("%", "%25")
+            .replace(" ", "%20")
+            .replace("#", "%23")
+            .replace("(", "%28")
+            .replace(")", "%29")
+    }
+
+    /** `%XX` 编码片段（判定输入是否已按 URL 编码）。 */
+    private val PERCENT_ESCAPE = Regex("%[0-9a-fA-F]{2}")
 
     /** 百分号解码（保留 '+' 字符本身，不做表单语义转换）。 */
     private fun decode(value: String): String =

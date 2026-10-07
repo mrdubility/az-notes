@@ -24,8 +24,9 @@ import okhttp3.ResponseBody
  *    chunked / 谎报长度 / 无限流式响应都在读满上限时立即中断（防内存与流量耗尽）；
  * 2. 超时：`readTimeout` 覆盖慢速滴流，`callTimeout` 给整个请求兜硬上限（防长连接拖死）；
  * 3. 不跟随重定向：`3xx` 直接判失败，杜绝「小图链接 302 到 GB 级文件 / 内网地址」；
- * 4. 地址合规：仅允许 http/https/data 图片，IP 字面量的私网/环回/链路本地段拒绝加载
- *    （压缩内网探测面，同时不误伤域名型局域网 Wiki 图床）；
+ * 4. 地址合规：仅允许 http/https/data 图片；host 剥离 userinfo 与端口后判定——IP 字面量
+ *    （含短格式 / 整数形态，如 `127.1`、`2130706433`）的私网/环回/链路本地段与
+ *    `localhost` 别名一律拒绝（压缩内网探测面，同时不误伤域名型局域网 Wiki 图床）；
  * 5. 请求头白名单：浏览器级 UA + `Accept` 限定图片类型 + `Accept-Language`，
  *    剥离 Cookie / Authorization，避免凭据外泄；
  * 6. 协议协商、连接重试等网络层行为保持 OkHttp 默认（与浏览器 / 主流图片库一致），
@@ -142,29 +143,38 @@ object NetworkImageGuard {
         }
         val scheme = lower.substringBefore("://", "").let { if (it.isEmpty()) null else it }
         if (scheme != "http" && scheme != "https") return Failure.UNSUPPORTED
-        // 先取 authority（scheme 后、首个 `/` 前），再分离 host 与端口：
-        // IPv6 字面量写在方括号内（`[::1]:8080`），必须先按方括号取内容，
+        // 先取 authority（scheme 后、首个 `/` 或 `?` / `#` 前），剥离 userinfo
+        // （`user:pass@host` 形式——不剥离会把 userinfo 误当 host 放行，而真实请求目标是 @ 之后），
+        // 再分离 host 与端口：IPv6 字面量写在方括号内（`[::1]:8080`），必须先按方括号取内容，
         // 否则用 `:` 剥端口会把 `[::1]` 截成 `[`，令私网/环回拦截失效（SSRF 面）。
-        val authority = link.substringAfter("://").substringBefore("/")
+        val authority = link.substringAfter("://")
+            .substringBefore("/").substringBefore("?").substringBefore("#")
+            .substringAfterLast('@')
         val hostPart = if (authority.startsWith("[")) {
             authority.substringAfter("[").substringBefore("]")
         } else {
             authority.substringBefore(":")
         }
         if (hostPart.isBlank()) return Failure.UNSUPPORTED
-        // 去掉 zone id 尾缀（%eth0）
-        val plain = hostPart.substringBefore('%')
+        // 去掉 zone id 尾缀（%eth0）与 FQDN 尾点（`localhost.` 形式）
+        val plain = hostPart.substringBefore('%').removeSuffix(".")
+        // 本机别名：localhost 从不是图床，域名判定兜不住它，直接拒绝
+        if (plain.equals("localhost", ignoreCase = true)) return Failure.PRIVATE_ADDRESS
         if (isPrivateLiteral(plain)) return Failure.PRIVATE_ADDRESS
         return null
     }
 
-    /** IP 字面量的私网/环回/链路本地判定；非字面量（域名）返回 false，不误伤局域网域名图床。 */
+    /** 数字型主机形态（宽松 IPv4 1-4 段 / 十进制、十六进制整数）：系统解析器可能把
+     *  这些解释为 IP 字面量（实测 JVM 上 `127.1`、`2130706433` 即解析为 127.0.0.1），
+     *  因此也要走解析判定，不能只看四段点分。 */
+    private val NUMERIC_HOST = Regex("(?:\\d+(?:\\.\\d+){0,3})|(?:0[xX][0-9a-fA-F]+)")
+
+    /** IP 字面量的私网/环回/链路本地判定；非字面量（域名）返回 false，不误伤局域网域名图床。
+     *  数字型 host 在平台解析器无法识别时放行——请求最终也因解析失败而报错，无安全落差。 */
     fun isPrivateLiteral(host: String): Boolean {
         if (host.isBlank()) return false
         val literal = runCatching {
-            if (host.indexOf(':') >= 0) {
-                InetAddress.getByName(host)
-            } else if (host.matches(Regex("\\d{1,3}(\\.\\d{1,3}){3}"))) {
+            if (host.indexOf(':') >= 0 || NUMERIC_HOST.matches(host)) {
                 InetAddress.getByName(host)
             } else null
         }.getOrNull() ?: return false

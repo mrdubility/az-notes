@@ -57,7 +57,10 @@ class CoilHolder @Inject constructor(
     /** 单张图片体积上限（字节）；0 = 不加载网络图片。 */
     fun currentMaxBytes(): Long = config.value.maxBytes
 
-    /** 把设置回流到护栏配置（由主 ViewModel 在 settings 流上调用）。 */
+    /** 把设置回流到护栏配置（由主 ViewModel 在 settings 流上调用）。
+     *  与 [client] 共用同一把实例锁：applySettings 会读 cachedTimeout 并可能置空 cached，
+     *  与惰性构建交叉执行时若不加锁存在缓存可见性窗口。 */
+    @Synchronized
     fun applySettings(maxBytes: Long, timeoutSeconds: Int) {
         val next = GuardConfig(maxBytes, timeoutSeconds)
         if (config.value != next) {

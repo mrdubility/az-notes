@@ -255,10 +255,11 @@ class EditorViewModel @Inject constructor(
             }?.path
             val crossVault = targetVaultRoot != null
             // 跨仓库且开关开启时，移动前先在源仓库统计「仅本文引用」的附件，随后同名复制到目标仓库
-            val exclusiveFiles: List<File> = if (crossVault && settings?.attachmentPromptEnabled == true && !vault.isNullOrBlank()) {
+            val vaultRootPath = vault.orEmpty()
+            val exclusiveFiles: List<File> = if (crossVault && settings?.attachmentPromptEnabled == true && vaultRootPath.isNotBlank()) {
                 withContext(Dispatchers.IO) {
                     runCatching {
-                        attachmentRepository.referencedByNote(File(vault!!), absolutePath).exclusiveFiles
+                        attachmentRepository.referencedByNote(File(vaultRootPath), absolutePath).exclusiveFiles
                     }.getOrDefault(emptyList())
                 }
             } else emptyList()

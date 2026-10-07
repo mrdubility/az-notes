@@ -78,9 +78,18 @@ class AttachmentRepository @Inject constructor(
         onProgress: (Int, Int) -> Unit = { _, _ -> }
     ): IndexResult {
         val root = vaultRoot.normalize()
+        return buildReferenceIndex(root, listAttachments(root), onProgress)
+    }
+
+    /** 索引构建实现（attachments 由调用方预先列出，[orphans] 与其共用同一次全库扫描）。 */
+    private fun buildReferenceIndex(
+        root: File,
+        attachments: List<File>,
+        onProgress: (Int, Int) -> Unit
+    ): IndexResult {
         val notes = ArrayList<File>()
         if (root.isDirectory) collectNotes(root, notes)
-        val nameIndex = buildNameIndex(root, listAttachments(root))
+        val nameIndex = buildNameIndex(root, attachments)
         val index = HashMap<String, MutableSet<String>>()
         var unscanned = 0
         val total = notes.size
@@ -97,6 +106,8 @@ class AttachmentRepository @Inject constructor(
             ImageReference.extract(text).forEach { ref ->
                 if (ImageReference.isRemote(ref)) return@forEach
                 val resolved = ImageReference.resolveExisting(ref, root, noteDir, nameIndex) ?: return@forEach
+                // 笔记互链 `[文字](other.md)` 不是附件引用：剔除，避免删除/移动统计把笔记算成附件
+                if (VaultRepository.isMarkdownName(resolved.name)) return@forEach
                 index.getOrPut(resolved.absolutePath) { LinkedHashSet() }.add(note.absolutePath)
             }
         }
@@ -109,8 +120,9 @@ class AttachmentRepository @Inject constructor(
     /** 孤儿图片：附件存在但不在引用索引内。 */
     fun orphans(vaultRoot: File, onProgress: (Int, Int) -> Unit = { _, _ -> }): OrphanReport {
         val root = vaultRoot.normalize()
-        val result = buildReferenceIndex(root, onProgress)
-        val orphanFiles = listAttachments(root).filter { it.absolutePath !in result.index }
+        val attachments = listAttachments(root)
+        val result = buildReferenceIndex(root, attachments, onProgress)
+        val orphanFiles = attachments.filter { it.absolutePath !in result.index }
         return OrphanReport(
             orphans = orphanFiles.sortedBy { it.absolutePath },
             totalBytes = orphanFiles.sumOf { it.length() },

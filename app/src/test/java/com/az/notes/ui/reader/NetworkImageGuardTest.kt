@@ -17,6 +17,7 @@ import org.junit.Test
  * 网络图片护栏单测：
  * - 纯函数 [NetworkImageGuard.check]/[NetworkImageGuard.isPrivateLiteral]/[NetworkImageGuard.classify] 走 JVM；
  * - 受控客户端（体积上限 / 快速失败 / 重定向 / 慢速滴流超时）用 OkHttp `MockWebServer` 集成验证。
+ * - host 判定补充：userinfo 剥离、query/fragment 无路径形态、localhost 别名、短格式数字 IP。
  */
 class NetworkImageGuardTest {
 
@@ -67,6 +68,37 @@ class NetworkImageGuardTest {
         assertNull(NetworkImageGuard.check("https://8.8.8.8/a.png", 1_000))
         // 域名型主机不拦截（避免误伤局域网 Wiki 图床）
         assertNull(NetworkImageGuard.check("https://intranet.example.com/a.png", 1_000))
+    }
+
+    @Test
+    fun `check strips userinfo and delimiter suffixes before host judgement`() {
+        // userinfo（user@ / user:pass@）不能遮蔽私网主机：真实请求目标是 @ 之后
+        assertEquals(NetworkImageGuard.Failure.PRIVATE_ADDRESS, NetworkImageGuard.check("http://user@127.0.0.1/a.png", 1_000))
+        assertEquals(NetworkImageGuard.Failure.PRIVATE_ADDRESS, NetworkImageGuard.check("http://user:pw@127.0.0.1/a.png", 1_000))
+        assertEquals(NetworkImageGuard.Failure.PRIVATE_ADDRESS, NetworkImageGuard.check("http://user@[::1]/a.png", 1_000))
+        // 无路径形态：query / fragment 直接跟随 authority
+        assertEquals(NetworkImageGuard.Failure.PRIVATE_ADDRESS, NetworkImageGuard.check("http://127.0.0.1?x=1", 1_000))
+        assertEquals(NetworkImageGuard.Failure.PRIVATE_ADDRESS, NetworkImageGuard.check("http://127.0.0.1#f", 1_000))
+        // 剥离 userinfo 后是公网主机的不误伤
+        assertNull(NetworkImageGuard.check("http://user@8.8.8.8/a.png", 1_000))
+        assertNull(NetworkImageGuard.check("http://user@intranet.example.com/a.png", 1_000))
+    }
+
+    @Test
+    fun `check rejects shorthand numeric hosts resolved to loopback`() {
+        // 传统 1-4 段 IPv4 形态与十进制整数形态都会被平台解析为数字地址
+        // （实测 JVM：127.1 / 2130706433 → 127.0.0.1），必须拦截
+        assertEquals(NetworkImageGuard.Failure.PRIVATE_ADDRESS, NetworkImageGuard.check("http://127.1/a.png", 1_000))
+        assertEquals(NetworkImageGuard.Failure.PRIVATE_ADDRESS, NetworkImageGuard.check("http://2130706433/a.png", 1_000))
+        // 短格式公网地址按实际解析结果放行（8.8 → 8.0.0.8，非私网），不因形态一刀切
+        assertNull(NetworkImageGuard.check("http://8.8/a.png", 1_000))
+    }
+
+    @Test
+    fun `check rejects localhost alias and trailing dot`() {
+        assertEquals(NetworkImageGuard.Failure.PRIVATE_ADDRESS, NetworkImageGuard.check("http://localhost/a.png", 1_000))
+        assertEquals(NetworkImageGuard.Failure.PRIVATE_ADDRESS, NetworkImageGuard.check("http://localhost./a.png", 1_000))
+        assertEquals(NetworkImageGuard.Failure.PRIVATE_ADDRESS, NetworkImageGuard.check("http://LOCALHOST/a.png", 1_000))
     }
 
     // ---------- isPrivateLiteral ----------

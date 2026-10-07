@@ -8,6 +8,7 @@ import com.az.notes.data.debug.DebugLogRepository
 import com.az.notes.data.debug.DebugLogLevel
 import com.az.notes.data.debug.DebugLogType
 import com.az.notes.data.storage.VaultRepository
+import com.az.notes.domain.markdown.ImageReference
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
 import java.text.SimpleDateFormat
@@ -20,7 +21,7 @@ import kotlinx.coroutines.withContext
 
 /** 一次图片导入的产出。 */
 data class ImportedMedia(
-    /** 写入笔记正文的链接（相对笔记所在目录）。 */
+    /** 写入笔记正文的链接（相对笔记所在目录，已做 Markdown 安全编码：空格 / 括号等转 %XX）。 */
     val link: String,
     val absolutePath: String,
     val bytesBefore: Long,
@@ -99,7 +100,9 @@ class ImageImportRepository @Inject constructor(
                 target.absolutePath
             )
             ImportedMedia(
-                link = target.relativeToNoteDir(noteDir),
+                // 相对路径编码为 Markdown 安全形态（空格 / # / % / 括号 → %XX），
+                // 避免「文件名含空格 → 正文裸空格 → 解析被 title 规则截断」的坏链
+                link = ImageReference.encodeTarget(target.relativeToNoteDir(noteDir), escapePercent = true),
                 absolutePath = target.absolutePath,
                 bytesBefore = bytesBefore,
                 bytesAfter = target.length(),
@@ -116,8 +119,10 @@ class ImageImportRepository @Inject constructor(
      * 跨仓库移动笔记时，把「仅本文引用」的附件按**同名**复制到目标笔记所在目录的
      * `assets/`，使正文里的 `assets/xxx` 引用在目标仓库同样成立（同目录语义天然一致）。
      *
-     * 目标越出 [targetVaultRoot] 或未通过 [VaultRepository.isSafeTarget] 护栏的附件一律跳过；
-     * 单张失败不影响其余，返回成功复制的张数（调用方据此提示「附件未全部跟随」）。
+     * 目标已存在同名附件时**跳过不覆盖**（可能被目标仓库其他笔记引用）——引用本就能
+     * 解析到该文件，视同已就位；目标越出 [targetVaultRoot] 或未通过
+     * [VaultRepository.isSafeTarget] 护栏的附件一律跳过；单张失败不影响其余，
+     * 返回成功复制的张数（调用方据此提示「附件未全部跟随」）。
      */
     suspend fun copyAttachmentsAcrossVaults(
         sources: List<File>,
@@ -135,6 +140,11 @@ class ImageImportRepository @Inject constructor(
                 !dest.absolutePath.startsWith(root.absolutePath + File.separator)
             ) return@forEach
             if (!VaultRepository.isSafeTarget(dest.absolutePath)) return@forEach
+            // 目标已有同名附件：不覆盖（可能被目标仓库其他笔记引用），视同已就位
+            if (dest.exists()) {
+                ok++
+                return@forEach
+            }
             val done = runCatching {
                 (dir.exists() || dir.mkdirs()) && writeAtomically(dest, src)
             }.getOrDefault(false)
@@ -220,7 +230,9 @@ class ImageImportRepository @Inject constructor(
         return candidate
     }
 
-    /** 原子写二进制（先 `.tmp` 再 rename）；失败清理临时文件，不留半成品附件。 */
+    /** 原子写二进制（先 `.tmp` 再 rename 覆盖）；失败清理临时文件，不留半成品附件。
+     *  不先删旧目标：Unix 语义下 rename 原子替换；rename 失败（个别文件系统拒绝覆盖）
+     *  时回退 copy——旧文件在回退成功前始终保留，避免「先删后写失败」造成文件丢失。 */
     private fun writeAtomically(target: File, source: File): Boolean {
         if (target.absolutePath == source.absolutePath) return target.exists()
         target.parentFile?.mkdirs()
@@ -229,7 +241,6 @@ class ImageImportRepository @Inject constructor(
             source.inputStream().use { input ->
                 tmp.outputStream().use { output -> input.copyTo(output) }
             }
-            if (target.exists()) target.delete()
             if (!tmp.renameTo(target)) source.copyTo(target, overwrite = true)
             runCatching { tmp.delete() }
             target.exists()

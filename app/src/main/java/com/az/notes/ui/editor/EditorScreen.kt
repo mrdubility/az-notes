@@ -57,6 +57,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.az.notes.R
 import com.az.notes.data.media.ImportedMedia
+import com.az.notes.domain.markdown.ImageReference
 import com.az.notes.ui.common.resolve
 import com.az.notes.ui.components.InsertImageDialog
 import com.az.notes.ui.components.MoveTargetDialog
@@ -103,13 +104,15 @@ fun EditorScreen(
     // 笔记文本是否已灌入编辑器；配置重建时经 rememberSaveable 恢复，避免重复灌入
     var initialized by rememberSaveable { mutableStateOf(false) }
 
-    // 在光标处插入图片 Markdown：`![](link)`；altInCursor=true 时光标停在方括号内供填写 alt
+    // 在光标 / 选区处插入图片 Markdown：`![](link)`；有选区时替换选中文本；
+    // altInCursor=true 时光标停在方括号内供填写 alt
     val insertImageMarkdown: (String, Boolean) -> Unit = { link, altInCursor ->
         textState.edit {
-            val cursor = selection.min
+            val start = selection.min
+            val end = selection.max
             val snippet = "![]($link)"
-            replace(cursor, cursor, snippet)
-            selection = if (altInCursor) TextRange(cursor + 2) else TextRange(cursor + snippet.length)
+            replace(start, end, snippet)
+            selection = if (altInCursor) TextRange(start + 2) else TextRange(start + snippet.length)
         }
     }
 
@@ -338,7 +341,9 @@ fun EditorScreen(
             },
             onInsertLink = { value ->
                 insertImageDialog = false
-                insertImageMarkdown(value, false)
+                // 手动输入的目标先转义编码（已含 %XX 片段的输入原样保留），
+                // 保证含空格 / `#` / 括号的路径与 URL 解析往返一致
+                insertImageMarkdown(ImageReference.encodeTarget(value), false)
             }
         )
     }
