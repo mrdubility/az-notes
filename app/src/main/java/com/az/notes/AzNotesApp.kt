@@ -15,6 +15,8 @@ import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -42,6 +44,7 @@ class AzNotesApp : Application(), SingletonImageLoader.Factory {
         installCrashLogger()
         appScope.launch {
             coilHolder.bootstrap()
+            logBuildFingerprint()
             syncScheduler.reschedulePeriodic()
             syncScheduler.scheduleStartupSync()
         }
@@ -65,6 +68,26 @@ class AzNotesApp : Application(), SingletonImageLoader.Factory {
             .diskCachePolicy(CachePolicy.DISABLED)
             .networkCachePolicy(CachePolicy.DISABLED)
             .build()
+    }
+
+    /**
+     * 构建指纹写日志（type=APP，msg=app-start）：版本 / 版本号 / CI 构建 commit。
+     * 排障时先核对这条与下载的 Actions 运行号是否一致，可立即识别「装错包 / 未覆盖安装」。
+     * 等日志配置首次回流后再写（配置快照未就绪时 log() 会静默丢弃）。
+     */
+    private suspend fun logBuildFingerprint() {
+        runCatching { debugLogRepository.config.first() }
+        delay(200)
+        debugLogRepository.log(
+            DebugLogLevel.INFO,
+            DebugLogType.APP,
+            "app-start",
+            mapOf(
+                "version" to BuildConfig.VERSION_NAME,
+                "code" to BuildConfig.VERSION_CODE,
+                "commit" to BuildConfig.BUILD_COMMIT
+            )
+        )
     }
 
     /**

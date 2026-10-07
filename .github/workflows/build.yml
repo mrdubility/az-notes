@@ -75,7 +75,8 @@ jobs:
       - name: Assemble Debug APK
         run: |
           set +e
-          gradle :app:assembleDebug --no-daemon --stacktrace 2>&1 | tee build.log
+          gradle :app:assembleDebug --no-daemon --stacktrace \
+            -PbuildCommit=${{ github.sha }} -PbuildRunNumber=${{ github.run_number }} 2>&1 | tee build.log
           status=${PIPESTATUS[0]}
           if [ $status -ne 0 ]; then
             # 失败关键行输出为 annotation（匿名可经 REST API 读取，便于快速定位）：

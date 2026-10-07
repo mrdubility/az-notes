@@ -7,6 +7,11 @@ plugins {
     alias(libs.plugins.hilt)
 }
 
+// 构建指纹：CI 以 -PbuildCommit=<sha> / -PbuildRunNumber=<n> 注入；本地构建回退默认值。
+// App 内「调试日志」页与启动日志（app-start）会展示，用于核对手机安装的 APK 是否为当次 CI 产物。
+val buildCommit = (findProperty("buildCommit") as? String)?.take(7) ?: "local"
+val buildRunNumber = (findProperty("buildRunNumber") as? String)?.toIntOrNull()
+
 android {
     namespace = "com.az.notes"
     compileSdk = libs.versions.compileSdk.get().toInt()
@@ -41,8 +46,11 @@ android {
         applicationId = "com.az.notes"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
-        versionCode = 2
+        // versionCode 跟随 CI 运行号单调递增（保证覆盖安装成功；本地构建回退 2）
+        versionCode = buildRunNumber ?: 2
         versionName = "1.1.0"
+        // 构建 commit（短哈希）：排障时与 Actions 运行号核对「装的是哪版包」
+        buildConfigField("String", "BUILD_COMMIT", "\"$buildCommit\"")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -81,6 +89,8 @@ android {
 
     buildFeatures {
         compose = true
+        // 生成 BuildConfig：注入构建 commit 指纹（BUILD_COMMIT）
+        buildConfig = true
     }
 
     packaging {

@@ -61,6 +61,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
+import com.az.notes.BuildConfig
 import com.az.notes.R
 import com.az.notes.data.debug.DebugLogConfig
 import com.az.notes.data.debug.DebugLogLevel
@@ -211,6 +212,21 @@ fun DebugLogScreen(
                         modifier = Modifier.padding(12.dp)
                     )
                 }
+            }
+
+            // —— 构建指纹：核对手机安装包是否为当次 CI 产物（排障第一步） ——
+            item {
+                Text(
+                    text = stringResource(
+                        R.string.debug_logs_build_fingerprint,
+                        BuildConfig.VERSION_NAME,
+                        BuildConfig.VERSION_CODE,
+                        BuildConfig.BUILD_COMMIT
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)
+                )
             }
 
             // —— 收集开关与过滤 ——

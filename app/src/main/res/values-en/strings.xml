@@ -427,6 +427,7 @@
     <!-- Debug logs (off by default; Settings → About → version row) -->
     <string name="debug_logs_title">Debug logs</string>
     <string name="debug_logs_warning">Enable only while troubleshooting; keep off for daily use. Logs stay in the app\'s private storage on this device and are never uploaded.</string>
+    <string name="debug_logs_build_fingerprint">Installed build: v%1$s (%2$d) · commit %3$s</string>
     <string name="debug_logs_collect">Collection</string>
     <string name="debug_logs_enabled">Collect logs</string>
     <string name="debug_logs_enabled_on">On: recording by level and types below</string>

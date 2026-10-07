@@ -382,6 +382,7 @@
     <!-- 调试日志（默认关闭；设置 → 关于 → 版本条目进入） -->
     <string name="debug_logs_title">调试日志</string>
     <string name="debug_logs_warning">仅排查问题时开启；日常使用请保持关闭。日志只保存在本机应用私有目录，不会上传。</string>
+    <string name="debug_logs_build_fingerprint">当前安装包：v%1$s（%2$d）· 构建 %3$s</string>
     <string name="debug_logs_collect">收集设置</string>
     <string name="debug_logs_enabled">收集日志</string>
     <string name="debug_logs_enabled_on">已开启：按下方等级与类型记录</string>
