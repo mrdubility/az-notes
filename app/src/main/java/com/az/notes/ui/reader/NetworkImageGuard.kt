@@ -8,13 +8,7 @@ import okio.BufferedSource
 import okio.ForwardingSource
 import okio.Source
 import okio.buffer
-import java.net.InetSocketAddress
 import java.net.Proxy
-import java.util.concurrent.ConcurrentHashMap
-import okhttp3.Call
-import okhttp3.Connection
-import okhttp3.EventListener
-import okhttp3.HttpUrl
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import okhttp3.Response
@@ -189,9 +183,13 @@ object NetworkImageGuard {
             // h2 + http/1.1 按 ALPN 与服务器协商——不再强制 HTTP/1.1，以贴近浏览器/
             // 主流图片库（实测其他笔记 App 同 URL 能加载，差异在我们的配置）。
             .retryOnConnectionFailure(true)
-            .eventListenerFactory { CallDiagnostics(logEvent) }
             .addInterceptor(HeaderWhitelistInterceptor)
             .addInterceptor(SizeCapInterceptor(maxBytesProvider))
+            // 网络拦截器：连接已建立且位于产生 504 的同一条代码路径上，一定能执行，
+            // 据此采集实际连接信息（对端 IP/代理/协商协议/TLS）并落日志。
+            // 不用 EventListener：Coil 走同步 execute()，OkHttp 在该路径不保证回调
+            // callEnd/callFailed，汇总输出会落空。
+            .addNetworkInterceptor(ConnectionProbe(logEvent))
             .build()
     }
 
@@ -318,65 +316,40 @@ object NetworkImageGuard {
     fun httpStatusOf(t: Throwable?): Int? = httpStatusExceptionOf(t)?.code
 
     /**
-     * 单次请求的连接诊断：经 OkHttp [EventListener] 采集 DNS 解析结果、代理选择、
-     * 实际连接地址、协商协议（h2 / http/1.1）与 TLS 版本，在请求结束/失败时汇总输出。
+     * 单次请求的连接诊断（网络拦截器）：在连接已建立、请求即将发往服务端的时刻，
+     * 采集实际 TCP 对端地址、是否走代理、协商协议（h2 / http/1.1）、TLS 版本与 SNI，
+     * 拿到响应后再记状态码，一并输出。
      *
-     * 用途：当远程图命中不明来源的 504/403 时，据此判断 App 实际连到了哪个 IP、
-     * 是否经过本地代理、走了哪种协议——把「目标站 vs 中间网关 vs 本地代理」定位到具体一层。
-     * 每请求由 [eventListenerFactory] 新建独立实例，以 [Call] 为 key 聚合。
+     * 用途：远程图命中来源不明的 504/403 时，据此判断 App 到底连到了哪个 IP / 是否经本地
+     * 代理 / 走了哪种协议——把「目标站 vs 中间网关 vs 本地代理」定位到具体一层。
+     * 每个请求（含成功）都会输出一条，便于拿成功样本对比失败样本。
      */
-    private class CallDiagnostics(
+    private class ConnectionProbe(
         private val emit: (Map<String, Any?>) -> Unit
-    ) : EventListener() {
-
-        private val data = ConcurrentHashMap<Call, MutableMap<String, Any?>>()
-
-        private inline fun record(call: Call, block: (MutableMap<String, Any?>) -> Unit) {
-            val map = data.getOrPut(call) { HashMap() }
-            synchronized(map) { block(map) }
-        }
-
-        override fun dnsEnd(call: Call, hostname: String, inetAddressList: List<InetAddress>) {
-            record(call) {
-                it["dns"] = "$hostname→" +
-                    inetAddressList.joinToString(",") { a -> a.hostAddress ?: "?" }.take(140)
-            }
-        }
-
-        override fun proxySelectEnd(call: Call, url: HttpUrl, proxies: List<Proxy>) {
-            record(call) {
-                it["url"] = url.toString().take(160)
-                if (proxies.isNotEmpty() && proxies.none { p -> p.type() == Proxy.Type.DIRECT }) {
-                    it["proxy"] = proxies.joinToString(",") { p -> p.toString() }.take(120)
+    ) : Interceptor {
+        override fun intercept(chain: Interceptor.Chain): Response {
+            val info = HashMap<String, Any?>()
+            info["url"] = chain.request().url.toString().take(180)
+            chain.connection()?.let { c ->
+                info["proto"] = c.protocol().toString()
+                c.handshake()?.let { h ->
+                    info["tls"] = h.tlsVersion
+                    h.serverName?.let { info["sni"] = it }
+                }
+                runCatching {
+                    val r = c.route()
+                    info["peer"] =
+                        "${r.socketAddress.address?.hostAddress ?: "?"}:${r.socketAddress.port}"
+                    if (r.proxy.type() != Proxy.Type.DIRECT) {
+                        info["proxy"] = r.proxy.toString().take(120)
+                    }
+                    info["tls?"] = r.requiresTls
                 }
             }
-        }
-
-        override fun connectStart(
-            call: Call,
-            inetSocketAddress: InetSocketAddress,
-            proxy: Proxy
-        ) {
-            record(call) {
-                it["connect"] =
-                    "${inetSocketAddress.address?.hostAddress ?: "?"}:${inetSocketAddress.port}"
-            }
-        }
-
-        override fun connectionAcquired(call: Call, connection: Connection) {
-            record(call) {
-                it["proto"] = connection.protocol().toString()
-                connection.handshake()?.let { h -> it["tls"] = h.tlsVersion }
-            }
-        }
-
-        override fun callEnd(call: Call) = flush(call)
-
-        override fun callFailed(call: Call, ioe: IOException) = flush(call)
-
-        private fun flush(call: Call) {
-            val map = data.remove(call) ?: return
-            if (map.isNotEmpty()) emit(map.toMap())
+            val resp = chain.proceed(chain.request())
+            info["status"] = resp.code
+            runCatching { emit(info) }
+            return resp
         }
     }
 }
