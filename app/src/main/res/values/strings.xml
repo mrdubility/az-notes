@@ -222,8 +222,6 @@
     <string name="settings_image_section">图片</string>
     <string name="settings_image_compress">图片压缩导入</string>
     <string name="settings_image_compress_subtitle">固定参数：长边 1920 · JPEG 质量 80</string>
-    <string name="settings_image_orphan_scan">附件引用检测</string>
-    <string name="settings_image_orphan_scan_subtitle">扫描未被任何笔记引用的图片</string>
     <string name="settings_image_attachment_prompt">删除/移动时提示附件</string>
     <string name="settings_image_attachment_prompt_subtitle">删除或移动笔记时统计其引用的附件</string>
     <string name="settings_image_remote_max">远端图片大小上限（MB）</string>
@@ -232,8 +230,6 @@
     <string name="settings_image_remote_max_hint">设为 0 则不加载网络图片</string>
     <string name="settings_image_timeout">网络图片超时（秒）</string>
     <string name="settings_image_timeout_value">%1$d 秒</string>
-    <string name="settings_image_orphan_entry">孤儿图片</string>
-    <string name="settings_image_orphan_entry_subtitle">查看并清理未被引用的图片</string>
 
     <!-- 备份与恢复（设置 → 备份；导出 / 导入全部配置） -->
     <string name="settings_backup_section">备份</string>
@@ -439,19 +435,23 @@
     <string name="editor_image_imported">已导入图片：%1$s</string>
     <string name="editor_image_imported_compressed">已导入图片：%1$s → %2$s</string>
 
-    <!-- 孤儿图片 -->
-    <string name="orphan_images_title">孤儿图片</string>
-    <string name="orphan_images_scanning">正在扫描引用… %1$d/%2$d</string>
-    <string name="orphan_images_summary">发现 %1$d 张未被引用图片 · 合计 %2$s</string>
-    <string name="orphan_images_unscanned">%1$d 篇笔记超出扫描上限未纳入，可能低估引用</string>
-    <string name="orphan_images_empty">没有孤儿图片，图片应通过笔记插入</string>
-    <string name="orphan_images_select_all">全选</string>
-    <string name="orphan_images_clear">取消选择</string>
-    <string name="orphan_images_move_trash">移入回收站</string>
-    <string name="orphan_images_delete_permanently">永久删除</string>
-    <string name="orphan_images_confirm_title">清理孤儿图片</string>
-    <string name="orphan_images_confirm_trash">将把选中的 %1$d 张图片移入回收站。</string>
-    <string name="orphan_images_confirm_delete">回收站已关闭，将永久删除选中的 %1$d 张图片，此操作不可撤销。</string>
-    <string name="orphan_images_moved">已将 %1$d 张图片移入回收站</string>
-    <string name="orphan_images_deleted">已删除 %1$d 张图片</string>
+    <!-- 图库 -->
+    <string name="gallery_title">图库</string>
+    <string name="gallery_filter_orphans">只显示未被引用的图片</string>
+    <string name="gallery_scanning">正在扫描引用… %1$d/%2$d</string>
+    <string name="gallery_summary_all">共 %1$d 张图片 · 合计 %2$s</string>
+    <string name="gallery_summary_unreferenced">发现 %1$d 张未被引用的图片 · 合计 %2$s</string>
+    <string name="gallery_unscanned">%1$d 篇笔记超出扫描上限未纳入，可能低估引用</string>
+    <string name="gallery_empty">仓库中还没有图片，可在笔记中插入图片</string>
+    <string name="gallery_empty_unreferenced">没有未被引用的图片</string>
+    <string name="gallery_select">选择</string>
+    <string name="gallery_select_all">全选</string>
+    <string name="gallery_cancel_select">取消选择</string>
+    <string name="gallery_move_trash">移入回收站</string>
+    <string name="gallery_delete_permanently">永久删除</string>
+    <string name="gallery_confirm_title">清理图片</string>
+    <string name="gallery_confirm_trash">将把选中的 %1$d 张图片移入回收站。</string>
+    <string name="gallery_confirm_delete">回收站已关闭，将永久删除选中的 %1$d 张图片，此操作不可撤销。</string>
+    <string name="gallery_moved">已将 %1$d 张图片移入回收站</string>
+    <string name="gallery_deleted">已删除 %1$d 张图片</string>
 </resources>

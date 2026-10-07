@@ -38,6 +38,40 @@ jobs:
           java -version
           gradle --version
 
+      # 单元测试先于打包：快速失败，测试不通过则不再构建 APK
+      - name: Run unit tests
+        run: |
+          set +e
+          gradle :app:testDebugUnitTest --no-daemon --stacktrace 2>&1 | tee test.log
+          status=${PIPESTATUS[0]}
+          if [ $status -ne 0 ]; then
+            # 失败关键行输出为 annotation（匿名可经 REST API 读取，便于快速定位）：
+            # 测试失败（FAILED）与编译错误（Kotlin "e: file"）
+            echo "===== test failure annotations ====="
+            grep -E "FAILED|e: file|^e: |AAPT: error" test.log | head -35 | while IFS= read -r line; do
+              echo "::error::$line"
+            done
+            echo "===== tail of test log ====="
+            tail -80 test.log
+          fi
+          exit $status
+
+      - name: Upload test log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-log
+          path: test.log
+          if-no-files-found: ignore
+
+      - name: Upload unit test report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-report
+          path: app/build/reports/tests/testDebugUnitTest/
+          if-no-files-found: ignore
+
       - name: Assemble Debug APK
         run: |
           set +e

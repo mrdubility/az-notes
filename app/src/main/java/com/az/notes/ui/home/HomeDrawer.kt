@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.RestoreFromTrash
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Star
@@ -22,7 +23,7 @@ import androidx.compose.ui.unit.dp
 import com.az.notes.R
 
 /**
- * 主页抽屉内容：仓库信息（名称 + 路径） + 收藏夹 / 回收站（关闭时隐藏入口） / 设置入口。
+ * 主页抽屉内容：仓库信息（名称 + 路径） + 收藏夹 / 图库 / 回收站（关闭时隐藏入口） / 设置入口。
  * 自 HomeScreen 拆分独立文件（纯 UI，逻辑不变）。
  */
 @Composable
@@ -32,6 +33,7 @@ internal fun DrawerContent(
     /** 回收站开关：关闭时隐藏入口（删除即物理删除） */
     trashEnabled: Boolean,
     onFavorites: () -> Unit,
+    onGallery: () -> Unit,
     onTrash: () -> Unit,
     onSettings: () -> Unit
 ) {
@@ -69,6 +71,13 @@ internal fun DrawerContent(
             icon = { Icon(Icons.Outlined.Star, null) },
             selected = false,
             onClick = onFavorites,
+            modifier = Modifier.padding(horizontal = 12.dp)
+        )
+        NavigationDrawerItem(
+            label = { Text(stringResource(R.string.gallery_title)) },
+            icon = { Icon(Icons.Outlined.Image, null) },
+            selected = false,
+            onClick = onGallery,
             modifier = Modifier.padding(horizontal = 12.dp)
         )
         if (trashEnabled) {

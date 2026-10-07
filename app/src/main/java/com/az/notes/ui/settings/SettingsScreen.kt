@@ -12,7 +12,6 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.Sort
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Backup
-import androidx.compose.material.icons.outlined.BrokenImage
 import androidx.compose.material.icons.outlined.Build
 import androidx.compose.material.icons.outlined.Cloud
 import androidx.compose.material.icons.outlined.ColorLens
@@ -78,7 +77,6 @@ fun SettingsScreen(
     onOpenVaults: () -> Unit,
     onOpenToolbarSettings: () -> Unit,
     onOpenBackup: () -> Unit,
-    onOpenOrphanImages: () -> Unit,
     onOpenDebugLogs: () -> Unit
 ) {
     val settings by viewModel.settings.collectAsStateWithLifecycle()
@@ -302,7 +300,7 @@ fun SettingsScreen(
                 )
             }
 
-            // —— 图片（导入压缩 / 附件引用 / 网络图片护栏 / 孤儿图片入口） ——
+            // —— 图片（导入压缩 / 附件提示 / 网络图片护栏） ——
             item { SectionHeader(stringResource(R.string.settings_image_section)) }
             item {
                 SettingsRow(
@@ -316,20 +314,6 @@ fun SettingsScreen(
                         )
                     },
                     onClick = { viewModel.setImageCompressEnabled(!settings.imageCompressEnabled) }
-                )
-            }
-            item {
-                SettingsRow(
-                    icon = Icons.Outlined.BrokenImage,
-                    title = stringResource(R.string.settings_image_orphan_scan),
-                    subtitle = stringResource(R.string.settings_image_orphan_scan_subtitle),
-                    trailing = {
-                        Switch(
-                            checked = settings.orphanScanEnabled,
-                            onCheckedChange = viewModel::setOrphanScanEnabled
-                        )
-                    },
-                    onClick = { viewModel.setOrphanScanEnabled(!settings.orphanScanEnabled) }
                 )
             }
             item {
@@ -364,14 +348,6 @@ fun SettingsScreen(
                     title = stringResource(R.string.settings_image_timeout),
                     subtitle = stringResource(R.string.settings_image_timeout_value, settings.remoteImageTimeoutSeconds),
                     onClick = { imageTimeoutDialog = true }
-                )
-            }
-            item {
-                SettingsRow(
-                    icon = Icons.Outlined.BrokenImage,
-                    title = stringResource(R.string.settings_image_orphan_entry),
-                    subtitle = stringResource(R.string.settings_image_orphan_entry_subtitle),
-                    onClick = onOpenOrphanImages
                 )
             }
 

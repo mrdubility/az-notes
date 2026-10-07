@@ -87,6 +87,7 @@ fun HomeScreen(
     onOpenEditor: (path: String, fresh: Boolean, fromShare: Boolean) -> Unit,
     onOpenTrash: () -> Unit,
     onOpenFavorites: () -> Unit,
+    onOpenGallery: () -> Unit,
     onSettings: () -> Unit,
     /** 顶栏切换当前仓库（记忆为下次启动 / 分享的目标仓库） */
     onSwitchVault: (String) -> Unit,
@@ -242,6 +243,10 @@ fun HomeScreen(
                     onFavorites = {
                         scope.launch { drawerState.close() }
                         onOpenFavorites()
+                    },
+                    onGallery = {
+                        scope.launch { drawerState.close() }
+                        onOpenGallery()
                     },
                     onTrash = {
                         scope.launch { drawerState.close() }

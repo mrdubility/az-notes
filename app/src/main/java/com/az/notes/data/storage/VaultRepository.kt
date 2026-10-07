@@ -57,6 +57,13 @@ class VaultRepository @Inject constructor() {
         /** 笔记旁的规范附件夹名（与 Obsidian 常见附件目录惯例一致）。 */
         const val ATTACHMENT_DIR = "assets"
 
+        /**
+         * 列表展示层面额外隐藏的目录（笔记列表 / 搜索 / 移动目标不显示）：
+         * 附件夹 [ATTACHMENT_DIR] 的内容改由图库菜单浏览。仅影响展示，
+         * 附件引用扫描（AttachmentRepository）与同步（按用户忽略规则）不受影响。
+         */
+        private val LIST_HIDDEN_DIRS = IGNORED_DIRS + ATTACHMENT_DIR
+
         /** 日期变量：`$...$` 包裹的片段（内容按 SimpleDateFormat 语法解析）。 */
         private val DATE_VAR = Regex("\\$([^$]+)\\$")
 
@@ -271,9 +278,9 @@ class VaultRepository @Inject constructor() {
         }
     }
 
-    /** 隐藏项判定：'.' 开头的名字与 [IGNORED_DIRS]。 */
+    /** 隐藏项判定：'.' 开头的名字、[IGNORED_DIRS] 与展示层隐藏的 [LIST_HIDDEN_DIRS]。 */
     private fun File.isVisibleEntry(): Boolean =
-        !name.startsWith(".") && name !in IGNORED_DIRS
+        !name.startsWith(".") && name !in LIST_HIDDEN_DIRS
 
     /** 读取文本文件内容（UTF-8 无 BOM，§5.3）。 */
     fun readText(absolutePath: String): String {

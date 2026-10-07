@@ -53,8 +53,6 @@ data class AppSettings(
     val shareFolder: String? = null,
     /** 导入图片时是否压缩（固定参数：长边 1920 / JPEG 质量 80；关闭则原样复制）。 */
     val imageCompressEnabled: Boolean = true,
-    /** 是否允许扫描附件引用（孤儿图片页）。 */
-    val orphanScanEnabled: Boolean = true,
     /** 删除 / 移动笔记时是否提示附件引用情况（关闭则不查询、不联动）。 */
     val attachmentPromptEnabled: Boolean = true,
     /** 预览页单张网络图片的体积上限（MB）；0 = 不加载网络图片。 */

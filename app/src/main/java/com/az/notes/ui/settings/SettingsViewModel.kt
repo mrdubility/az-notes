@@ -110,10 +110,6 @@ class SettingsViewModel @Inject constructor(
     fun setImageCompressEnabled(enabled: Boolean) =
         viewModelScope.launch { settingsRepository.setImageCompressEnabled(enabled) }
 
-    /** 是否允许扫描附件引用（孤儿图片）。 */
-    fun setOrphanScanEnabled(enabled: Boolean) =
-        viewModelScope.launch { settingsRepository.setOrphanScanEnabled(enabled) }
-
     /** 删除 / 移动笔记时是否提示附件引用情况。 */
     fun setAttachmentPromptEnabled(enabled: Boolean) =
         viewModelScope.launch { settingsRepository.setAttachmentPromptEnabled(enabled) }

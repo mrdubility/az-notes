@@ -218,12 +218,10 @@
     <string name="settings_about_version">Version %1$s · Tap for debug logs</string>
     <string name="settings_about_github">GitHub repository</string>
 
-    <!-- Images (import compression / attachment refs / network image guard / orphan images) -->
+    <!-- Images (import compression / attachment prompt / network image guard) -->
     <string name="settings_image_section">Images</string>
     <string name="settings_image_compress">Compress imported images</string>
     <string name="settings_image_compress_subtitle">Fixed: longest edge 1920 · JPEG quality 80</string>
-    <string name="settings_image_orphan_scan">Attachment reference scan</string>
-    <string name="settings_image_orphan_scan_subtitle">Detect images not referenced by any note</string>
     <string name="settings_image_attachment_prompt">Prompt about attachments on delete/move</string>
     <string name="settings_image_attachment_prompt_subtitle">Count referenced attachments when deleting or moving a note</string>
     <string name="settings_image_remote_max">Remote image size limit (MB)</string>
@@ -232,8 +230,6 @@
     <string name="settings_image_remote_max_hint">Set to 0 to stop loading network images</string>
     <string name="settings_image_timeout">Network image timeout (seconds)</string>
     <string name="settings_image_timeout_value">%1$d s</string>
-    <string name="settings_image_orphan_entry">Orphan images</string>
-    <string name="settings_image_orphan_entry_subtitle">Review and clean up unreferenced images</string>
 
     <!-- Backup &amp; restore (Settings → Backup; export / import all config) -->
     <string name="settings_backup_section">Backup</string>
@@ -405,21 +401,25 @@
     <string name="editor_image_imported">Image imported: %1$s</string>
     <string name="editor_image_imported_compressed">Image imported: %1$s → %2$s</string>
 
-    <!-- Orphan images (attachments not referenced by any note) -->
-    <string name="orphan_images_title">Orphan images</string>
-    <string name="orphan_images_scanning">Scanning references… %1$d/%2$d</string>
-    <string name="orphan_images_summary">%1$d unreferenced image(s) · %2$s total</string>
-    <string name="orphan_images_unscanned">%1$d note(s) exceeded the scan limit and were skipped; references may be underestimated</string>
-    <string name="orphan_images_empty">No orphan images. Images should be inserted through a note.</string>
-    <string name="orphan_images_select_all">Select all</string>
-    <string name="orphan_images_clear">Clear selection</string>
-    <string name="orphan_images_move_trash">Move to trash</string>
-    <string name="orphan_images_delete_permanently">Delete permanently</string>
-    <string name="orphan_images_confirm_title">Clean up orphan images</string>
-    <string name="orphan_images_confirm_trash">%1$d selected image(s) will be moved to the trash.</string>
-    <string name="orphan_images_confirm_delete">Trash is disabled; %1$d selected image(s) will be permanently deleted. This cannot be undone.</string>
-    <string name="orphan_images_moved">Moved %1$d image(s) to trash</string>
-    <string name="orphan_images_deleted">Deleted %1$d image(s)</string>
+    <!-- Gallery -->
+    <string name="gallery_title">Gallery</string>
+    <string name="gallery_filter_orphans">Show unreferenced images only</string>
+    <string name="gallery_scanning">Scanning references… %1$d/%2$d</string>
+    <string name="gallery_summary_all">%1$d image(s) · %2$s total</string>
+    <string name="gallery_summary_unreferenced">%1$d unreferenced image(s) · %2$s total</string>
+    <string name="gallery_unscanned">%1$d note(s) exceeded the scan limit and were skipped; references may be underestimated</string>
+    <string name="gallery_empty">No images yet. Insert images through a note.</string>
+    <string name="gallery_empty_unreferenced">No unreferenced images</string>
+    <string name="gallery_select">Select</string>
+    <string name="gallery_select_all">Select all</string>
+    <string name="gallery_cancel_select">Clear selection</string>
+    <string name="gallery_move_trash">Move to trash</string>
+    <string name="gallery_delete_permanently">Delete permanently</string>
+    <string name="gallery_confirm_title">Clean up images</string>
+    <string name="gallery_confirm_trash">%1$d selected image(s) will be moved to the trash.</string>
+    <string name="gallery_confirm_delete">Trash is disabled; %1$d selected image(s) will be permanently deleted. This cannot be undone.</string>
+    <string name="gallery_moved">Moved %1$d image(s) to trash</string>
+    <string name="gallery_deleted">Deleted %1$d image(s)</string>
 
     <!-- Debug logs (off by default; Settings → About → version row) -->
     <string name="debug_logs_title">Debug logs</string>

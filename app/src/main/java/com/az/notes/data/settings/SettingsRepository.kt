@@ -73,7 +73,6 @@ class SettingsRepository @Inject constructor(
         val TOOL_ORDER = stringPreferencesKey("editor_tool_order")
         val TOOL_DISABLED = stringPreferencesKey("editor_tool_disabled")
         val IMAGE_COMPRESS = booleanPreferencesKey("image_compress_enabled")
-        val ORPHAN_SCAN = booleanPreferencesKey("orphan_scan_enabled")
         val ATTACHMENT_PROMPT = booleanPreferencesKey("attachment_prompt_enabled")
         val REMOTE_IMAGE_MAX_MB = intPreferencesKey("remote_image_max_mb")
         val REMOTE_IMAGE_TIMEOUT = intPreferencesKey("remote_image_timeout_seconds")
@@ -141,7 +140,6 @@ class SettingsRepository @Inject constructor(
             favoritePaths = prefs[favoritesKey(currentId)] ?: emptySet(),
             shareFolder = prefs[shareFolderKey(currentId)]?.takeIf { it.isNotBlank() },
             imageCompressEnabled = prefs[Keys.IMAGE_COMPRESS] ?: true,
-            orphanScanEnabled = prefs[Keys.ORPHAN_SCAN] ?: true,
             attachmentPromptEnabled = prefs[Keys.ATTACHMENT_PROMPT] ?: true,
             remoteImageMaxMb = (prefs[Keys.REMOTE_IMAGE_MAX_MB]
                 ?: AppSettings.DEFAULT_REMOTE_IMAGE_MAX_MB)
@@ -335,9 +333,6 @@ class SettingsRepository @Inject constructor(
 
     /** 导入图片时是否压缩（固定参数，见 ImageCompressor）。 */
     suspend fun setImageCompressEnabled(enabled: Boolean) = edit { it[Keys.IMAGE_COMPRESS] = enabled }
-
-    /** 是否允许扫描附件引用（孤儿图片）。 */
-    suspend fun setOrphanScanEnabled(enabled: Boolean) = edit { it[Keys.ORPHAN_SCAN] = enabled }
 
     /** 删除 / 移动笔记时是否提示附件引用情况。 */
     suspend fun setAttachmentPromptEnabled(enabled: Boolean) =

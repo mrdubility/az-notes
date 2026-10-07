@@ -23,8 +23,8 @@ import com.az.notes.ui.MainViewModel
 import com.az.notes.ui.debug.DebugLogScreen
 import com.az.notes.ui.editor.EditorScreen
 import com.az.notes.ui.favorites.FavoritesScreen
+import com.az.notes.ui.gallery.GalleryScreen
 import com.az.notes.ui.home.HomeScreen
-import com.az.notes.ui.orphan.OrphanImageScreen
 import com.az.notes.ui.reader.ReaderScreen
 import com.az.notes.ui.settings.BackupScreen
 import com.az.notes.ui.settings.SettingsScreen
@@ -64,6 +64,7 @@ fun AzNotesNavHost(
                 },
                 onOpenTrash = { navController.navigate(Routes.TRASH) },
                 onOpenFavorites = { navController.navigate(Routes.FAVORITES) },
+                onOpenGallery = { navController.navigate(Routes.GALLERY) },
                 // 主页右上角“立即同步”在本页以弹窗完成（扫描 → 确认 → 执行），无需导航；
                 // 同步配置从抽屉 → 设置 → 同步进入
                 onSettings = { navController.navigate(Routes.SETTINGS) },
@@ -139,7 +140,6 @@ fun AzNotesNavHost(
                 onOpenVaults = { navController.navigate(Routes.VAULTS) },
                 onOpenToolbarSettings = { navController.navigate(Routes.TOOLBAR_SETTINGS) },
                 onOpenBackup = { navController.navigate(Routes.BACKUP) },
-                onOpenOrphanImages = { navController.navigate(Routes.ORPHAN_IMAGES) },
                 onOpenDebugLogs = { navController.navigate(Routes.DEBUG_LOGS) }
             )
         }
@@ -172,8 +172,8 @@ fun AzNotesNavHost(
             )
         }
 
-        composable(Routes.ORPHAN_IMAGES) { entry ->
-            OrphanImageScreen(
+        composable(Routes.GALLERY) { entry ->
+            GalleryScreen(
                 viewModel = hiltViewModel(),
                 onBack = { navController.popBackStackSafely(entry) }
             )

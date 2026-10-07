@@ -42,9 +42,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.az.notes.R
 import com.az.notes.ui.common.resolve
 import com.mikepenz.markdown.compose.MarkdownElement
-import com.mikepenz.markdown.compose.components.markdownComponents
 import com.mikepenz.markdown.m3.Markdown
-import com.mikepenz.markdown.m3.elements.MarkdownCheckBox
+import com.mikepenz.markdown.model.NoOpImageTransformerImpl
 import com.mikepenz.markdown.model.ReferenceLinkHandlerImpl
 import com.mikepenz.markdown.model.State
 import com.mikepenz.markdown.model.markdownAnnotator
@@ -154,24 +153,22 @@ fun ReaderScreen(
         referenceLinkHandler = linkHandler
     )
 
-    // 图片：本地文件 → Vault 内真实文件（点击全屏）；网络图片 → 受控加载（护栏 + 状态反馈）
+    // 图片：经 Markdown 的 imageTransformer 注入（段落内图片由渲染库以 inline content 机制
+    // 回调该 transformer；components.image 对该路径不生效，勿改用 markdownComponents）
     val vaultRoot = state.vaultPath
     val noteDir = remember(state.path) { File(state.path).parentFile }
     val remoteMaxBytes = state.remoteImageMaxBytes
-    val imageComponents = remember(vaultRoot, noteDir, remoteMaxBytes) {
-        markdownComponents(
-            // 保留 m3 复选框渲染（自定义 components 会覆盖默认）
-            checkbox = { MarkdownCheckBox(it.content, it.node, it.typography.text) },
-            image = { model ->
-                VaultMarkdownImage(
-                    model = model,
-                    vaultRoot = vaultRoot.orEmpty(),
-                    baseDir = noteDir ?: File("."),
-                    maxBytes = remoteMaxBytes,
-                    onImageClick = { file -> previewImage = file }
-                )
-            }
-        )
+    val imageTransformer = remember(vaultRoot, noteDir, remoteMaxBytes) {
+        if (vaultRoot.isNullOrBlank() || noteDir == null) {
+            NoOpImageTransformerImpl()
+        } else {
+            VaultImageTransformer(
+                vaultRoot = vaultRoot,
+                baseDir = noteDir,
+                maxBytes = remoteMaxBytes,
+                onImageClick = { file -> previewImage = file }
+            )
+        }
     }
 
     // 从编辑页返回（重新进入组合）时静默重读，避免预览停留在编辑前的旧内容
@@ -252,7 +249,7 @@ fun ReaderScreen(
                     Markdown(
                         markdownState = markdownState,
                         modifier = Modifier.fillMaxSize(),
-                        components = imageComponents,
+                        imageTransformer = imageTransformer,
                         annotator = annotator,
                         success = { success, components, _ ->
                             // 官方 success 插槽为 Column(不虚拟化)；此处换成 LazyColumn：

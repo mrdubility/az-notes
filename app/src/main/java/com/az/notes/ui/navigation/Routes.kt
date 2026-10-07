@@ -28,8 +28,8 @@ object Routes {
     /** 回收站：同步时被远端删除波及的本地文件（保留天数可配置）；从抽屉进入。 */
     const val TRASH = "trash"
 
-    /** 孤儿图片页：未被任何笔记引用的图片；从设置 → 图片进入。 */
-    const val ORPHAN_IMAGES = "orphan_images"
+    /** 图库：浏览当前仓库的图片 / 清理未被引用的图片；从抽屉进入。 */
+    const val GALLERY = "gallery"
 
     /** 收藏夹：跨文件夹展示收藏的笔记（仅本地）；从抽屉进入。 */
     const val FAVORITES = "favorites"

@@ -183,7 +183,6 @@ class BackupRepository @Inject constructor(
         editorToolOrder = editorToolOrder,
         editorToolDisabled = editorToolDisabled.sorted(),
         imageCompressEnabled = imageCompressEnabled,
-        orphanScanEnabled = orphanScanEnabled,
         attachmentPromptEnabled = attachmentPromptEnabled,
         remoteImageMaxMb = remoteImageMaxMb,
         remoteImageTimeoutSeconds = remoteImageTimeoutSeconds
@@ -244,7 +243,6 @@ class BackupRepository @Inject constructor(
         s.editorToolOrder?.let { settingsRepository.setEditorToolOrder(it); applied = true }
         s.editorToolDisabled?.let { settingsRepository.setEditorToolDisabled(it.toSet()); applied = true }
         s.imageCompressEnabled?.let { settingsRepository.setImageCompressEnabled(it); applied = true }
-        s.orphanScanEnabled?.let { settingsRepository.setOrphanScanEnabled(it); applied = true }
         s.attachmentPromptEnabled?.let { settingsRepository.setAttachmentPromptEnabled(it); applied = true }
         // 数值越界由 setter 内部 coerceIn 回落合法区间（0 = 不加载网络图片，保留 0）
         s.remoteImageMaxMb?.let { settingsRepository.setRemoteImageMaxMb(it); applied = true }

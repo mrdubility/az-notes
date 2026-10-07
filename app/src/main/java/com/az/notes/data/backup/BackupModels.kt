@@ -44,7 +44,6 @@ data class BackupSettings(
     val editorToolDisabled: List<String>? = null,
     /** 图片相关配置（本批新增；缺失 / 无效均回落默认，逐字段容错） */
     val imageCompressEnabled: Boolean? = null,
-    val orphanScanEnabled: Boolean? = null,
     val attachmentPromptEnabled: Boolean? = null,
     val remoteImageMaxMb: Int? = null,
     val remoteImageTimeoutSeconds: Int? = null
