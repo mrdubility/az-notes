@@ -398,6 +398,7 @@
     <string name="debug_logs_type_net">网络</string>
     <string name="debug_logs_type_work">调度</string>
     <string name="debug_logs_type_file">文件</string>
+    <string name="debug_logs_type_image">图片</string>
     <string name="debug_logs_type_app">应用</string>
     <string name="debug_logs_storage">存储占用</string>
     <string name="debug_logs_storage_value">%1$d 个分片 · %2$s</string>

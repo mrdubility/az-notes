@@ -118,7 +118,7 @@ fun EditorScreen(
         if (uri != null) {
             viewModel.importImage(uri) { media ->
                 if (media != null) {
-                    insertImageMarkdown(media.link, altInCursor = true)
+                    insertImageMarkdown(media.link, true)
                     scope.launch { snackbarHostState.showSnackbar(importedMessage(context, media)) }
                 } else {
                     scope.launch { snackbarHostState.showSnackbar(context.getString(R.string.editor_image_import_failed)) }
@@ -338,7 +338,7 @@ fun EditorScreen(
             },
             onInsertLink = { value ->
                 insertImageDialog = false
-                insertImageMarkdown(value, altInCursor = false)
+                insertImageMarkdown(value, false)
             }
         )
     }

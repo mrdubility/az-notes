@@ -436,6 +436,7 @@
     <string name="debug_logs_type_net">Network</string>
     <string name="debug_logs_type_work">Work</string>
     <string name="debug_logs_type_file">File</string>
+    <string name="debug_logs_type_image">Image</string>
     <string name="debug_logs_type_app">App</string>
     <string name="debug_logs_storage">Storage</string>
     <string name="debug_logs_storage_value">%1$d segments · %2$s</string>

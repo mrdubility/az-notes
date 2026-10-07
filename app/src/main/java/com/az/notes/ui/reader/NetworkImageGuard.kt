@@ -3,8 +3,10 @@ package com.az.notes.ui.reader
 import java.net.InetAddress
 import java.util.concurrent.TimeUnit
 import okio.Buffer
+import okio.BufferedSource
 import okio.ForwardingSource
 import okio.Source
+import okio.buffer
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import okhttp3.Protocol
@@ -191,12 +193,15 @@ object NetworkImageGuard {
     /** 换用计数 Source 的响应体包装（保留 contentType / contentLength 等元信息）。 */
     private class CapBody(
         private val wrapped: ResponseBody,
-        private val source: Source
+        source: Source
     ) : ResponseBody() {
+
+        // ResponseBody.source() 声明返回 BufferedSource，把计数 Source 包一层缓冲源
+        private val buffered: BufferedSource = source.buffer()
 
         override fun contentType() = wrapped.contentType()
         override fun contentLength() = wrapped.contentLength()
-        override fun source(): Source = source
+        override fun source(): BufferedSource = buffered
         override fun close() = wrapped.close()
     }
 

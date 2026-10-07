@@ -14,6 +14,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -92,21 +93,32 @@ fun VaultMarkdownImage(
     }
 }
 
-/** 本地图片：Coil 加载文件，点击全屏预览。 */
+/** 本地图片：Coil 加载文件，点击全屏预览；加载中/失败用占位替代空白。 */
 @Composable
 private fun LocalImage(file: File, onImageClick: (File) -> Unit) {
-    AsyncImage(
-        model = ImageRequest.Builder(coil3.compose.LocalPlatformContext.current)
-            .data(Uri.fromFile(file))
-            .crossfade(true)
-            .build(),
-        contentDescription = file.name,
+    // Coil3 的 AsyncImage 无 loading/error 槽位：用 onState 回流状态，按状态叠加占位
+    var state by remember { mutableStateOf<AsyncImagePainter.State>(AsyncImagePainter.State.Empty) }
+    Box(
         modifier = Modifier
             .fillMaxWidth()
             .clickable { onImageClick(file) },
-        loading = { ImageLoadingIndicator() },
-        error = { MissingImagePlaceholder() }
-    )
+        contentAlignment = Alignment.Center
+    ) {
+        AsyncImage(
+            model = ImageRequest.Builder(coil3.compose.LocalPlatformContext.current)
+                .data(Uri.fromFile(file))
+                .crossfade(true)
+                .build(),
+            contentDescription = file.name,
+            modifier = Modifier.fillMaxWidth(),
+            onState = { state = it }
+        )
+        when (state) {
+            is AsyncImagePainter.State.Loading -> ImageLoadingIndicator()
+            is AsyncImagePainter.State.Error -> MissingImagePlaceholder()
+            else -> Unit
+        }
+    }
 }
 
 /** 网络图片：护栏校验通过后经受控客户端加载，失败给原因 + 重试。 */
@@ -119,23 +131,30 @@ private fun RemoteImage(link: String, maxBytes: Long) {
         NetworkImageError(blocked, retryable = false, onRetry = {})
         return
     }
-    // key(retry) 重建 AsyncImage：网络图片无缓存，唯有重建 painter 才能重新发起请求
+    // key(retry) 重建请求：网络图片不做缓存，唯有重建才能重新发起
     key(retry) {
-        AsyncImage(
-            model = ImageRequest.Builder(coil3.compose.LocalPlatformContext.current)
-                .data(link)
-                .size(Size.ORIGINAL)
-                .crossfade(true)
-                .build(),
-            contentDescription = link.substringAfterLast('/'),
-            modifier = Modifier.fillMaxWidth(),
-            loading = { ImageLoadingIndicator() },
-            error = { state ->
-                val failure = NetworkImageGuard.classify((state as? AsyncImagePainter.State.Error)?.result?.throwable)
-                    ?: NetworkImageGuard.Failure.UNSUPPORTED
-                NetworkImageError(failure, retryable = true, onRetry = { retry++ })
+        var state by remember { mutableStateOf<AsyncImagePainter.State>(AsyncImagePainter.State.Empty) }
+        Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+            AsyncImage(
+                model = ImageRequest.Builder(coil3.compose.LocalPlatformContext.current)
+                    .data(link)
+                    .size(Size.ORIGINAL)
+                    .crossfade(true)
+                    .build(),
+                contentDescription = link.substringAfterLast('/'),
+                modifier = Modifier.fillMaxWidth(),
+                onState = { state = it }
+            )
+            when (val s = state) {
+                is AsyncImagePainter.State.Loading -> ImageLoadingIndicator()
+                is AsyncImagePainter.State.Error -> {
+                    val failure = NetworkImageGuard.classify(s.result.throwable)
+                        ?: NetworkImageGuard.Failure.UNSUPPORTED
+                    NetworkImageError(failure, retryable = true, onRetry = { retry++ })
+                }
+                else -> Unit
             }
-        )
+        }
     }
 }
 

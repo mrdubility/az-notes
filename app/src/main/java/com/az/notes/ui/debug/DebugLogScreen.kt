@@ -521,6 +521,7 @@ private fun DebugLogType.label(): String = stringResource(
         DebugLogType.NET -> R.string.debug_logs_type_net
         DebugLogType.WORK -> R.string.debug_logs_type_work
         DebugLogType.FILE -> R.string.debug_logs_type_file
+        DebugLogType.IMAGE -> R.string.debug_logs_type_image
         DebugLogType.APP -> R.string.debug_logs_type_app
     }
 )
