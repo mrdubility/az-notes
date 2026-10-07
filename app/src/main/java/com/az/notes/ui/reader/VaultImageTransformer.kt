@@ -74,22 +74,37 @@ class VaultImageTransformer(
 
     @Composable
     override fun transform(link: String): ImageData? {
+        // 入口埋点（INFO）：闪退时能定位到“transform 进到了但后续某步没回来”。
+        // 以 remember(link) 包裹，同 link 多次重组只记一次，避免日志刷屏。
+        val remote = ImageReference.isRemote(link)
+        remember(link) {
+            log(
+                DebugLogLevel.INFO,
+                "transform-enter",
+                mapOf("link" to link.take(80), "remote" to remote)
+            )
+            Unit
+        }
         val root = remember(vaultRoot) { File(vaultRoot) }
         // 组合上下文内读取一次：remember 的 calculation lambda 非 @Composable，不可在其中访问
         val platformContext = LocalPlatformContext.current
 
-        if (ImageReference.isRemote(link)) {
+        if (remote) {
             // 浏览器可直开的链接常含未编码字符（中文/空格等），OkHttp 会直接拒绝；
             // 先用 HttpUrl 规范化编码（解析失败保留原样，随后的失败原因会如实呈现）
             val safeLink = remember(link) { link.toHttpUrlOrNull()?.toString() ?: link }
             val blocked = remember(safeLink, maxBytes) { NetworkImageGuard.check(safeLink, maxBytes) }
             if (blocked != null) {
-                // 护栏拒绝为确定性结果：给出原因，不提供重试
-                log(
-                    DebugLogLevel.INFO,
-                    "remote-image-blocked",
-                    mapOf("link" to link.take(80), "failure" to blocked.name)
-                )
+                // 护栏拒绝为确定性结果：给出原因，不提供重试。
+                // 以 (safeLink, blocked) 为 key 的 remember：同链接同拒绝原因只记一条，避免重组刷屏。
+                remember(safeLink, blocked) {
+                    log(
+                        DebugLogLevel.INFO,
+                        "remote-image-blocked",
+                        mapOf("link" to link.take(80), "failure" to blocked.name)
+                    )
+                    Unit
+                }
                 return ImageData(painter = reasonPainter(reasonText(blocked, retryable = false)))
             }
             val retry = retries[link] ?: 0
@@ -103,20 +118,34 @@ class VaultImageTransformer(
                     .build()
             }
             val painter = rememberAsyncImagePainter(model = request)
+            // painter 创建埋点：与 success/error 埋点形成夹阅区间——
+            // 如果只到此一条而没有后续 success/error/blocked，就能定位到崩溃发生在 Coil 取图/解码阶段。
+            // 以 (safeLink, retry) 为 key，同链接同重试次数只记一次。
+            remember(safeLink, retry) {
+                log(
+                    DebugLogLevel.INFO,
+                    "remote-painter-created",
+                    mapOf("link" to link.take(80), "retry" to retry)
+                )
+                Unit
+            }
             val state by painter.state.collectAsState()
             return when (val s = state) {
                 is AsyncImagePainter.State.Error -> {
                     val cause = s.result.throwable
                     val failure = NetworkImageGuard.classify(cause)
                         ?: NetworkImageGuard.Failure.UNSUPPORTED
-                    log(
-                        DebugLogLevel.WARN,
-                        "remote-image-error",
-                        mapOf(
-                            "link" to link.take(80),
-                            "cause" to (cause?.javaClass?.simpleName ?: "null")
+                    remember(s) {
+                        log(
+                            DebugLogLevel.WARN,
+                            "remote-image-error",
+                            mapOf(
+                                "link" to link.take(80),
+                                "cause" to (cause?.javaClass?.simpleName ?: "null")
+                            )
                         )
-                    )
+                        Unit
+                    }
                     ImageData(
                         painter = reasonPainter(
                             reasonText(
@@ -134,11 +163,14 @@ class VaultImageTransformer(
                 is AsyncImagePainter.State.Success -> {
                     val w = painter.intrinsicSize.width
                     val h = painter.intrinsicSize.height
-                    log(
-                        DebugLogLevel.INFO,
-                        "remote-image-success",
-                        mapOf("link" to link.take(80), "w" to w, "h" to h)
-                    )
+                    remember(s) {
+                        log(
+                            DebugLogLevel.INFO,
+                            "remote-image-success",
+                            mapOf("link" to link.take(80), "w" to w, "h" to h)
+                        )
+                        Unit
+                    }
                     ImageData(
                         painter = painter,
                         contentDescription = link.substringAfterLast('/')
@@ -156,7 +188,10 @@ class VaultImageTransformer(
             ImageReference.resolveExisting(link, root, baseDir)
         }
         if (file == null) {
-            log(DebugLogLevel.INFO, "local-image-missing", mapOf("link" to link.take(80)))
+            remember(link) {
+                log(DebugLogLevel.INFO, "local-image-missing", mapOf("link" to link.take(80)))
+                Unit
+            }
             return ImageData(painter = reasonPainter(reasonText(null, retryable = false)))
         }
         val request = remember(file, platformContext) {

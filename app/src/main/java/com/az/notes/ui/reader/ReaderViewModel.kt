@@ -13,6 +13,7 @@ import com.az.notes.domain.markdown.FrontmatterAttribute
 import com.az.notes.domain.markdown.FrontmatterParser
 import com.az.notes.domain.markdown.Heading
 import com.az.notes.domain.markdown.HeadingExtractor
+import com.az.notes.domain.markdown.MarkdownImageLifter
 import com.az.notes.domain.markdown.TaskExtractor
 import com.az.notes.domain.markdown.TaskItem
 import com.az.notes.ui.common.UiText
@@ -109,15 +110,20 @@ class ReaderViewModel @Inject constructor(
                 val remoteMaxBytes = runCatching { settingsRepository.settings.first().remoteImageMaxBytes }.getOrDefault(0L)
                 val text = withContext(Dispatchers.IO) { vaultRepository.readText(absolutePath) }
                 val split = withContext(Dispatchers.IO) { FrontmatterParser.split(text) }
+                // 预览专用预处理：把段落内图抽出成独立块（规避库的 inline Placeholder 不撑高段落
+                // 导致“图只显上半部分 + 下方文字不可见 + 无法下滑”的问题）。
+                // 与 HeadingExtractor 共用同一份预处理后字符串，保证大纲 blockIndex 与
+                // LazyColumn 下标仍严格一一对应；写盘（mutateBody / TaskExtractor）路径仍用原始 body。
+                val previewBody = withContext(Dispatchers.IO) { MarkdownImageLifter.lift(split.body) }
                 val noteType = split.value("note_type")?.trim()?.lowercase()
-                val parsed = withContext(Dispatchers.IO) { HeadingExtractor.parse(split.body) }
+                val parsed = withContext(Dispatchers.IO) { HeadingExtractor.parse(previewBody) }
                 val tasks = if (noteType == "task") {
                     withContext(Dispatchers.IO) { TaskExtractor.extract(split.body) }
                 } else emptyList()
                 _state.update {
                     it.copy(
                         loading = false,
-                        content = split.body,
+                        content = previewBody,
                         headings = parsed.headings,
                         vaultPath = vault,
                         remoteImageMaxBytes = remoteMaxBytes,
