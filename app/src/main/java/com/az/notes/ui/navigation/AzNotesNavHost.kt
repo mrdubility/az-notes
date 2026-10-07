@@ -1,6 +1,8 @@
 package com.az.notes.ui.navigation
 
 import android.app.Activity
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -51,7 +53,15 @@ fun AzNotesNavHost(
 
     // 无门禁引导页：首启由内置默认仓库（App 私有目录）兜底，直接进入主页；
     // 外部目录的「所有文件访问权限」改为添加仓库时按需引导（见仓库管理页）
-    NavHost(navController = navController, startDestination = Routes.HOME) {
+    // 页面切换不渐隐：默认 700ms 交叉渐隐拖慢连续操作（列表 → 预览等），四类过渡全部即时完成
+    NavHost(
+        navController = navController,
+        startDestination = Routes.HOME,
+        enterTransition = { EnterTransition.None },
+        exitTransition = { ExitTransition.None },
+        popEnterTransition = { EnterTransition.None },
+        popExitTransition = { ExitTransition.None }
+    ) {
         composable(Routes.HOME) {
             val sharedText by mainViewModel.sharedText.collectAsStateWithLifecycle()
             val sharedImageUri by mainViewModel.sharedImageUri.collectAsStateWithLifecycle()

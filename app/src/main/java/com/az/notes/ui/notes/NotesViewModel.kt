@@ -177,7 +177,8 @@ class NotesViewModel @Inject constructor(
                     _state.update { it.copy(loading = false, error = UiText.of(R.string.home_no_vault)) }
                 } else {
                     initialized = true
-                    reloadItems(pullRefresh = false)
+                    // 已切换仓库：新仓库列表从头装载，不沿用旧仓库的装载数量
+                    reloadItems(pullRefresh = false, keepLoadedNotes = false)
                 }
             }
             // 预览字符数 / 排序方式变化：保持当前目录重新加载
@@ -202,7 +203,8 @@ class NotesViewModel @Inject constructor(
     fun enterDir(node: FileNode) {
         if (!node.isDirectory) return
         _state.update { it.copy(dirStack = it.dirStack + node.absolutePath) }
-        reloadItems(pullRefresh = false)
+        // 目录已变化：不沿用旧目录的装载数量（避免新目录误装大量预览）
+        reloadItems(pullRefresh = false, keepLoadedNotes = false)
     }
 
     /** 返回上一级；根目录时无操作。列表保留到新数据就绪，避免闪动。 */
@@ -210,7 +212,7 @@ class NotesViewModel @Inject constructor(
         val stack = _state.value.dirStack
         if (stack.isEmpty()) return
         _state.update { it.copy(dirStack = stack.dropLast(1)) }
-        reloadItems(pullRefresh = false)
+        reloadItems(pullRefresh = false, keepLoadedNotes = false)
     }
 
     /** 切换排序方式（持久化，偏好变化后自动重排）。 */
@@ -893,7 +895,13 @@ class NotesViewModel @Inject constructor(
         return absPath.removePrefix(prefix)
     }
 
-    private fun reloadItems(pullRefresh: Boolean) {
+    /**
+     * 重载当前目录列表。[keepLoadedNotes] 为 true（默认）时首批至少装载已显示的
+     * 笔记数：从阅读页返回、增删改刷新等场景下列表长度不缩回首批，返回时滚动位置
+     * 恢复的 index 不越界（越界会被 LazyListState clamp 造成位置漂移）；
+     * 目录切换（enterDir / navigateUp / 换仓库）须显式传 false，从首批重新装载。
+     */
+    private fun reloadItems(pullRefresh: Boolean, keepLoadedNotes: Boolean = true) {
         val vault = currentSettings.vaultPath ?: return
         loadJob?.cancel()
         loadMoreJob?.cancel()
@@ -913,8 +921,10 @@ class NotesViewModel @Inject constructor(
                 )
             }
             val dir = _state.value.currentDir ?: vault
+            // 当前列表已装载的笔记数（文件夹不计），作为首批装载下限
+            val keepNotes = if (keepLoadedNotes) _state.value.items.count { !it.node.isDirectory } else 0
             val result = runCatching {
-                withContext(Dispatchers.IO) { loadListing(dir, vault) }
+                withContext(Dispatchers.IO) { loadListing(dir, vault, keepNotes) }
             }
             if (generation != listingGeneration) return@launch
             result.fold(
@@ -978,14 +988,20 @@ class NotesViewModel @Inject constructor(
      * 首批就绪即提交 UI（首屏等待只与首批相关），其余由 [loadMore] 追加。
      * 列目录 / 首批预览两路并行读取，缩短首屏等待；
      * 预览读取走 [previewFor] 内存缓存，未变化文件不重读、往返目录零等待。
+     * [minNoteCount]：首批至少装载的笔记数（同目录重载时传已显示数量，列表不缩水）。
      */
-    private suspend fun loadListing(dirPath: String, vaultPath: String): ListingPage = coroutineScope {
+    private suspend fun loadListing(
+        dirPath: String,
+        vaultPath: String,
+        minNoteCount: Int = 0
+    ): ListingPage = coroutineScope {
         val nodesAsync = async(Dispatchers.IO) { vaultRepository.listChildren(dirPath, vaultPath) }
         val nodes = nodesAsync.await()
         val folders = nodes.filter { it.isDirectory }.sortedBy { it.name.lowercase() }
         val notes = sortNotes(nodes.filter { it.isMarkdown }, currentSettings.sortOrder)
         val previewChars = currentSettings.previewChars
-        val firstBatch = notes.take(PAGE_SIZE)
+        val firstCount = maxOf(PAGE_SIZE, minNoteCount)
+        val firstBatch = notes.take(firstCount)
         // 首批预览并行读取（单文件为小字节读，并行显著缩短首屏等待；awaitAll 保序）
         val firstItems = firstBatch
             .map { node ->
@@ -998,7 +1014,7 @@ class NotesViewModel @Inject constructor(
             }
             .awaitAll()
         val items = folders.map { NoteListItem(it) } + firstItems
-        ListingPage(items, notes.drop(PAGE_SIZE))
+        ListingPage(items, notes.drop(firstCount))
     }
 
     /** 预览缓存条目：文件 mtime 未变即可复用。 */
