@@ -38,10 +38,14 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import coil3.compose.LocalPlatformContext
+import coil3.request.ImageRequest
+import coil3.size.Size as CoilSize
 import com.az.notes.R
 import com.az.notes.ui.common.resolve
 import com.mikepenz.markdown.compose.MarkdownElement
 import com.mikepenz.markdown.m3.Markdown
+import com.mikepenz.markdown.model.DefaultMarkdownAnimation
 import com.mikepenz.markdown.model.NoOpImageTransformerImpl
 import com.mikepenz.markdown.model.ReferenceLinkHandlerImpl
 import com.mikepenz.markdown.model.markdownAnnotator
@@ -59,7 +63,8 @@ import kotlinx.coroutines.launch
  * 渲染走 mikepenz `Markdown` 的 success 插槽 + 自建 LazyColumn：块级虚拟化，
  * 块下标与 AST 顶层块一一对应（[com.az.notes.domain.markdown.HeadingExtractor] 同解析链），
  * 大纲跳转/高亮均为真实索引而非像素估算。图片经 [VaultImageTransformer]
- * 从 Vault 本地加载，点击全屏查看（支持捏合缩放）。双击正文快捷进入编辑。
+ * 从 Vault 本地加载（网络链接走受控护栏），点击全屏查看（支持捏合缩放）。
+ * 双击正文快捷进入编辑。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -74,6 +79,8 @@ fun ReaderScreen(
     val listState = rememberLazyListState()
     var showOutline by rememberSaveable { mutableStateOf(false) }
     var previewImage by remember { mutableStateOf<File?>(null) }
+    // 远程图全屏预览：存规范化 URL（点击回调传入），dialog 内构建同参请求命中内存缓存
+    var previewRemote by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -142,6 +149,10 @@ fun ReaderScreen(
             }
         }
     }
+    // 关闭库默认的段落尺寸动画：animateTextSize 默认 { animateContentSize() }——图片从占位
+    // 尺寸切换到真实尺寸时，含图段落做弹簧式过渡（深色主题下呈“黑幕缓缓拉开”观感，每帧
+    // 重排还有布局开销）。传恒等修饰符（官方文档给出的关闭方式），图片就位立即定格。
+    val staticAnimations = remember { DefaultMarkdownAnimation(animateTextSize = { this }) }
     val markdownState = rememberMarkdownState(
         content = state.content,
         flavour = flavour,
@@ -166,6 +177,7 @@ fun ReaderScreen(
                 baseDir = noteDir,
                 maxBytes = remoteMaxBytes,
                 onImageClick = { file -> previewImage = file },
+                onRemoteImageClick = { url -> previewRemote = url },
                 log = viewModel::imageLog,
                 containerHorizontalPaddingDp = contentHPad
             )
@@ -231,6 +243,7 @@ fun ReaderScreen(
                         modifier = Modifier.fillMaxSize(),
                         imageTransformer = imageTransformer,
                         annotator = annotator,
+                        animations = staticAnimations,
                         success = { success, components, _ ->
                             // 官方 success 插槽为 Column(不虚拟化)；此处换成 LazyColumn：
                             // 块下标与 AST 顶层块一一对应，大文档只渲染可见块；
@@ -272,9 +285,25 @@ fun ReaderScreen(
         }
     }
 
-    // 全屏图片预览
+    // 全屏图片预览：本地直接用文件；网络图构建与行内相同 URL + 相同解码尺寸的请求——
+    // Coil 内存缓存按请求参数做 key，借此命中行内已解码位图，预览零下载零解码
+    val platformContext = LocalPlatformContext.current
     previewImage?.let { file ->
         ImagePreviewDialog(file = file, onDismiss = { previewImage = null })
+    }
+    previewRemote?.let { url ->
+        val request = remember(url) {
+            val edge = VaultImageTransformer.REMOTE_DECODE_EDGE
+            ImageRequest.Builder(platformContext)
+                .data(url)
+                .size(CoilSize(edge, edge))
+                .build()
+        }
+        ImagePreviewDialog(
+            request = request,
+            contentDescription = url.substringAfterLast('/'),
+            onDismiss = { previewRemote = null }
+        )
     }
 
     // 大纲浮层：从右侧滑出（全屏 Dialog 承载：右侧面板 + 半透明遮罩）

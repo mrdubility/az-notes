@@ -32,7 +32,6 @@ import coil3.compose.AsyncImagePainter
 import coil3.compose.LocalPlatformContext
 import coil3.compose.rememberAsyncImagePainter
 import coil3.request.ImageRequest
-import coil3.request.crossfade
 import coil3.size.Size as CoilSize
 import com.az.notes.R
 import com.az.notes.data.debug.DebugLogLevel
@@ -56,9 +55,10 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
  *
  * 三类来源：
  * 1. 本地图片：经 [ImageReference.resolveExisting] 定位（与附件索引同一套解析规则，避免漂移），
- *    Coil 加载文件，点击全屏预览（[onImageClick] 仅本地图片）。
+ *    Coil 加载文件，点击全屏预览（[onImageClick]）。
  * 2. 网络图片（http/https/data）：先过 [NetworkImageGuard.check]（不发起请求的纯校验），
- *    通过后由受控客户端加载（见 [com.az.notes.AzNotesApp] 的 ImageLoader）。
+ *    通过后由受控客户端加载（见 [com.az.notes.AzNotesApp] 的 ImageLoader），
+ *    加载成功后点击全屏预览（[onRemoteImageClick]，参数为规范化 URL）。
  * 3. 缺失 / 被拒 / 加载失败：以文字占位画笔 [ReasonPainter] 给出可读原因；
  *    网络加载失败可点击重试（计数驱动请求重建；护栏拒绝为确定性结果，不提供重试）。
  */
@@ -67,6 +67,8 @@ class VaultImageTransformer(
     private val baseDir: File,
     private val maxBytes: Long,
     private val onImageClick: (File) -> Unit,
+    /** 网络图片点击回调（加载成功后触发）用于全屏预览；参数为规范化编码后的 URL。 */
+    private val onRemoteImageClick: (String) -> Unit = {},
     /** 图片加载链路日志回调（写入调试日志 IMAGE 类型；未开启收集时静默丢弃）。 */
     private val log: (DebugLogLevel, String, Map<String, Any?>) -> Unit = { _, _, _ -> },
     /** 预览页 LazyColumn 单侧水平内边距（与 ReaderScreen.contentPadding.horizontal 保持一致）。
@@ -74,6 +76,12 @@ class VaultImageTransformer(
      *  直接参与占位计算会让竖图右侧溢出可见区域。placeholderConfig 中会从此基确扣减 2 倍。 */
     private val containerHorizontalPaddingDp: Dp = 0.dp
 ) : ImageTransformer {
+
+    companion object {
+        /** 远程图解码边长上限（px）。全屏预览必须复用同一尺寸：内存缓存按请求参数做 key，
+         *  同 URL + 同 size 才能命中行内已解码的位图，避免预览时二次下载/解码。 */
+        const val REMOTE_DECODE_EDGE = 2048
+    }
 
     /** 网络图片失败后的重试计数（link → 次数）：点击错误占位累加，驱动请求重建 */
     private val retries = mutableStateMapOf<String, Int>()
@@ -117,10 +125,10 @@ class VaultImageTransformer(
             val request = remember(safeLink, retry, platformContext) {
                 ImageRequest.Builder(platformContext)
                     .data(safeLink)
-                    // 远程图未经过导入压缩，常为数 MB 原图：限制解码尺寸（最长边 2048 px，
+                    // 远程图未经过导入压缩，常为数 MB 原图：限制解码尺寸（最长边 REMOTE_DECODE_EDGE，
                     // 默认 Scale.FIT 等比缩放），避免 ORIGINAL 全尺寸解码 OOM 闪退；
                     // intrinsicSize 上报的是解码后尺寸，占位与显示不受影响
-                    .size(CoilSize(2048, 2048))
+                    .size(CoilSize(REMOTE_DECODE_EDGE, REMOTE_DECODE_EDGE))
                     .build()
             }
             val painter = rememberAsyncImagePainter(model = request)
@@ -201,7 +209,10 @@ class VaultImageTransformer(
                     }
                     ImageData(
                         painter = painter,
-                        contentDescription = link.substringAfterLast('/')
+                        contentDescription = link.substringAfterLast('/'),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onRemoteImageClick(safeLink) }
                     )
                 }
 
@@ -227,7 +238,7 @@ class VaultImageTransformer(
                 .data(Uri.fromFile(file))
                 // 与远程分支 / 官方实现一致：按原始尺寸解码，保证上报的 intrinsicSize 即原图像素尺寸
                 .size(CoilSize.ORIGINAL)
-                .crossfade(true)
+                // 不加 crossfade：与官方 Coil3 实现一致，图片就位立即显示（去掉"缓缓淡入"观感）
                 .build()
         }
         val painter = rememberAsyncImagePainter(model = request)

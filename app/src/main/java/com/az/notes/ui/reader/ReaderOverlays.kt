@@ -191,9 +191,29 @@ private fun OutlineItem(h: Heading, active: Boolean, onClick: () -> Unit) {
     }
 }
 
-/** 全屏图片预览：黑底 + 点按关闭 + 捏合缩放（1–5 倍，放大后可拖动）。 */
+/** 全屏图片预览（本地文件入口）：黑底 + 点按关闭 + 捏合缩放（1–5 倍，放大后可拖动）。
+ *  图库 / 阅读器本地图共用；网络图请走 request 重载（需复用行内解码尺寸）。 */
 @Composable
 internal fun ImagePreviewDialog(file: File, onDismiss: () -> Unit) {
+    val platformContext = LocalPlatformContext.current
+    val request = remember(file) {
+        ImageRequest.Builder(platformContext)
+            .data(Uri.fromFile(file))
+            .crossfade(true)
+            .build()
+    }
+    ImagePreviewDialog(request = request, contentDescription = file.name, onDismiss = onDismiss)
+}
+
+/** 全屏图片预览（通用入口）：[request] 决定来源与解码策略。网络图必须与行内渲染使用
+ *  相同 URL + 相同 size（Coil 内存缓存按请求参数做 key），预览才能复用行内已解码位图、
+ *  零下载零解码；本地文件不落盘缓存，可直接由目标视图尺寸决定解码大小。 */
+@Composable
+internal fun ImagePreviewDialog(
+    request: ImageRequest,
+    contentDescription: String?,
+    onDismiss: () -> Unit
+) {
     var scale by remember { mutableFloatStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
     val transformableState = rememberTransformableState { zoomChange, panChange, _ ->
@@ -213,11 +233,8 @@ internal fun ImagePreviewDialog(file: File, onDismiss: () -> Unit) {
             contentAlignment = Alignment.Center
         ) {
             AsyncImage(
-                model = ImageRequest.Builder(LocalPlatformContext.current)
-                    .data(Uri.fromFile(file))
-                    .crossfade(true)
-                    .build(),
-                contentDescription = file.name,
+                model = request,
+                contentDescription = contentDescription,
                 contentScale = ContentScale.Fit,
                 modifier = Modifier
                     .fillMaxSize()
