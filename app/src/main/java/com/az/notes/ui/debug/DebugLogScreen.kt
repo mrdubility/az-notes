@@ -18,11 +18,13 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -48,7 +50,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -449,9 +453,13 @@ private fun TypeChips(selected: Set<DebugLogType>, onToggle: (DebugLogType) -> U
     }
 }
 
-/** 日志查看对话框：全屏、按时间倒序（最新在前）、等宽字体。 */
+/** 日志查看对话框：全屏、按时间倒序（最新在前）、等宽字体、SelectionContainer 支持拖选多行复制。 */
 @Composable
 private fun LogViewerDialog(lines: List<String>, onDismiss: () -> Unit) {
+    val clipboard = LocalClipboardManager.current
+    // 最大渲染行数——避免万行级别 Column+SelectionContainer 卡顿；
+    // 超出时显示最近 N 行并提示导出完整文件。
+    val maxRenderLines = 500
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
@@ -480,8 +488,11 @@ private fun LogViewerDialog(lines: List<String>, onDismiss: () -> Unit) {
                             text = stringResource(R.string.debug_logs_line_count, lines.size),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(end = 12.dp)
+                            modifier = Modifier.padding(end = 4.dp)
                         )
+                        IconButton(onClick = { clipboard.setText(AnnotatedString(lines.joinToString("\n"))) }) {
+                            Icon(Icons.Default.ContentCopy, stringResource(R.string.debug_logs_copy_all))
+                        }
                     }
                 }
                 HorizontalDivider()
@@ -493,21 +504,31 @@ private fun LogViewerDialog(lines: List<String>, onDismiss: () -> Unit) {
                         )
                     }
                 } else {
-                    val reversed = remember(lines) { lines.asReversed() }
-                    // SelectionContainer 包裹滚动内容：长按行内文本即可选择/单选或拖选多行，
-                    // 弹系统菜单“复制”——适合从手机里取一两条到剪贴板发给 AI 分析，
-                    // 不需要每次跑完整导出流程。
-                    SelectionContainer(modifier = Modifier.fillMaxSize()) {
-                        LazyColumn(
-                            modifier = Modifier.fillMaxSize(),
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
-                        ) {
-                            items(reversed) { line ->
+                    val reversed = remember(lines) { lines.asReversed().take(maxRenderLines) }
+                    val truncated = lines.size > maxRenderLines
+                    // SelectionContainer + Column + verticalScroll：支持长按拖选多行复制，
+                    // 不用 LazyColumn 避免 item 回收导致 SelectionContainer LayoutCoordinates 失效。
+                    SelectionContainer(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .verticalScroll(rememberScrollState())
+                            .padding(horizontal = 12.dp, vertical = 8.dp)
+                    ) {
+                        Column {
+                            reversed.forEach { line ->
                                 Text(
                                     text = line,
                                     style = MaterialTheme.typography.bodySmall,
                                     fontFamily = FontFamily.Monospace,
-                                    modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+                            if (truncated) {
+                                Text(
+                                    text = stringResource(R.string.debug_logs_truncated, maxRenderLines),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
                                 )
                             }
                         }

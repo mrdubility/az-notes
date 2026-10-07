@@ -42,6 +42,10 @@ object NetworkImageGuard {
     /** data: 内联图片的字符长度上限（超大 base64 不渲染）。 */
     const val DATA_URI_MAX_CHARS = 1_000_000
 
+    /** 标准移动端浏览器 UA，解决中国 CDN 网关对无 UA 请求返回 504 的问题。 */
+    private const val DEFAULT_USER_AGENT =
+        "Mozilla/5.0 (Linux; Android 14; Pixel 6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
+
     /**
      * 拒绝请求的异常（[failure] 可直接映射到用户可读文案）。
      *
@@ -159,11 +163,18 @@ object NetworkImageGuard {
             .build()
     }
 
-    /** 请求头白名单：只保留 Accept，凭据类头一律剥离，不随重定向/第三方主机外泄。 */
+    /**
+     * 请求头白名单：只保留 Accept + UA，凭据类头一律剥离。
+     *
+     * 必须添加浏览器级 User-Agent：中国 CDN 网关（csdnimg/gxrb 等）对无 UA 请求会挂起到
+     * 上游超时后返回 504 Gateway Timeout（而非 403），导致所有远程图加载失败。
+     * OkHttp 默认不发送 User-Agent，必须显式添加。
+     */
     private object HeaderWhitelistInterceptor : Interceptor {
         override fun intercept(chain: Interceptor.Chain): Response {
             val request = chain.request()
             val stripped = request.newBuilder()
+                .header("User-Agent", DEFAULT_USER_AGENT)
                 .header("Accept", "image/avif,image/webp,image/apng,image/*,*/*;q=0.8")
                 .removeHeader("Authorization")
                 .removeHeader("Cookie")
