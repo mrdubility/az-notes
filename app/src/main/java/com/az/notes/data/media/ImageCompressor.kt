@@ -6,6 +6,7 @@ import android.graphics.Matrix
 import androidx.exifinterface.media.ExifInterface
 import java.io.File
 import java.io.FileOutputStream
+import kotlin.math.roundToInt
 
 /**
  * 图片导入压缩（固定参数，由设置页开关控制，默认开启）：
@@ -52,13 +53,16 @@ object ImageCompressor {
         else -> Decision.TO_JPEG
     }
 
-    /** 目标宽高：长边不超过 [MAX_DIMENSION]，等比缩放；已在阈值内则原尺寸返回。 */
+    /** 目标宽高：长边不超过 [MAX_DIMENSION]，等比缩放（长边四舍五入对齐上限）；已在阈值内则原尺寸返回。 */
     fun targetSize(width: Int, height: Int, maxDimension: Int = MAX_DIMENSION): Pair<Int, Int> {
         if (width <= 0 || height <= 0) return width to height
         val longSide = maxOf(width, height)
         if (longSide <= maxDimension) return width to height
         val ratio = maxDimension.toDouble() / longSide
-        return (width * ratio).toInt().coerceAtLeast(1) to (height * ratio).toInt().coerceAtLeast(1)
+        // 四舍五入而非截断：浮点误差会让 3000×(1568.0/3000.0) 得 1567.9999999999998，
+        // 截断后长边变 1567，与「长边固定 1568」差 1 像素；round 后长边精确等于 [maxDimension]。
+        return (width * ratio).roundToInt().coerceAtLeast(1) to
+            (height * ratio).roundToInt().coerceAtLeast(1)
     }
 
     /** BitmapFactory 的 2 的幂降采样比例：解码后仍不小于目标尺寸（避免放大失真）。 */
