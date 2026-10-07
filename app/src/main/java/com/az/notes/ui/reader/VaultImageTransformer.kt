@@ -66,6 +66,8 @@ class VaultImageTransformer(
     @Composable
     override fun transform(link: String): ImageData? {
         val root = remember(vaultRoot) { File(vaultRoot) }
+        // 组合上下文内读取一次：remember 的 calculation lambda 非 @Composable，不可在其中访问
+        val platformContext = LocalPlatformContext.current
 
         if (ImageReference.isRemote(link)) {
             val blocked = remember(link, maxBytes) { NetworkImageGuard.check(link, maxBytes) }
@@ -74,8 +76,8 @@ class VaultImageTransformer(
                 return ImageData(painter = reasonPainter(reasonText(blocked, retryable = false)))
             }
             val retry = retries[link] ?: 0
-            val request = remember(link, retry) {
-                ImageRequest.Builder(LocalPlatformContext.current)
+            val request = remember(link, retry, platformContext) {
+                ImageRequest.Builder(platformContext)
                     .data(link)
                     .size(CoilSize.ORIGINAL)
                     .crossfade(true)
@@ -108,8 +110,8 @@ class VaultImageTransformer(
         if (file == null) {
             return ImageData(painter = reasonPainter(reasonText(null, retryable = false)))
         }
-        val request = remember(file) {
-            ImageRequest.Builder(LocalPlatformContext.current)
+        val request = remember(file, platformContext) {
+            ImageRequest.Builder(platformContext)
                 .data(Uri.fromFile(file))
                 .crossfade(true)
                 .build()
