@@ -32,7 +32,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
@@ -45,7 +44,6 @@ import com.mikepenz.markdown.compose.MarkdownElement
 import com.mikepenz.markdown.m3.Markdown
 import com.mikepenz.markdown.model.NoOpImageTransformerImpl
 import com.mikepenz.markdown.model.ReferenceLinkHandlerImpl
-import com.mikepenz.markdown.model.State
 import com.mikepenz.markdown.model.markdownAnnotator
 import com.mikepenz.markdown.model.rememberMarkdownState
 import org.intellij.markdown.MarkdownElementTypes
@@ -53,15 +51,14 @@ import org.intellij.markdown.MarkdownTokenTypes
 import org.intellij.markdown.flavours.gfm.GFMFlavourDescriptor
 import org.intellij.markdown.parser.MarkdownParser
 import java.io.File
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 /**
- * 预览页（§5.2 / §5.4 / §5.5）：Markdown 渲染 + 大纲（真实锚点 + 当前章节高亮）+ 进度恢复。
+ * 预览页（§5.2 / §5.4 / §5.5）：Markdown 渲染 + 大纲（真实锚点 + 当前章节高亮）。
  *
  * 渲染走 mikepenz `Markdown` 的 success 插槽 + 自建 LazyColumn：块级虚拟化，
  * 块下标与 AST 顶层块一一对应（[com.az.notes.domain.markdown.HeadingExtractor] 同解析链），
- * 大纲跳转/高亮与滚动恢复均为真实索引而非像素估算。图片经 [VaultImageTransformer]
+ * 大纲跳转/高亮均为真实索引而非像素估算。图片经 [VaultImageTransformer]
  * 从 Vault 本地加载，点击全屏查看（支持捏合缩放）。双击正文快捷进入编辑。
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -77,7 +74,6 @@ fun ReaderScreen(
     val listState = rememberLazyListState()
     var showOutline by rememberSaveable { mutableStateOf(false) }
     var previewImage by remember { mutableStateOf<File?>(null) }
-    var restoredOnce by rememberSaveable { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -173,27 +169,6 @@ fun ReaderScreen(
 
     // 从编辑页返回（重新进入组合）时静默重读，避免预览停留在编辑前的旧内容
     LaunchedEffect(Unit) { viewModel.reload() }
-
-    // 恢复上次滚动位置：仅首次加载恢复一次（从编辑页返回时 listState 自身已恢复位置）
-    LaunchedEffect(state.loading, state.initialProgress, markdownState, state.noteType) {
-        val prog = state.initialProgress
-        if (restoredOnce || state.loading || prog == null || state.noteType == "task") {
-            return@LaunchedEffect
-        }
-        markdownState.state.first { it is State.Success }
-        // 块偏移：文件名（与属性面板）占位，正文块整体后移
-        listState.scrollToItem(prog.scrollIndex + blockOffset, prog.scrollOffset)
-        restoredOnce = true
-    }
-
-    // 监听滚动，转成块序号交给 ViewModel（内部 500ms 去抖落库）
-    LaunchedEffect(listState, state.content, blockOffset) {
-        snapshotFlow { listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset }
-            // 去掉文件名（与属性面板）占位，还原为真实块序号
-            .collect { (index, offset) ->
-                viewModel.onScrollPosition((index - blockOffset).coerceAtLeast(0), offset)
-            }
-    }
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },

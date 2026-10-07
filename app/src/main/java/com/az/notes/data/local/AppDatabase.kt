@@ -10,21 +10,21 @@ import androidx.room.RoomDatabase
  * v4：移除废弃的 `file_index`（目录列表直接读文件系统，不再维护索引表）。
  * v5：多仓库——同步基线 / 冲突记录 / 同步日志按 `vault_id` 隔离
  *     （基线主键改为 (vault_id, path)；破坏性升级，历史同步数据自动重建）。
+ * v6：移除阅读进度（read_progress）——预览不再恢复上次阅读位置、主页不再展示进度圆点
+ *     （破坏性升级，自动重建）。
  * `move_hint` 未采用：重命名改用“即时 MOVE + 扫描期 size 配对启发式”，
  * 无需跨会话保存改名提示（见 SyncEngine）。
  */
 @Database(
     entities = [
-        ReadProgressEntity::class,
         SyncBaselineEntity::class,
         SyncLogEntity::class,
         ConflictRecordEntity::class
     ],
-    version = 5,
+    version = 6,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
-    abstract fun readProgressDao(): ReadProgressDao
     abstract fun syncBaselineDao(): SyncBaselineDao
     abstract fun syncLogDao(): SyncLogDao
     abstract fun conflictRecordDao(): ConflictRecordDao

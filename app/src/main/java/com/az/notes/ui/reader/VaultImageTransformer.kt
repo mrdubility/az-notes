@@ -35,6 +35,7 @@ import com.az.notes.domain.markdown.ImageReference
 import com.mikepenz.markdown.model.ImageData
 import com.mikepenz.markdown.model.ImageTransformer
 import java.io.File
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 /**
  * 预览页图片加载器：实现渲染库 [ImageTransformer]，经 Markdown 的 `imageTransformer`
@@ -72,15 +73,18 @@ class VaultImageTransformer(
         val platformContext = LocalPlatformContext.current
 
         if (ImageReference.isRemote(link)) {
-            val blocked = remember(link, maxBytes) { NetworkImageGuard.check(link, maxBytes) }
+            // 浏览器可直开的链接常含未编码字符（中文/空格等），OkHttp 会直接拒绝；
+            // 先用 HttpUrl 规范化编码（解析失败保留原样，随后的失败原因会如实呈现）
+            val safeLink = remember(link) { link.toHttpUrlOrNull()?.toString() ?: link }
+            val blocked = remember(safeLink, maxBytes) { NetworkImageGuard.check(safeLink, maxBytes) }
             if (blocked != null) {
                 // 护栏拒绝为确定性结果：给出原因，不提供重试
                 return ImageData(painter = reasonPainter(reasonText(blocked, retryable = false)))
             }
             val retry = retries[link] ?: 0
-            val request = remember(link, retry, platformContext) {
+            val request = remember(safeLink, retry, platformContext) {
                 ImageRequest.Builder(platformContext)
-                    .data(link)
+                    .data(safeLink)
                     .size(CoilSize.ORIGINAL)
                     .crossfade(true)
                     .build()
@@ -89,10 +93,17 @@ class VaultImageTransformer(
             val state by painter.state.collectAsState()
             return when (val s = state) {
                 is AsyncImagePainter.State.Error -> {
-                    val failure = NetworkImageGuard.classify(s.result.throwable)
+                    val cause = s.result.throwable
+                    val failure = NetworkImageGuard.classify(cause)
                         ?: NetworkImageGuard.Failure.UNSUPPORTED
                     ImageData(
-                        painter = reasonPainter(reasonText(failure, retryable = true)),
+                        painter = reasonPainter(
+                            reasonText(
+                                failure,
+                                retryable = true,
+                                httpStatus = NetworkImageGuard.httpStatusOf(cause)
+                            )
+                        ),
                         modifier = Modifier
                             .fillMaxWidth()
                             .clickable { retries[link] = retry + 1 }
@@ -147,9 +158,20 @@ class VaultImageTransformer(
         return size
     }
 
-    /** 失败 / 拒绝原因文案；[retryable] 时追加「点击重试」提示行。 */
+    /**
+     * 失败 / 拒绝原因文案；[retryable] 时追加「点击重试」提示行。
+     * [httpStatus] 仅在 [NetworkImageGuard.Failure.HTTP_STATUS] 时用于携带具体状态码。
+     */
     @Composable
-    private fun reasonText(failure: NetworkImageGuard.Failure?, retryable: Boolean): String {
+    private fun reasonText(
+        failure: NetworkImageGuard.Failure?,
+        retryable: Boolean,
+        httpStatus: Int? = null
+    ): String {
+        // 状态码文案含占位符，其余文案无占位（空格式参数数组合法）
+        val formatArgs =
+            if (failure == NetworkImageGuard.Failure.HTTP_STATUS) arrayOf<Any>(httpStatus ?: 0)
+            else emptyArray<Any>()
         val base = stringResource(
             when (failure) {
                 NetworkImageGuard.Failure.DISABLED -> R.string.remote_image_disabled
@@ -157,9 +179,13 @@ class VaultImageTransformer(
                 NetworkImageGuard.Failure.REDIRECT -> R.string.remote_image_redirect
                 NetworkImageGuard.Failure.TOO_LARGE -> R.string.remote_image_too_large
                 NetworkImageGuard.Failure.TIMEOUT -> R.string.remote_image_timeout
+                NetworkImageGuard.Failure.HTTP_STATUS -> R.string.remote_image_http_status
+                NetworkImageGuard.Failure.DNS_FAILED -> R.string.remote_image_dns
+                NetworkImageGuard.Failure.CONNECT_FAILED -> R.string.remote_image_connect
                 NetworkImageGuard.Failure.UNSUPPORTED -> R.string.remote_image_blocked
                 null -> R.string.image_missing_placeholder
-            }
+            },
+            *formatArgs
         )
         return if (retryable) base + "\n" + stringResource(R.string.remote_image_retry) else base
     }

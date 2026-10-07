@@ -4,7 +4,6 @@ import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.az.notes.R
-import com.az.notes.data.local.ProgressRepository
 import com.az.notes.data.media.AttachmentRepository
 import com.az.notes.data.media.ImageImportRepository
 import com.az.notes.data.settings.SettingsRepository
@@ -39,17 +38,14 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
-import kotlin.math.roundToInt
 
 /**
- * 主页列表条目：文件夹仅展示名称；笔记附带正文预览、（搜索时的）所在目录
- * 与阅读进度（仅 1–99 时显示小圆点，其它情况为 null）。
+ * 主页列表条目：文件夹仅展示名称；笔记附带正文预览与（搜索时的）所在目录。
  */
 data class NoteListItem(
     val node: FileNode,
     val preview: String = "",
-    val subtitle: String? = null,
-    val progress: Int? = null
+    val subtitle: String? = null
 )
 
 data class NotesUiState(
@@ -114,7 +110,6 @@ class NotesViewModel @Inject constructor(
     private val imageImportRepository: ImageImportRepository,
     private val syncEngine: SyncEngine,
     private val syncScheduler: SyncScheduler,
-    private val progressRepository: ProgressRepository,
     syncRunNotifier: SyncRunNotifier
 ) : ViewModel() {
 
@@ -242,14 +237,12 @@ class NotesViewModel @Inject constructor(
                 runCatching {
                     withContext(Dispatchers.IO) {
                         val previewChars = currentSettings.previewChars
-                        val progress = progressByPath()
                         vaultRepository.searchNotes(vault, trimmed).map { hit ->
                             NoteListItem(
                                 node = hit.node,
                                 // 正文命中展示上下文片段，文件名命中展示正文预览
                                 preview = hit.snippet ?: previewFor(hit.node, previewChars),
-                                subtitle = hit.node.relativePath.substringBeforeLast('/', "").ifEmpty { null },
-                                progress = progress[hit.node.absolutePath]
+                                subtitle = hit.node.relativePath.substringBeforeLast('/', "").ifEmpty { null }
                             )
                         }
                     }
@@ -960,14 +953,12 @@ class NotesViewModel @Inject constructor(
         val generation = listingGeneration
         loadMoreJob = viewModelScope.launch {
             val batch = remaining.take(PAGE_SIZE)
-            val progress = progressByPath()
             val previewChars = currentSettings.previewChars
             val newItems = withContext(Dispatchers.IO) {
                 batch.map { node ->
                     NoteListItem(
                         node = node,
-                        preview = previewFor(node, previewChars),
-                        progress = progress[node.absolutePath]
+                        preview = previewFor(node, previewChars)
                     )
                 }
             }
@@ -985,16 +976,14 @@ class NotesViewModel @Inject constructor(
     /**
      * 列表分批装载：文件夹无需预览，全部立即包含；笔记按 [PAGE_SIZE] 逐批读取预览，
      * 首批就绪即提交 UI（首屏等待只与首批相关），其余由 [loadMore] 追加。
-     * 列目录 / 阅读进度 / 首批预览三路并行读取，缩短首屏等待；
+     * 列目录 / 首批预览两路并行读取，缩短首屏等待；
      * 预览读取走 [previewFor] 内存缓存，未变化文件不重读、往返目录零等待。
      */
     private suspend fun loadListing(dirPath: String, vaultPath: String): ListingPage = coroutineScope {
         val nodesAsync = async(Dispatchers.IO) { vaultRepository.listChildren(dirPath, vaultPath) }
-        val progressAsync = async(Dispatchers.IO) { progressByPath() }
         val nodes = nodesAsync.await()
         val folders = nodes.filter { it.isDirectory }.sortedBy { it.name.lowercase() }
         val notes = sortNotes(nodes.filter { it.isMarkdown }, currentSettings.sortOrder)
-        val progress = progressAsync.await()
         val previewChars = currentSettings.previewChars
         val firstBatch = notes.take(PAGE_SIZE)
         // 首批预览并行读取（单文件为小字节读，并行显著缩短首屏等待；awaitAll 保序）
@@ -1003,8 +992,7 @@ class NotesViewModel @Inject constructor(
                 async(Dispatchers.IO) {
                     NoteListItem(
                         node = node,
-                        preview = previewFor(node, previewChars),
-                        progress = progress[node.absolutePath]
+                        preview = previewFor(node, previewChars)
                     )
                 }
             }
@@ -1030,17 +1018,6 @@ class NotesViewModel @Inject constructor(
         }
         return preview
     }
-
-    /**
-     * 读取全部阅读进度 → 绝对路径映射；0%（未读）与 ≥99%（已读完）不显示小圆点，
-     * 取整后钳制在 1–99，保证圆点弧长可见。
-     */
-    private suspend fun progressByPath(): Map<String, Int> =
-        runCatching {
-            progressRepository.all()
-                .filter { it.percent > 0.01f && it.percent < 0.99f }
-                .associate { it.path to (it.percent * 100).roundToInt().coerceIn(1, 99) }
-        }.getOrDefault(emptyMap())
 
     private fun sortNotes(notes: List<FileNode>, order: NoteSortOrder): List<FileNode> = when (order) {
         NoteSortOrder.MODIFIED_DESC -> notes.sortedByDescending { it.lastModified }

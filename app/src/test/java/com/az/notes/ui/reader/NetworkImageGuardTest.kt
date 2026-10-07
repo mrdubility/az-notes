@@ -96,6 +96,31 @@ class NetworkImageGuardTest {
         assertEquals(NetworkImageGuard.Failure.TOO_LARGE, NetworkImageGuard.classify(wrapped))
     }
 
+    @Test
+    fun `classify maps network errors to precise failures`() {
+        assertEquals(
+            NetworkImageGuard.Failure.HTTP_STATUS,
+            NetworkImageGuard.classify(NetworkImageGuard.HttpStatusException(404))
+        )
+        assertEquals(
+            NetworkImageGuard.Failure.DNS_FAILED,
+            NetworkImageGuard.classify(java.net.UnknownHostException("no such host"))
+        )
+        assertEquals(
+            NetworkImageGuard.Failure.CONNECT_FAILED,
+            NetworkImageGuard.classify(java.net.ConnectException("connection refused"))
+        )
+        assertEquals(
+            NetworkImageGuard.Failure.CONNECT_FAILED,
+            NetworkImageGuard.classify(java.io.IOException("tls handshake failed"))
+        )
+        // 嵌套 cause 也能提取状态码
+        val wrapped = RuntimeException("outer", NetworkImageGuard.HttpStatusException(403))
+        assertEquals(NetworkImageGuard.Failure.HTTP_STATUS, NetworkImageGuard.classify(wrapped))
+        assertEquals(403, NetworkImageGuard.httpStatusOf(wrapped))
+        assertNull(NetworkImageGuard.httpStatusOf(java.io.IOException("no status")))
+    }
+
     // ---------- 受控客户端 + MockWebServer ----------
 
     @Test
@@ -122,6 +147,14 @@ class NetworkImageGuardTest {
         val client = NetworkImageGuard.newClient(maxBytesProvider = { 1_000_000L }, timeoutSeconds = 5)
         val failure = runAndGetFailure(client, server.url("/start.png").toString(), readBody = false)
         assertEquals(NetworkImageGuard.Failure.REDIRECT, failure)
+    }
+
+    @Test
+    fun `non-2xx status is reported with http status failure`() {
+        server.enqueue(MockResponse().setResponseCode(404))
+        val client = NetworkImageGuard.newClient(maxBytesProvider = { 1_000_000L }, timeoutSeconds = 5)
+        val failure = runAndGetFailure(client, server.url("/missing.png").toString(), readBody = false)
+        assertEquals(NetworkImageGuard.Failure.HTTP_STATUS, failure)
     }
 
     @Test

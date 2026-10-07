@@ -1,6 +1,5 @@
 package com.az.notes.ui.home
 
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
@@ -50,11 +49,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -297,10 +292,6 @@ private fun NoteRow(
                         modifier = Modifier.size(16.dp)
                     )
                 }
-                item.progress?.let { percent ->
-                    Spacer(Modifier.width(6.dp))
-                    ReadingProgressDot(progress = percent)
-                }
                 if (selectMode) {
                     SelectIndicator(selected)
                 } else {
@@ -430,37 +421,6 @@ private fun NoteMoreButton(
                 }
             )
         }
-    }
-}
-
-/** 阅读进度小圆点：环形弧长表示 1–99% 的阅读进度。 */
-@Composable
-private fun ReadingProgressDot(progress: Int) {
-    val active = MaterialTheme.colorScheme.primary
-    val track = MaterialTheme.colorScheme.surfaceVariant
-    val strokeWidth = 2.dp
-    Canvas(modifier = Modifier.size(16.dp)) {
-        val strokePx = strokeWidth.toPx()
-        val inset = strokePx / 2f
-        val arcSize = Size(size.width - strokePx, size.height - strokePx)
-        drawArc(
-            color = track,
-            startAngle = 0f,
-            sweepAngle = 360f,
-            useCenter = false,
-            topLeft = Offset(inset, inset),
-            size = arcSize,
-            style = Stroke(strokePx)
-        )
-        drawArc(
-            color = active,
-            startAngle = -90f,
-            sweepAngle = progress / 100f * 360f,
-            useCenter = false,
-            topLeft = Offset(inset, inset),
-            size = arcSize,
-            style = Stroke(strokePx, cap = StrokeCap.Round)
-        )
     }
 }
 

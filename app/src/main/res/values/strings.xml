@@ -425,6 +425,9 @@
     <string name="remote_image_too_large">图片超过大小上限，已中止加载</string>
     <string name="remote_image_timeout">图片加载超时，已中止</string>
     <string name="remote_image_blocked">不允许加载该网络图片</string>
+    <string name="remote_image_http_status">无法加载：服务器返回 %1$d</string>
+    <string name="remote_image_dns">无法加载：域名解析失败</string>
+    <string name="remote_image_connect">无法加载：连接图片服务器失败</string>
     <string name="remote_image_retry">点击重试</string>
     <string name="editor_insert_image_title">插入图片</string>
     <string name="editor_insert_image_pick">从设备选择</string>

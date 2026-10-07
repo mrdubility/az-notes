@@ -44,6 +44,9 @@ object NetworkImageGuard {
     /** 拒绝请求的异常（[failure] 可直接映射到用户可读文案）。 */
     class BlockedReason(val failure: Failure) : Exception(failure.name)
 
+    /** 服务端返回非 2xx 状态码（403/404 等），具体码由 [code] 携带。 */
+    class HttpStatusException(val code: Int) : Exception("HTTP $code")
+
     /** 体积超限异常（流式读满上限时抛出，由 Coil 收敛为加载失败）。 */
     class TooLargeException(val maxBytes: Long) : Exception("image exceeds $maxBytes bytes")
 
@@ -52,7 +55,7 @@ object NetworkImageGuard {
         /** 上限设为 0：不加载网络图片。 */
         DISABLED,
 
-        /** scheme 不允许 / 地址为空 / data: 非图片或超长。 */
+        /** scheme 不允许 / 地址为空 / data: 非图片或超长 / 其它未识别失败。 */
         UNSUPPORTED,
 
         /** 指向私网、环回或链路本地地址。 */
@@ -60,6 +63,15 @@ object NetworkImageGuard {
 
         /** 服务端返回 3xx（未跟随重定向）。 */
         REDIRECT,
+
+        /** 服务端返回非 2xx 状态码（403/404 等），具体码由 [HttpStatusException] 携带。 */
+        HTTP_STATUS,
+
+        /** 域名解析失败（DNS 无结果）。 */
+        DNS_FAILED,
+
+        /** 无法建立连接（连接被拒/重置、TLS 握手失败等）。 */
+        CONNECT_FAILED,
 
         /** 超过体积上限（声明体积或实际读取字节数）。 */
         TOO_LARGE,
@@ -162,7 +174,8 @@ object NetworkImageGuard {
             if (maxBytes <= 0L) throw BlockedReason(Failure.DISABLED)
             val resp = chain.proceed(chain.request())
             if (resp.code in 300..399) throw BlockedReason(Failure.REDIRECT)
-            if (resp.code !in 200..299) return resp
+            // 非 2xx（403/404 等）：不返回响应体，抛携带状态码的异常，UI 呈现真实原因
+            if (resp.code !in 200..299) throw HttpStatusException(resp.code)
             val declared = resp.headers["Content-Length"]?.toLongOrNull()
             if (declared != null && declared > maxBytes) throw TooLargeException(maxBytes)
             val body = resp.body ?: return resp
@@ -212,9 +225,24 @@ object NetworkImageGuard {
             when (cur) {
                 is TooLargeException -> return Failure.TOO_LARGE
                 is BlockedReason -> return cur.failure
+                is HttpStatusException -> return Failure.HTTP_STATUS
                 is java.net.SocketTimeoutException -> return Failure.TIMEOUT
+                is java.net.UnknownHostException -> return Failure.DNS_FAILED
+                is java.net.ConnectException -> return Failure.CONNECT_FAILED
                 is java.io.InterruptedIOException -> return Failure.TIMEOUT
+                // 其余 IO 失败（连接被拒/重置、TLS 握手失败等）归为连接失败
+                is java.io.IOException -> return Failure.CONNECT_FAILED
             }
+            cur = cur.cause
+        }
+        return null
+    }
+
+    /** 从异常链提取 HTTP 状态码（仅 [HttpStatusException] 携带）。 */
+    fun httpStatusOf(t: Throwable?): Int? {
+        var cur = t
+        while (cur != null) {
+            if (cur is HttpStatusException) return cur.code
             cur = cur.cause
         }
         return null

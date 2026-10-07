@@ -391,6 +391,9 @@
     <string name="remote_image_too_large">Image exceeded the size limit; loading aborted</string>
     <string name="remote_image_timeout">Image loading timed out; aborted</string>
     <string name="remote_image_blocked">This remote image is not allowed to load</string>
+    <string name="remote_image_http_status">Load failed: server returned %1$d</string>
+    <string name="remote_image_dns">Load failed: host not resolved</string>
+    <string name="remote_image_connect">Load failed: cannot reach image server</string>
     <string name="remote_image_retry">Tap to retry</string>
     <string name="editor_insert_image_title">Insert image</string>
     <string name="editor_insert_image_pick">Choose from device</string>
