@@ -95,7 +95,7 @@ fun HomeScreen(
     /** 系统分享 / 内容传送门传入的待写入文本（null = 无） */
     sharedText: String? = null,
     onSharedTextConsumed: () -> Unit = {},
-    /** 系统分享（image/*）传入的待导入图片 URI（null = 无）；与文本互斥 */
+    /** 系统分享（image 类型）传入的待导入图片 URI（null = 无）；与文本互斥 */
     sharedImageUri: Uri? = null,
     onSharedImageConsumed: () -> Unit = {},
     viewModel: NotesViewModel = hiltViewModel(),

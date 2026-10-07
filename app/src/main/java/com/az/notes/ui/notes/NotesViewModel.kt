@@ -437,7 +437,7 @@ class NotesViewModel @Inject constructor(
     }
 
     /**
-     * 从系统分享（ACTION_SEND image/*）新建图文笔记：先把图片按导入管线落到
+     * 从系统分享（ACTION_SEND，image 类型）新建图文笔记：先把图片按导入管线落到
      * 笔记同目录 `assets/`（受压缩开关控制，默认开），成功后写 `# 标题 + 图片` 正文，
      * 失败则不创建笔记（不留孤儿笔记）；导入成功但写正文失败则回滚刚导入的图片。
      */

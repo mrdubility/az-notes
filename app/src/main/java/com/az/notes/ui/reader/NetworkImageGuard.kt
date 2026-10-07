@@ -22,7 +22,7 @@ import okhttp3.ResponseBody
  * 3. 不跟随重定向：`3xx` 直接判失败，杜绝「小图链接 302 到 GB 级文件 / 内网地址」；
  * 4. 地址合规：仅允许 http/https/data 图片，IP 字面量的私网/环回/链路本地段拒绝加载
  *    （压缩内网探测面，同时不误伤域名型局域网 Wiki 图床）；
- * 5. 请求头白名单：只发 `Accept: image/*`，剥离 Cookie / Authorization，避免凭据外泄；
+ * 5. 请求头白名单：只发 `Accept` 限定图片类型，剥离 Cookie / Authorization，避免凭据外泄；
  * 6. 不重试、强制 HTTP/1.1、不落磁盘缓存（见 AzNotesApp 的 ImageLoader 配置）。
  */
 object NetworkImageGuard {

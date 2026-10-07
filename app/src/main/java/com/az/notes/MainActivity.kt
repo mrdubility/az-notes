@@ -89,7 +89,7 @@ class MainActivity : ComponentActivity() {
 
     /**
      * 系统分享（ACTION_SEND 文本/图片）与文本选择菜单的“处理文字”（ACTION_PROCESS_TEXT）入口：
-     * 文本交纯文本新建笔记；图片（image/*）取 EXTRA_STREAM（多选取首张）走图片导入建笔记。
+     * 文本交纯文本新建笔记；图片（MIME 以 image 开头）取 EXTRA_STREAM（多选取首张）走图片导入建笔记。
      * 两个分支互斥消费后清掉启动 intent；其它 Intent 忽略。
      */
     private fun handleShareIntent(intent: Intent?) {

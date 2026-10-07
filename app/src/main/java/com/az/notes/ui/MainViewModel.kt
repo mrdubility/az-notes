@@ -78,7 +78,7 @@ class MainViewModel @Inject constructor(
     }
 
     /**
-     * 系统分享（ACTION_SEND image/*）传入的待导入图片 URI。
+     * 系统分享（ACTION_SEND，image 类型）传入的待导入图片 URI。
      * 由主页消费后清空；与 [_sharedText] 互斥（一次分享只携一种类型）。
      */
     private val _sharedImageUri = MutableStateFlow<Uri?>(null)
