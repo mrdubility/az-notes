@@ -1,9 +1,15 @@
 package com.az.notes
 
 import android.app.Application
+import coil3.ImageLoader
+import coil3.PlatformContext
+import coil3.SingletonImageLoader
+import coil3.network.okhttp.OkHttpNetworkFetcherFactory
+import coil3.request.CachePolicy
 import com.az.notes.data.debug.DebugLogLevel
 import com.az.notes.data.debug.DebugLogRepository
 import com.az.notes.data.debug.DebugLogType
+import com.az.notes.di.CoilHolder
 import com.az.notes.work.SyncScheduler
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.CoroutineScope
@@ -18,7 +24,7 @@ import javax.inject.Inject
  * 并安装未捕获异常记录器（写入调试日志，需在设置中开启收集）。
  */
 @HiltAndroidApp
-class AzNotesApp : Application() {
+class AzNotesApp : Application(), SingletonImageLoader.Factory {
 
     @Inject
     lateinit var syncScheduler: SyncScheduler
@@ -26,15 +32,39 @@ class AzNotesApp : Application() {
     @Inject
     lateinit var debugLogRepository: DebugLogRepository
 
+    @Inject
+    lateinit var coilHolder: CoilHolder
+
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     override fun onCreate() {
         super.onCreate()
         installCrashLogger()
         appScope.launch {
+            coilHolder.bootstrap()
             syncScheduler.reschedulePeriodic()
             syncScheduler.scheduleStartupSync()
         }
+    }
+
+    /**
+     * App 级单例 ImageLoader：网络图片（http/https/data）经 [CoilHolder] 的受控 OkHttp
+     * 客户端加载（体积上限 + 超时 + 不跟随重定向 + 请求头白名单，见 NetworkImageGuard）；
+     * 关闭磁盘缓存，避免仓库外图片内容长期落盘。本地文件加载不受影响。
+     */
+    override fun newImageLoader(context: PlatformContext): ImageLoader {
+        return ImageLoader.Builder(context)
+            .components {
+                add(
+                    OkHttpNetworkFetcherFactory(
+                        callFactory = { coilHolder.client() }
+                    )
+                )
+            }
+            .diskCache(null)
+            .diskCachePolicy(CachePolicy.DISABLED)
+            .networkCachePolicy(CachePolicy.DISABLED)
+            .build()
     }
 
     /**

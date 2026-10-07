@@ -24,6 +24,7 @@ import com.az.notes.ui.debug.DebugLogScreen
 import com.az.notes.ui.editor.EditorScreen
 import com.az.notes.ui.favorites.FavoritesScreen
 import com.az.notes.ui.home.HomeScreen
+import com.az.notes.ui.orphan.OrphanImageScreen
 import com.az.notes.ui.reader.ReaderScreen
 import com.az.notes.ui.settings.BackupScreen
 import com.az.notes.ui.settings.SettingsScreen
@@ -53,6 +54,7 @@ fun AzNotesNavHost(
     NavHost(navController = navController, startDestination = Routes.HOME) {
         composable(Routes.HOME) {
             val sharedText by mainViewModel.sharedText.collectAsStateWithLifecycle()
+            val sharedImageUri by mainViewModel.sharedImageUri.collectAsStateWithLifecycle()
             HomeScreen(
                 onOpenFile = { navController.navigate(Routes.reader(it)) },
                 // 新建待办：直接进待办预览页（fresh=true → 退出时无条目则清理占位文件）
@@ -70,7 +72,10 @@ fun AzNotesNavHost(
                 onOpenVaults = { navController.navigate(Routes.VAULTS) },
                 // 系统分享 / 内容传送门传入的文本：主页消费后新建笔记
                 sharedText = sharedText,
-                onSharedTextConsumed = mainViewModel::consumeSharedText
+                onSharedTextConsumed = mainViewModel::consumeSharedText,
+                // 系统分享图片（image/*）：主页消费后导入图片并新建图文笔记
+                sharedImageUri = sharedImageUri,
+                onSharedImageConsumed = mainViewModel::consumeSharedImageUri
             )
         }
 
@@ -134,6 +139,7 @@ fun AzNotesNavHost(
                 onOpenVaults = { navController.navigate(Routes.VAULTS) },
                 onOpenToolbarSettings = { navController.navigate(Routes.TOOLBAR_SETTINGS) },
                 onOpenBackup = { navController.navigate(Routes.BACKUP) },
+                onOpenOrphanImages = { navController.navigate(Routes.ORPHAN_IMAGES) },
                 onOpenDebugLogs = { navController.navigate(Routes.DEBUG_LOGS) }
             )
         }
@@ -161,6 +167,13 @@ fun AzNotesNavHost(
 
         composable(Routes.TRASH) { entry ->
             TrashScreen(
+                viewModel = hiltViewModel(),
+                onBack = { navController.popBackStackSafely(entry) }
+            )
+        }
+
+        composable(Routes.ORPHAN_IMAGES) { entry ->
+            OrphanImageScreen(
                 viewModel = hiltViewModel(),
                 onBack = { navController.popBackStackSafely(entry) }
             )

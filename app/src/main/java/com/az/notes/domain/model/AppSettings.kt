@@ -50,7 +50,17 @@ data class AppSettings(
     /** 收藏的笔记相对路径集合（相对当前仓库根；仅本地，不参与同步） */
     val favoritePaths: Set<String> = emptySet(),
     /** 分享进入的笔记默认保存文件夹（相对当前仓库根；null = 跟随当前目录） */
-    val shareFolder: String? = null
+    val shareFolder: String? = null,
+    /** 导入图片时是否压缩（固定参数：长边 1920 / JPEG 质量 80；关闭则原样复制）。 */
+    val imageCompressEnabled: Boolean = true,
+    /** 是否允许扫描附件引用（孤儿图片页）。 */
+    val orphanScanEnabled: Boolean = true,
+    /** 删除 / 移动笔记时是否提示附件引用情况（关闭则不查询、不联动）。 */
+    val attachmentPromptEnabled: Boolean = true,
+    /** 预览页单张网络图片的体积上限（MB）；0 = 不加载网络图片。 */
+    val remoteImageMaxMb: Int = DEFAULT_REMOTE_IMAGE_MAX_MB,
+    /** 网络图片读取超时（秒）：超时即中止加载。 */
+    val remoteImageTimeoutSeconds: Int = DEFAULT_REMOTE_IMAGE_TIMEOUT_SECONDS
 ) {
     /**
      * 当前仓库的绝对路径（由 [vaults] 与 [currentVaultId] 派生）。
@@ -58,4 +68,19 @@ data class AppSettings(
      */
     val vaultPath: String?
         get() = vaults.firstOrNull { it.id == currentVaultId }?.path
+
+    /** 网络图片体积上限（字节）；0 = 不加载。 */
+    val remoteImageMaxBytes: Long
+        get() = if (remoteImageMaxMb <= 0) 0L else remoteImageMaxMb.toLong() * 1024 * 1024
+
+    companion object {
+        const val DEFAULT_REMOTE_IMAGE_MAX_MB = 10
+        const val DEFAULT_REMOTE_IMAGE_TIMEOUT_SECONDS = 5
+
+        /** 网络图片体积上限输入最大值（MB）：避免误输入天数字。 */
+        const val REMOTE_IMAGE_MAX_MB_LIMIT = 1024
+
+        /** 超时允许区间（秒）。 */
+        val REMOTE_IMAGE_TIMEOUT_RANGE = 1..30
+    }
 }

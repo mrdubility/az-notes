@@ -1,6 +1,7 @@
 package com.az.notes.ui.home
 
 import android.app.Activity
+import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -54,6 +55,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.az.notes.R
+import com.az.notes.data.media.AttachmentRepository
 import com.az.notes.domain.model.FabAction
 import com.az.notes.ui.common.resolve
 import com.az.notes.ui.components.MoveTargetDialog
@@ -93,6 +95,9 @@ fun HomeScreen(
     /** 系统分享 / 内容传送门传入的待写入文本（null = 无） */
     sharedText: String? = null,
     onSharedTextConsumed: () -> Unit = {},
+    /** 系统分享（image/*）传入的待导入图片 URI（null = 无）；与文本互斥 */
+    sharedImageUri: Uri? = null,
+    onSharedImageConsumed: () -> Unit = {},
     viewModel: NotesViewModel = hiltViewModel(),
     syncViewModel: SyncViewModel = hiltViewModel()
 ) {
@@ -109,6 +114,8 @@ fun HomeScreen(
     var searchActive by rememberSaveable { mutableStateOf(false) }
     var renameTarget by remember { mutableStateOf<NoteListItem?>(null) }
     var deleteTarget by remember { mutableStateOf<NoteListItem?>(null) }
+    // 删除确认时的附件引用统计（仅笔记、开关开启时非 null）
+    var deleteReferenced by remember { mutableStateOf<AttachmentRepository.ReferencedAttachments?>(null) }
     var fabMenuOpen by remember { mutableStateOf(false) }
     var newFolderDialog by remember { mutableStateOf(false) }
     var moveDialog by remember { mutableStateOf(false) }
@@ -118,6 +125,12 @@ fun HomeScreen(
 
     // 首次进入 / 从阅读、编辑页返回时静默重读当前目录，保证修改时间与预览最新
     LaunchedEffect(Unit) { viewModel.onScreenEntered() }
+
+    // 选定删除目标时异步统计其引用附件（开关关闭 / 目录时为 null，对话框走原路径）
+    LaunchedEffect(deleteTarget) {
+        val target = deleteTarget
+        deleteReferenced = if (target != null) viewModel.referencedAttachmentsFor(target.node) else null
+    }
 
     // 一次性提示（重命名/删除/收藏等结果）；携带撤销动作时显示横幅与「撤销」按钮，
     // 限时 [UNDO_BANNER_MS] 后自动消失（超时视为放弃撤销）
@@ -153,6 +166,13 @@ fun HomeScreen(
         val text = sharedText ?: return@LaunchedEffect
         onSharedTextConsumed()
         viewModel.createNoteFromShare(text) { path -> onOpenEditor(path, false, true) }
+    }
+
+    // 系统分享图片（ACTION_SEND image/*）：导入图片新建图文笔记并进入编辑页（fromShare=true）
+    LaunchedEffect(sharedImageUri) {
+        val uri = sharedImageUri ?: return@LaunchedEffect
+        onSharedImageConsumed()
+        viewModel.createNoteFromSharedImage(uri) { path -> onOpenEditor(path, false, true) }
     }
 
     // 接收跨应用拖入的纯文本（ColorOS 内容传送门等）；拖拽悬停期间显示“松开新建”提示
@@ -409,9 +429,10 @@ fun HomeScreen(
     deleteTarget?.let { target ->
         DeleteDialog(
             node = target.node,
+            referenced = deleteReferenced,
             onDismiss = { deleteTarget = null },
-            onConfirm = {
-                viewModel.delete(target.node)
+            onConfirm = { alsoTrashAttachments ->
+                viewModel.delete(target.node, alsoTrashAttachments)
                 deleteTarget = null
             }
         )

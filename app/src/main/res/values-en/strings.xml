@@ -42,6 +42,8 @@
     <string name="rename_hint">Name</string>
     <string name="delete_note_message">\"%1$s\" will be moved to Trash and can be restored anytime.</string>
     <string name="delete_folder_message">Folder "%1$s" and its contents will be moved to Trash and can be restored anytime.</string>
+    <string name="delete_note_attachments">This note references %1$d attachment(s), %2$d of which are referenced only by this note.</string>
+    <string name="delete_note_trash_attachments">Also move attachments referenced only by this note to Trash</string>
     <string name="sort_by">Sort by</string>
     <string name="sort_modified_desc">Last modified (new → old)</string>
     <string name="sort_modified_asc">Last modified (old → new)</string>
@@ -66,6 +68,7 @@
     <string name="msg_moved_to_trash">Moved "%1$s" to Trash</string>
     <string name="msg_deleted">Deleted "%1$s"</string>
     <string name="msg_share_note_failed">Failed to save shared content</string>
+    <string name="share_image_failed">Failed to import the shared image</string>
     <string name="msg_note_create_failed">Failed to create note</string>
     <string name="msg_folder_created">Created folder "%1$s"</string>
     <string name="msg_folder_create_failed">Failed to create folder</string>
@@ -127,6 +130,8 @@
     <string name="editor_move">Move to folder</string>
     <string name="editor_moved_to">Moved to "%1$s"</string>
     <string name="editor_moved_to_root">Moved to vault root</string>
+    <string name="editor_move_attachments_failed">Note moved, but some attachments could not be copied to the target vault</string>
+    <string name="editor_move_attachments_not_followed">Note moved; adjacent attachments did not follow. To move them too, move the entire folder.</string>
     <string name="editor_tool_undo">Undo</string>
     <string name="editor_tool_redo">Redo</string>
     <string name="editor_tool_bold">Bold</string>
@@ -212,6 +217,23 @@
     <string name="settings_about_subtitle">Az Notes · local Markdown notes · your data never leaves the device</string>
     <string name="settings_about_version">Version %1$s · Tap for debug logs</string>
     <string name="settings_about_github">GitHub repository</string>
+
+    <!-- Images (import compression / attachment refs / network image guard / orphan images) -->
+    <string name="settings_image_section">Images</string>
+    <string name="settings_image_compress">Compress imported images</string>
+    <string name="settings_image_compress_subtitle">Fixed: longest edge 1920 · JPEG quality 80</string>
+    <string name="settings_image_orphan_scan">Attachment reference scan</string>
+    <string name="settings_image_orphan_scan_subtitle">Detect images not referenced by any note</string>
+    <string name="settings_image_attachment_prompt">Prompt about attachments on delete/move</string>
+    <string name="settings_image_attachment_prompt_subtitle">Count referenced attachments when deleting or moving a note</string>
+    <string name="settings_image_remote_max">Remote image size limit (MB)</string>
+    <string name="settings_image_remote_max_zero">Disabled (network images not loaded)</string>
+    <string name="settings_image_remote_max_value">%1$d MB</string>
+    <string name="settings_image_remote_max_hint">Set to 0 to stop loading network images</string>
+    <string name="settings_image_timeout">Network image timeout (seconds)</string>
+    <string name="settings_image_timeout_value">%1$d s</string>
+    <string name="settings_image_orphan_entry">Orphan images</string>
+    <string name="settings_image_orphan_entry_subtitle">Review and clean up unreferenced images</string>
 
     <!-- Backup &amp; restore (Settings → Backup; export / import all config) -->
     <string name="settings_backup_section">Backup</string>
@@ -363,6 +385,41 @@
     <string name="trash_restore_failed">Restore failed</string>
     <string name="trash_purged">Trash emptied</string>
     <string name="trash_purge_failed">Failed to empty Trash</string>
+
+    <!-- Images (import / reader / network guard) -->
+    <string name="image_default_base_name">image</string>
+    <string name="image_missing_placeholder">Image not found</string>
+    <string name="remote_image_disabled">Remote image loading is turned off</string>
+    <string name="remote_image_private">Refused to load an image from a private address</string>
+    <string name="remote_image_redirect">Image was redirected; loading blocked</string>
+    <string name="remote_image_too_large">Image exceeded the size limit; loading aborted</string>
+    <string name="remote_image_timeout">Image loading timed out; aborted</string>
+    <string name="remote_image_blocked">This remote image is not allowed to load</string>
+    <string name="remote_image_retry">Tap to retry</string>
+    <string name="editor_insert_image_title">Insert image</string>
+    <string name="editor_insert_image_pick">Choose from device</string>
+    <string name="editor_insert_image_url_hint">Or enter a remote image URL / a relative path in the note</string>
+    <string name="editor_insert_image_url_label">URL / relative path</string>
+    <string name="editor_insert_image_action">Insert</string>
+    <string name="editor_image_import_failed">Image import failed</string>
+    <string name="editor_image_imported">Image imported: %1$s</string>
+    <string name="editor_image_imported_compressed">Image imported: %1$s → %2$s</string>
+
+    <!-- Orphan images (attachments not referenced by any note) -->
+    <string name="orphan_images_title">Orphan images</string>
+    <string name="orphan_images_scanning">Scanning references… %1$d/%2$d</string>
+    <string name="orphan_images_summary">%1$d unreferenced image(s) · %2$s total</string>
+    <string name="orphan_images_unscanned">%1$d note(s) exceeded the scan limit and were skipped; references may be underestimated</string>
+    <string name="orphan_images_empty">No orphan images. Images should be inserted through a note.</string>
+    <string name="orphan_images_select_all">Select all</string>
+    <string name="orphan_images_clear">Clear selection</string>
+    <string name="orphan_images_move_trash">Move to trash</string>
+    <string name="orphan_images_delete_permanently">Delete permanently</string>
+    <string name="orphan_images_confirm_title">Clean up orphan images</string>
+    <string name="orphan_images_confirm_trash">%1$d selected image(s) will be moved to the trash.</string>
+    <string name="orphan_images_confirm_delete">Trash is disabled; %1$d selected image(s) will be permanently deleted. This cannot be undone.</string>
+    <string name="orphan_images_moved">Moved %1$d image(s) to trash</string>
+    <string name="orphan_images_deleted">Deleted %1$d image(s)</string>
 
     <!-- Debug logs (off by default; Settings → About → version row) -->
     <string name="debug_logs_title">Debug logs</string>

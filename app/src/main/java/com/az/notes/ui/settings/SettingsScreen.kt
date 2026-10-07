@@ -12,13 +12,16 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.Sort
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Backup
+import androidx.compose.material.icons.outlined.BrokenImage
 import androidx.compose.material.icons.outlined.Build
+import androidx.compose.material.icons.outlined.Cloud
 import androidx.compose.material.icons.outlined.ColorLens
 import androidx.compose.material.icons.outlined.DeleteSweep
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.FormatLineSpacing
 import androidx.compose.material.icons.outlined.FormatSize
+import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Notes
@@ -27,6 +30,7 @@ import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.Sync
 import androidx.compose.material.icons.outlined.TextFormat
+import androidx.compose.material.icons.outlined.Timer
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -49,6 +53,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.az.notes.R
 import com.az.notes.domain.model.AppLanguage
+import com.az.notes.domain.model.AppSettings
 import com.az.notes.domain.model.FabAction
 import com.az.notes.domain.model.FontFamilyPreference
 import com.az.notes.domain.model.NoteSortOrder
@@ -73,6 +78,7 @@ fun SettingsScreen(
     onOpenVaults: () -> Unit,
     onOpenToolbarSettings: () -> Unit,
     onOpenBackup: () -> Unit,
+    onOpenOrphanImages: () -> Unit,
     onOpenDebugLogs: () -> Unit
 ) {
     val settings by viewModel.settings.collectAsStateWithLifecycle()
@@ -84,6 +90,8 @@ fun SettingsScreen(
     var trashDisableConfirm by remember { mutableStateOf(false) }
     var retentionDialog by remember { mutableStateOf(false) }
     var shareFolderDialog by remember { mutableStateOf(false) }
+    var imageMaxMbDialog by remember { mutableStateOf(false) }
+    var imageTimeoutDialog by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val moveTargets by viewModel.moveTargets.collectAsStateWithLifecycle()
     // 当前版本号（关于区展示）：读取失败时留空
@@ -294,6 +302,79 @@ fun SettingsScreen(
                 )
             }
 
+            // —— 图片（导入压缩 / 附件引用 / 网络图片护栏 / 孤儿图片入口） ——
+            item { SectionHeader(stringResource(R.string.settings_image_section)) }
+            item {
+                SettingsRow(
+                    icon = Icons.Outlined.Image,
+                    title = stringResource(R.string.settings_image_compress),
+                    subtitle = stringResource(R.string.settings_image_compress_subtitle),
+                    trailing = {
+                        Switch(
+                            checked = settings.imageCompressEnabled,
+                            onCheckedChange = viewModel::setImageCompressEnabled
+                        )
+                    },
+                    onClick = { viewModel.setImageCompressEnabled(!settings.imageCompressEnabled) }
+                )
+            }
+            item {
+                SettingsRow(
+                    icon = Icons.Outlined.BrokenImage,
+                    title = stringResource(R.string.settings_image_orphan_scan),
+                    subtitle = stringResource(R.string.settings_image_orphan_scan_subtitle),
+                    trailing = {
+                        Switch(
+                            checked = settings.orphanScanEnabled,
+                            onCheckedChange = viewModel::setOrphanScanEnabled
+                        )
+                    },
+                    onClick = { viewModel.setOrphanScanEnabled(!settings.orphanScanEnabled) }
+                )
+            }
+            item {
+                SettingsRow(
+                    icon = Icons.Outlined.DeleteSweep,
+                    title = stringResource(R.string.settings_image_attachment_prompt),
+                    subtitle = stringResource(R.string.settings_image_attachment_prompt_subtitle),
+                    trailing = {
+                        Switch(
+                            checked = settings.attachmentPromptEnabled,
+                            onCheckedChange = viewModel::setAttachmentPromptEnabled
+                        )
+                    },
+                    onClick = { viewModel.setAttachmentPromptEnabled(!settings.attachmentPromptEnabled) }
+                )
+            }
+            item {
+                SettingsRow(
+                    icon = Icons.Outlined.Cloud,
+                    title = stringResource(R.string.settings_image_remote_max),
+                    subtitle = stringResource(
+                        if (settings.remoteImageMaxMb <= 0) R.string.settings_image_remote_max_zero
+                        else R.string.settings_image_remote_max_value,
+                        settings.remoteImageMaxMb
+                    ),
+                    onClick = { imageMaxMbDialog = true }
+                )
+            }
+            item {
+                SettingsRow(
+                    icon = Icons.Outlined.Timer,
+                    title = stringResource(R.string.settings_image_timeout),
+                    subtitle = stringResource(R.string.settings_image_timeout_value, settings.remoteImageTimeoutSeconds),
+                    onClick = { imageTimeoutDialog = true }
+                )
+            }
+            item {
+                SettingsRow(
+                    icon = Icons.Outlined.BrokenImage,
+                    title = stringResource(R.string.settings_image_orphan_entry),
+                    subtitle = stringResource(R.string.settings_image_orphan_entry_subtitle),
+                    onClick = onOpenOrphanImages
+                )
+            }
+
             // —— 备份（导出 / 导入全部配置；置于「关于」上方） ——
             item { SectionHeader(stringResource(R.string.settings_backup_section)) }
             item {
@@ -401,6 +482,44 @@ fun SettingsScreen(
                 retentionDialog = false
             },
             onDismiss = { retentionDialog = false }
+        )
+    }
+
+    // 网络图片体积上限（MB）：0 = 不加载网络图片（与 Repository 收敛区间 0..1024 一致）
+    if (imageMaxMbDialog) {
+        SliderDialog(
+            title = stringResource(R.string.settings_image_remote_max),
+            value = settings.remoteImageMaxMb.toFloat(),
+            valueRange = 0f..AppSettings.REMOTE_IMAGE_MAX_MB_LIMIT.toFloat(),
+            steps = AppSettings.REMOTE_IMAGE_MAX_MB_LIMIT - 1,
+            valueText = { mb ->
+                val v = mb.roundToInt()
+                if (v <= 0) stringResource(R.string.settings_image_remote_max_zero)
+                else stringResource(R.string.settings_image_remote_max_value, v)
+            },
+            hint = stringResource(R.string.settings_image_remote_max_hint),
+            onConfirm = {
+                viewModel.setRemoteImageMaxMb(it.roundToInt())
+                imageMaxMbDialog = false
+            },
+            onDismiss = { imageMaxMbDialog = false }
+        )
+    }
+
+    // 网络图片读取超时（秒）：限定 1..30
+    if (imageTimeoutDialog) {
+        SliderDialog(
+            title = stringResource(R.string.settings_image_timeout),
+            value = settings.remoteImageTimeoutSeconds.toFloat(),
+            valueRange = AppSettings.REMOTE_IMAGE_TIMEOUT_RANGE.first.toFloat()..
+                AppSettings.REMOTE_IMAGE_TIMEOUT_RANGE.last.toFloat(),
+            steps = AppSettings.REMOTE_IMAGE_TIMEOUT_RANGE.last - AppSettings.REMOTE_IMAGE_TIMEOUT_RANGE.first - 1,
+            valueText = { s -> stringResource(R.string.settings_image_timeout_value, s.roundToInt()) },
+            onConfirm = {
+                viewModel.setRemoteImageTimeoutSeconds(it.roundToInt())
+                imageTimeoutDialog = false
+            },
+            onDismiss = { imageTimeoutDialog = false }
         )
     }
 

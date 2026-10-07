@@ -28,6 +28,8 @@ datastore = "1.1.2"
 workManager = "2.10.2"
 securityCrypto = "1.1.0-alpha07"
 splashscreen = "1.0.1"
+# 图片导入压缩时读取 EXIF 方向（避免相册照片横躺）
+exifinterface = "1.4.1"
 
 # --- 三方库 ---
 coil = "3.2.0"
@@ -76,6 +78,7 @@ room-ktx = { group = "androidx.room", name = "room-ktx", version.ref = "room" }
 room-compiler = { group = "androidx.room", name = "room-compiler", version.ref = "room" }
 androidx-datastore-preferences = { group = "androidx.datastore", name = "datastore-preferences", version.ref = "datastore" }
 androidx-security-crypto = { group = "androidx.security", name = "security-crypto", version.ref = "securityCrypto" }
+androidx-exifinterface = { group = "androidx.exifinterface", name = "exifinterface", version.ref = "exifinterface" }
 
 # --- 后台任务 ---
 androidx-work-runtime-ktx = { group = "androidx.work", name = "work-runtime-ktx", version.ref = "workManager" }
@@ -87,6 +90,8 @@ androidx-hilt-navigation-compose = { group = "androidx.hilt", name = "hilt-navig
 
 # --- 图片加载 (Coil 3) ---
 coil-compose = { group = "io.coil-kt.coil3", name = "coil-compose", version.ref = "coil" }
+# 预览页网络图片：走项目已有的 OkHttp（受控客户端：体积上限 / 超时 / 不跟随重定向）
+coil-network-okhttp = { group = "io.coil-kt.coil3", name = "coil-network-okhttp", version.ref = "coil" }
 
 # --- Markdown 渲染 ---
 markdown-renderer = { group = "com.mikepenz", name = "multiplatform-markdown-renderer", version.ref = "markdownRenderer" }
@@ -95,6 +100,7 @@ jetbrains-markdown = { group = "org.jetbrains", name = "markdown", version.ref =
 
 # --- 同步 (M3, WebDAV) ---
 okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
+okhttp-mockwebserver = { group = "com.squareup.okhttp3", name = "mockwebserver", version.ref = "okhttp" }
 
 # --- 序列化 (JSON) ---
 kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "kotlinxSerialization" }

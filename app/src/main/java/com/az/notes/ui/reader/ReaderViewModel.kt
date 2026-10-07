@@ -52,6 +52,8 @@ data class ReaderUiState(
     val initialProgress: ReadProgressEntity? = null,
     /** 当前笔记所属 Vault 根（图片相对路径解析用）。 */
     val vaultPath: String? = null,
+    /** 网络图片体积上限（字节）；0 = 不加载网络图片（预览页护栏用）。 */
+    val remoteImageMaxBytes: Long = 0L,
     /** “文档信息”对话框数据（null = 对话框未打开）。 */
     val docInfo: DocInfo? = null,
     /** frontmatter `note_type` 值（小写）；null = 未声明。 */
@@ -112,6 +114,7 @@ class ReaderViewModel @Inject constructor(
             if (showLoading) _state.update { it.copy(loading = true, error = null) }
             try {
                 val vault = runCatching { settingsRepository.settings.first().vaultPath }.getOrNull()
+                val remoteMaxBytes = runCatching { settingsRepository.settings.first().remoteImageMaxBytes }.getOrDefault(0L)
                 val text = withContext(Dispatchers.IO) { vaultRepository.readText(absolutePath) }
                 val split = withContext(Dispatchers.IO) { FrontmatterParser.split(text) }
                 val noteType = split.value("note_type")?.trim()?.lowercase()
@@ -131,6 +134,7 @@ class ReaderViewModel @Inject constructor(
                         content = split.body,
                         headings = parsed.headings,
                         vaultPath = vault,
+                        remoteImageMaxBytes = remoteMaxBytes,
                         initialProgress = progress,
                         noteType = noteType,
                         attributes = split.entries,

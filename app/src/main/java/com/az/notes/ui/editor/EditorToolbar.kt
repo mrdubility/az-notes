@@ -57,7 +57,12 @@ import com.az.notes.ui.common.label
 /** 底部工具条：工具集与顺序由设置决定（可开关 / 排序），横向可滚动。 */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-internal fun EditorToolbar(textState: TextFieldState, tools: List<EditorTool>) {
+internal fun EditorToolbar(
+    textState: TextFieldState,
+    tools: List<EditorTool>,
+    /** 图片工具：不再插字面量，改为触发选图 / 链接录入流程 */
+    onImageRequest: () -> Unit
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -66,7 +71,9 @@ internal fun EditorToolbar(textState: TextFieldState, tools: List<EditorTool>) {
         verticalAlignment = Alignment.CenterVertically
     ) {
         tools.forEach { tool ->
-            ToolButton(tool.icon(), tool.label()) { tool.perform(textState) }
+            ToolButton(tool.icon(), tool.label()) {
+                if (tool == EditorTool.IMAGE) onImageRequest() else tool.perform(textState)
+            }
         }
         Spacer(Modifier.width(8.dp))
     }

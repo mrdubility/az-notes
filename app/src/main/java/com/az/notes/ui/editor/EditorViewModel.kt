@@ -3,7 +3,11 @@ package com.az.notes.ui.editor
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import android.net.Uri
 import com.az.notes.R
+import com.az.notes.data.media.AttachmentRepository
+import com.az.notes.data.media.ImageImportRepository
+import com.az.notes.data.media.ImportedMedia
 import com.az.notes.data.settings.SettingsRepository
 import com.az.notes.data.storage.VaultRepository
 import com.az.notes.data.sync.SyncEngine
@@ -40,6 +44,8 @@ data class EditorUiState(
     val toolbarTools: List<EditorTool> = EditorTool.entries.toList(),
     /** 当前 Vault 根（移动对话框根目录行用） */
     val vaultPath: String? = null,
+    /** 图片压缩导入开关（来自设置，默认开） */
+    val imageCompressEnabled: Boolean = true,
     /** 移动对话框的目标文件夹列表（null = 尚未加载） */
     val moveTargets: List<FileNode>? = null
 )
@@ -54,7 +60,9 @@ class EditorViewModel @Inject constructor(
     private val vaultRepository: VaultRepository,
     private val settingsRepository: SettingsRepository,
     private val syncEngine: SyncEngine,
-    private val syncScheduler: SyncScheduler
+    private val syncScheduler: SyncScheduler,
+    private val imageImportRepository: ImageImportRepository,
+    private val attachmentRepository: AttachmentRepository
 ) : ViewModel() {
 
     private var absolutePath: String =
@@ -75,7 +83,8 @@ class EditorViewModel @Inject constructor(
                 _state.update {
                     it.copy(
                         toolbarTools = EditorTool.resolve(s.editorToolOrder, s.editorToolDisabled),
-                        vaultPath = s.vaultPath
+                        vaultPath = s.vaultPath,
+                        imageCompressEnabled = s.imageCompressEnabled
                     )
                 }
             }
@@ -235,7 +244,24 @@ class EditorViewModel @Inject constructor(
                 _state.update { it.copy(message = UiText.of(R.string.msg_move_failed_exists)) }
                 return@launch
             }
-            val vault = runCatching { settingsRepository.settings.first().vaultPath }.getOrNull()
+            val settings = runCatching { settingsRepository.settings.first() }.getOrNull()
+            val vault = settings?.vaultPath
+            // 跨仓库判定：目标目录落在“其他仓库挂载点”内（同 NotesViewModel.isCrossVaultMove 语义）
+            val currentRoot = vault?.trimEnd('/')
+            val targetAbs = File(targetDir).absolutePath.trimEnd('/')
+            val targetVaultRoot = settings?.vaults?.firstOrNull {
+                val p = it.path.trimEnd('/')
+                p.isNotEmpty() && p != currentRoot && (targetAbs == p || targetAbs.startsWith("$p/"))
+            }?.path
+            val crossVault = targetVaultRoot != null
+            // 跨仓库且开关开启时，移动前先在源仓库统计「仅本文引用」的附件，随后同名复制到目标仓库
+            val exclusiveFiles: List<File> = if (crossVault && settings?.attachmentPromptEnabled == true && !vault.isNullOrBlank()) {
+                withContext(Dispatchers.IO) {
+                    runCatching {
+                        attachmentRepository.referencedByNote(File(vault!!), absolutePath).exclusiveFiles
+                    }.getOrDefault(emptyList())
+                }
+            } else emptyList()
             val ok = runCatching {
                 withContext(Dispatchers.IO) {
                     // 先保存未落盘内容，避免移动后丢失编辑
@@ -246,10 +272,31 @@ class EditorViewModel @Inject constructor(
             if (ok) {
                 val oldPath = absolutePath
                 absolutePath = target.absolutePath
-                val movedMessage = if (!vault.isNullOrBlank() && targetDir == vault) {
+                var movedMessage = if (!vault.isNullOrBlank() && targetDir == vault) {
                     UiText.of(R.string.editor_moved_to_root)
                 } else {
                     UiText.of(R.string.editor_moved_to, File(targetDir).name)
+                }
+                // 跨仓库：把「仅本文引用」的附件按同名复制到目标仓库对应 assets/，正文引用保持不变
+                if (crossVault && exclusiveFiles.isNotEmpty() && targetVaultRoot != null) {
+                    val copied = withContext(Dispatchers.IO) {
+                        imageImportRepository.copyAttachmentsAcrossVaults(
+                            sources = exclusiveFiles,
+                            targetNoteDir = File(absolutePath).parentFile ?: File(targetDir),
+                            targetVaultRoot = targetVaultRoot
+                        )
+                    }
+                    // 复制失败不影响笔记移动，仅提示「附件未全部跟随」（无磁盘缓存 / IO 异常）
+                    if (copied < exclusiveFiles.size) {
+                        movedMessage = UiText.of(R.string.editor_move_attachments_failed)
+                    }
+                }
+                // 同仓库跨目录移动单篇笔记：若笔记相邻 assets/ 仍有内容，给出「附件未跟随」提示（不静默搬运）
+                if (!crossVault && settings?.attachmentPromptEnabled == true) {
+                    val srcAssets = src.parentFile?.let { File(it, VaultRepository.ATTACHMENT_DIR) }
+                    if (srcAssets?.isDirectory == true && srcAssets.listFiles()?.isNotEmpty() == true) {
+                        movedMessage = UiText.of(R.string.editor_move_attachments_not_followed)
+                    }
                 }
                 _state.update {
                     it.copy(
@@ -259,10 +306,30 @@ class EditorViewModel @Inject constructor(
                         message = movedMessage
                     )
                 }
-                syncRemoteRename(oldPath, absolutePath)
+                if (crossVault) schedulePostSaveSync() else syncRemoteRename(oldPath, absolutePath)
             } else {
                 _state.update { it.copy(message = UiText.of(R.string.msg_move_failed)) }
             }
+        }
+    }
+
+    /**
+     * 导入一张图片到当前笔记同目录的 `assets/`，受压缩开关控制（默认开）。
+     * 成功时回调 [onDone] 传入导入产物（供正文插入与体积提示），失败传 null。
+     * 全程仅在仓库内落盘，任一环节失败不产生孤儿附件。
+     */
+    fun importImage(uri: Uri, onDone: (ImportedMedia?) -> Unit) {
+        viewModelScope.launch {
+            val current = _state.value
+            val vault = current.vaultPath
+            if (vault.isNullOrBlank()) {
+                onDone(null)
+                return@launch
+            }
+            val media = runCatching {
+                imageImportRepository.import(uri, vault, File(absolutePath), current.imageCompressEnabled)
+            }.getOrNull()
+            onDone(media)
         }
     }
 

@@ -43,6 +43,9 @@ enum class DebugLogType {
     /** 文件读写与回收站。 */
     FILE,
 
+    /** 图片导入 / 压缩 / 附件引用扫描。 */
+    IMAGE,
+
     /** 应用生命周期与未捕获崩溃。 */
     APP
 }

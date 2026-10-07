@@ -103,4 +103,26 @@ class SettingsViewModel @Inject constructor(
     /** 编辑器工具栏禁用集合。 */
     fun setEditorToolDisabled(disabled: Set<String>) =
         viewModelScope.launch { settingsRepository.setEditorToolDisabled(disabled) }
+
+    // ------------------------------------------------------------ 图片（本批新增）
+
+    /** 导入图片时是否压缩（固定参数）。 */
+    fun setImageCompressEnabled(enabled: Boolean) =
+        viewModelScope.launch { settingsRepository.setImageCompressEnabled(enabled) }
+
+    /** 是否允许扫描附件引用（孤儿图片）。 */
+    fun setOrphanScanEnabled(enabled: Boolean) =
+        viewModelScope.launch { settingsRepository.setOrphanScanEnabled(enabled) }
+
+    /** 删除 / 移动笔记时是否提示附件引用情况。 */
+    fun setAttachmentPromptEnabled(enabled: Boolean) =
+        viewModelScope.launch { settingsRepository.setAttachmentPromptEnabled(enabled) }
+
+    /** 网络图片体积上限（MB）；0 = 不加载网络图片。 */
+    fun setRemoteImageMaxMb(mb: Int) =
+        viewModelScope.launch { settingsRepository.setRemoteImageMaxMb(mb) }
+
+    /** 网络图片读取超时（秒）。 */
+    fun setRemoteImageTimeoutSeconds(seconds: Int) =
+        viewModelScope.launch { settingsRepository.setRemoteImageTimeoutSeconds(seconds) }
 }

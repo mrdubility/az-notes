@@ -45,11 +45,12 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-            <!-- 系统分享（纯文本）→ 新建笔记存入分享内容 -->
+            <!-- 系统分享（文本 / 图片）→ 新建笔记存入分享内容（图片走导入管线存入笔记 assets/） -->
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="text/plain" />
+                <data android:mimeType="image/*" />
             </intent-filter>
             <!-- 文本选择菜单的“处理文字”（含 ColorOS 传送门等系统入口）→ 新建笔记 -->
             <intent-filter>

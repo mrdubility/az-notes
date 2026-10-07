@@ -2,6 +2,7 @@ package com.az.notes
 
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.os.SystemClock
 import androidx.activity.ComponentActivity
@@ -87,23 +88,36 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * 系统分享（ACTION_SEND）与文本选择菜单的“处理文字”（ACTION_PROCESS_TEXT）入口：
-     * 提取纯文本交给主页新建笔记并进入编辑页；其它 Intent 忽略。
+     * 系统分享（ACTION_SEND 文本/图片）与文本选择菜单的“处理文字”（ACTION_PROCESS_TEXT）入口：
+     * 文本交纯文本新建笔记；图片（image/*）取 EXTRA_STREAM（多选取首张）走图片导入建笔记。
+     * 两个分支互斥消费后清掉启动 intent；其它 Intent 忽略。
      */
     private fun handleShareIntent(intent: Intent?) {
-        val text = when (intent?.action) {
-            Intent.ACTION_SEND ->
-                if (intent.type?.startsWith("text/") == true) {
-                    intent.getStringExtra(Intent.EXTRA_TEXT)
-                } else null
-            Intent.ACTION_PROCESS_TEXT ->
-                intent.getCharSequenceExtra(Intent.EXTRA_PROCESS_TEXT)?.toString()
-            else -> null
-        }
-        if (!text.isNullOrBlank()) {
-            mainViewModel.setSharedText(text)
-            // 消费后清掉启动 intent：Activity 重建时 getIntent() 不再包含分享文本
-            setIntent(Intent())
+        when (intent?.action) {
+            Intent.ACTION_SEND -> {
+                val type = intent.type.orEmpty()
+                if (type.startsWith("image/")) {
+                    @Suppress("DEPRECATION")
+                    val uri = intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
+                    if (uri != null) {
+                        mainViewModel.setSharedImageUri(uri)
+                        setIntent(Intent())
+                    }
+                } else if (type.startsWith("text/")) {
+                    val text = intent.getStringExtra(Intent.EXTRA_TEXT)
+                    if (!text.isNullOrBlank()) {
+                        mainViewModel.setSharedText(text)
+                        setIntent(Intent())
+                    }
+                }
+            }
+            Intent.ACTION_PROCESS_TEXT -> {
+                val text = intent.getCharSequenceExtra(Intent.EXTRA_PROCESS_TEXT)?.toString()
+                if (!text.isNullOrBlank()) {
+                    mainViewModel.setSharedText(text)
+                    setIntent(Intent())
+                }
+            }
         }
     }
 

@@ -2,7 +2,9 @@ package com.az.notes.ui
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import android.net.Uri
 import com.az.notes.data.settings.SettingsRepository
+import com.az.notes.di.CoilHolder
 import com.az.notes.domain.model.AppSettings
 import com.az.notes.work.SyncScheduler
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -20,7 +22,8 @@ import javax.inject.Inject
 @HiltViewModel
 class MainViewModel @Inject constructor(
     private val settingsRepository: SettingsRepository,
-    private val syncScheduler: SyncScheduler
+    private val syncScheduler: SyncScheduler,
+    private val coilHolder: CoilHolder
 ) : ViewModel() {
 
     init {
@@ -36,7 +39,11 @@ class MainViewModel @Inject constructor(
     val ready: StateFlow<Boolean> = _ready.asStateFlow()
 
     val settings: StateFlow<AppSettings> = settingsRepository.settings
-        .onEach { _ready.value = true }
+        .onEach {
+            _ready.value = true
+            // 网络图片护栏阈值回流：体积上限走 provider 即时生效，超时变化重建客户端
+            coilHolder.applySettings(it.remoteImageMaxBytes, it.remoteImageTimeoutSeconds)
+        }
         .catch { _ready.value = true } // 读取失败也放行，避免卡在启动画面
         .stateIn(
             scope = viewModelScope,
@@ -68,6 +75,23 @@ class MainViewModel @Inject constructor(
     /** 分享文本已交给主页建笔记，清空避免重复处理。 */
     fun consumeSharedText() {
         _sharedText.value = null
+    }
+
+    /**
+     * 系统分享（ACTION_SEND image/*）传入的待导入图片 URI。
+     * 由主页消费后清空；与 [_sharedText] 互斥（一次分享只携一种类型）。
+     */
+    private val _sharedImageUri = MutableStateFlow<Uri?>(null)
+    val sharedImageUri: StateFlow<Uri?> = _sharedImageUri.asStateFlow()
+
+    /** 接收系统分享的图片 URI。 */
+    fun setSharedImageUri(uri: Uri) {
+        _sharedImageUri.value = uri
+    }
+
+    /** 分享图片已交给主页建笔记，清空避免重复处理。 */
+    fun consumeSharedImageUri() {
+        _sharedImageUri.value = null
     }
 
     /** App 退到后台时冲刷排队中的“保存后同步”（详见 SyncScheduler.flushPendingSaveSync）。 */

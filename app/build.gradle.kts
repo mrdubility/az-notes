@@ -139,6 +139,10 @@ dependencies {
 
     // --- 图片 ---
     implementation(libs.coil.compose)
+    // 预览页网络图片：走受控 OkHttp 客户端（见 NetworkImageGuard：体积上限 / 超时 / 不跟随重定向）
+    implementation(libs.coil.network.okhttp)
+    // 导入压缩时按 EXIF 方向旋转（相册照片）
+    implementation(libs.androidx.exifinterface)
 
     // --- Markdown 渲染 ---
     implementation(libs.markdown.renderer)
@@ -152,5 +156,7 @@ dependencies {
     // --- 测试 ---
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
+    // 网络图片护栏（体积上限 / 超时 / 不跟随重定向）的本地桩服务测试
+    testImplementation(libs.okhttp.mockwebserver)
     androidTestImplementation(libs.androidx.test.junit)
 }

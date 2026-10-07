@@ -43,11 +43,25 @@ class VaultRepository @Inject constructor() {
             "pdf", "mp3", "mp4", "mov", "webm", "avif"
         )
 
+        /**
+         * 位图图片扩展名（可参与导入压缩）。不含 svg / gif / webp / avif / heic：
+         * 前三个重编码会丢动画或矢量信息，heic 交系统解码不可靠，均按原样复制。
+         */
+        private val BITMAP_IMAGE_EXT = setOf("png", "jpg", "jpeg", "bmp")
+
+        /** 可作为「图片」导入的扩展名（含位图与常见网络图）。 */
+        private val IMAGE_EXT = setOf(
+            "png", "jpg", "jpeg", "bmp", "gif", "webp", "avif", "svg", "heic", "heif"
+        )
+
+        /** 笔记旁的规范附件夹名（与 Obsidian 常见附件目录惯例一致）。 */
+        const val ATTACHMENT_DIR = "assets"
+
         /** 日期变量：`$...$` 包裹的片段（内容按 SimpleDateFormat 语法解析）。 */
         private val DATE_VAR = Regex("\\$([^$]+)\\$")
 
-        /** 正文搜索：超过该大小的文件跳过正文匹配（仅参与文件名匹配）。 */
-        private const val CONTENT_SEARCH_MAX_BYTES = 262_144L
+        /** 正文搜索 / 附件引用扫描：超过该大小的文件跳过正文匹配（仅参与文件名匹配）。 */
+        const val CONTENT_SEARCH_MAX_BYTES = 262_144L
 
         /** 正文搜索缓存上限：超过后整体清空，控制内存占用。 */
         private const val CONTENT_CACHE_LIMIT = 512
@@ -61,6 +75,14 @@ class VaultRepository @Inject constructor() {
 
         fun isAttachmentName(name: String): Boolean =
             name.substringAfterLast('.', "").lowercase() in ATTACHMENT_EXT
+
+        /** 是否可导入的图片（含不可压缩的矢量/动图格式）。 */
+        fun isImageName(name: String): Boolean =
+            name.substringAfterLast('.', "").lowercase() in IMAGE_EXT
+
+        /** 是否为可重编码压缩的位图图片。 */
+        fun isBitmapImageName(name: String): Boolean =
+            name.substringAfterLast('.', "").lowercase() in BITMAP_IMAGE_EXT
 
         /** 清洗用户输入的文件 / 文件夹名：过滤路径分隔符与非法字符；空或 '.' 开头返回 null。 */
         fun sanitizeEntryName(input: String): String? = input.trim()

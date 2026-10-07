@@ -1,6 +1,9 @@
 package com.az.notes.ui.editor
 
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -15,6 +18,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.foundation.text.input.setTextAndPlaceCursorAtEnd
+import androidx.compose.ui.text.TextRange
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.Close
@@ -52,10 +56,13 @@ import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.az.notes.R
+import com.az.notes.data.media.ImportedMedia
 import com.az.notes.ui.common.resolve
+import com.az.notes.ui.components.InsertImageDialog
 import com.az.notes.ui.components.MoveTargetDialog
 import com.az.notes.ui.components.RenameDialog
 import com.az.notes.ui.theme.LocalReadingStyle
+import androidx.compose.ui.platform.LocalContext
 import kotlinx.coroutines.launch
 
 /**
@@ -79,6 +86,7 @@ fun EditorScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val readingStyle = LocalReadingStyle.current
+    val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
 
@@ -86,6 +94,7 @@ fun EditorScreen(
     var query by rememberSaveable { mutableStateOf("") }
     var renameDialog by remember { mutableStateOf(false) }
     var moveDialog by remember { mutableStateOf(false) }
+    var insertImageDialog by remember { mutableStateOf(false) }
 
     // —— 编辑器文本状态：内建 undo/redo 栈与自滚动 ——
     val textState = rememberTextFieldState()
@@ -93,6 +102,30 @@ fun EditorScreen(
     var layoutResult by remember { mutableStateOf<TextLayoutResult?>(null) }
     // 笔记文本是否已灌入编辑器；配置重建时经 rememberSaveable 恢复，避免重复灌入
     var initialized by rememberSaveable { mutableStateOf(false) }
+
+    // 在光标处插入图片 Markdown：`![](link)`；altInCursor=true 时光标停在方括号内供填写 alt
+    val insertImageMarkdown: (String, Boolean) -> Unit = { link, altInCursor ->
+        textState.edit {
+            val cursor = selection.min
+            val snippet = "![]($link)"
+            replace(cursor, cursor, snippet)
+            selection = if (altInCursor) TextRange(cursor + 2) else TextRange(cursor + snippet.length)
+        }
+    }
+
+    // 系统图片选择器：选中后交 ViewModel 导入（落位 assets/ + 可选压缩），成功后插入链接并提示体积
+    val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) {
+            viewModel.importImage(uri) { media ->
+                if (media != null) {
+                    insertImageMarkdown(media.link, altInCursor = true)
+                    scope.launch { snackbarHostState.showSnackbar(importedMessage(context, media)) }
+                } else {
+                    scope.launch { snackbarHostState.showSnackbar(context.getString(R.string.editor_image_import_failed)) }
+                }
+            }
+        }
+    }
 
     // 加载完成后一次性灌入文本（进程重建时若已恢复编辑器内容则跳过；
     // 此时恢复内容优先于刚读出的磁盘内容，回写一次避免被加载结果覆盖）
@@ -268,7 +301,7 @@ fun EditorScreen(
                 HorizontalDivider()
                 // 底部工具条：位于键盘上方（由 imePadding 抬升）；
                 // 显示哪些工具、顺序如何均由设置决定（可开关 / 排序）
-                EditorToolbar(textState, state.toolbarTools)
+                EditorToolbar(textState, state.toolbarTools, onImageRequest = { insertImageDialog = true })
             }
         }
     }
@@ -295,4 +328,35 @@ fun EditorScreen(
             }
         )
     }
+
+    if (insertImageDialog) {
+        InsertImageDialog(
+            onDismiss = { insertImageDialog = false },
+            onPickDevice = {
+                insertImageDialog = false
+                imagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+            },
+            onInsertLink = { value ->
+                insertImageDialog = false
+                insertImageMarkdown(value, altInCursor = false)
+            }
+        )
+    }
+}
+
+/** 导入结果提示：有压缩收益时展示前后体积，否则展示最终体积。 */
+private fun importedMessage(context: android.content.Context, media: ImportedMedia): String {
+    val after = formatSize(media.bytesAfter)
+    return if (media.shrank) {
+        context.getString(R.string.editor_image_imported_compressed, formatSize(media.bytesBefore), after)
+    } else {
+        context.getString(R.string.editor_image_imported, after)
+    }
+}
+
+/** 文件大小：B / KB / MB（与预览页文档信息一致的档位与精度）。 */
+private fun formatSize(bytes: Long): String = when {
+    bytes < 1024 -> "$bytes B"
+    bytes < 1024 * 1024 -> "%.1f KB".format(bytes / 1024.0)
+    else -> "%.1f MB".format(bytes / (1024.0 * 1024.0))
 }

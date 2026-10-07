@@ -2,76 +2,206 @@ package com.az.notes.ui.reader
 
 import android.net.Uri
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import coil3.compose.LocalPlatformContext
-import coil3.compose.rememberAsyncImagePainter
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.dp
+import coil3.compose.AsyncImage
+import coil3.compose.AsyncImagePainter
 import coil3.request.ImageRequest
 import coil3.request.crossfade
-import com.mikepenz.markdown.model.ImageData
-import com.mikepenz.markdown.model.ImageTransformer
+import coil3.size.Size
+import com.az.notes.R
+import com.az.notes.domain.markdown.ImageReference
+import com.mikepenz.markdown.compose.components.MarkdownComponentModel
 import java.io.File
-import java.net.URLDecoder
+import org.intellij.markdown.IElementType
+import org.intellij.markdown.MarkdownElementTypes
+import org.intellij.markdown.ast.ASTNode
 
 /**
- * 预览页图片加载器：把 Markdown 中的本地图片链接解析为 Vault 内的真实文件，
- * 用 Coil 异步加载后交给渲染库的默认图片组件展示；点击回调 [onImageClick]（全屏预览）。
+ * 预览页图片渲染：把 Markdown 图片链接解析并渲染，覆盖三类来源——
  *
- * 支持 `![x](a.png)`、`./`、`../` 相对路径（相对笔记所在目录）与 `/` Vault 根路径；
- * 网络图片（http/https/data/content）不做处理（返回 null 即不渲染）。
+ * 1. 仓库内本地图片：经 [ImageReference.resolveExisting] 定位（与附件索引同一套解析规则，
+ *    避免两处漂移），用 Coil 加载本地文件，点击全屏预览（[onImageClick]，仅本地支持）。
+ * 2. 网络图片（http/https/data）：按「不可信来源」经 [NetworkImageGuard] 校验，
+ *    通过则以受控客户端加载（见 [com.az.notes.AzNotesApp] 的 ImageLoader），不挂点击。
+ * 3. 被护栏拒绝（超限 / 私网 / 重定向 / 不允许地址 / 已关闭）：不发起请求，直接给可读原因。
+ *
+ * 加载态与失败态：Loading 显示占位（避免大片空白）；失败按 [NetworkImageGuard.classify]
+ * 映射可读文案，网络图片附「点击重试」（以新 key 重建请求）。
  */
-class VaultImageTransformer(
-    private val vaultRoot: String,
-    private val baseDir: File,
-    private val onImageClick: (File) -> Unit
-) : ImageTransformer {
 
-    @Composable
-    override fun transform(link: String): ImageData? {
-        val file = remember(link) { resolve(link) } ?: return null
-        val painter = rememberAsyncImagePainter(
-            model = ImageRequest.Builder(LocalPlatformContext.current)
-                .data(Uri.fromFile(file))
-                .crossfade(true)
-                .build()
-        )
-        return ImageData(
-            painter = painter,
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable { onImageClick(file) }
-        )
+/** 从图片 AST 节点取链接目标（LINK_DESTINATION），取不到返回 null。 */
+private fun extractImageLink(node: ASTNode, content: String): String? {
+    val dest = node.children.firstNotNullDown(MarkdownElementTypes.LINK_DESTINATION) ?: return null
+    val raw = content.substring(dest.startOffset, dest.endOffset).trim()
+    return raw.ifBlank { null }
+}
+
+private fun List<ASTNode>.firstNotNullDown(type: IElementType): ASTNode? {
+    for (child in this) {
+        if (child.type == type) return child
+        child.children.firstNotNullDown(type)?.let { return it }
     }
+    return null
+}
 
-    /** 解析图片链接为 Vault 内文件；非本地 / 越出 Vault / 文件不存在时返回 null。 */
-    private fun resolve(link: String): File? {
-        if (link.startsWith("http://", true) ||
-            link.startsWith("https://", true) ||
-            link.startsWith("data:", true) ||
-            link.startsWith("content:", true)
-        ) {
-            return null
+/**
+ * Markdown 图片组件（经 `markdownComponents(image = ...)` 接管渲染）。
+ * [vaultRoot]/[baseDir]/[maxBytes] 由预览页注入；[onImageClick] 仅本地图片触发。
+ */
+@Composable
+fun VaultMarkdownImage(
+    model: MarkdownComponentModel,
+    vaultRoot: String,
+    baseDir: File,
+    maxBytes: Long,
+    onImageClick: (File) -> Unit
+) {
+    val link = extractImageLink(model.node, model.content) ?: return
+    if (link.isBlank()) return
+
+    val root = remember(vaultRoot) { File(vaultRoot) }
+    if (ImageReference.isRemote(link)) {
+        RemoteImage(link = link, maxBytes = maxBytes)
+    } else {
+        val file = remember(link, vaultRoot) {
+            ImageReference.resolveExisting(link, root, baseDir)
         }
-        val cleaned = decode(link.substringBefore('#').substringBefore('?'))
-            .removePrefix("<")
-            .removeSuffix(">")
-        if (cleaned.isBlank()) return null
-        val root = File(vaultRoot).normalize()
-        val target = (if (cleaned.startsWith("/")) {
-            File(root, cleaned.trimStart('/'))
+        if (file == null) {
+            // 本地图片缺失：保留 alt 占位，不显示破损大块
+            MissingImagePlaceholder()
         } else {
-            File(baseDir, cleaned)
-        }).normalize()
-        // 安全护栏：不加载越出 Vault 的文件
-        if (target != root && !target.absolutePath.startsWith(root.absolutePath + File.separator)) {
-            return null
+            LocalImage(file = file, onImageClick = onImageClick)
         }
-        return target.takeIf { it.isFile }
     }
+}
 
-    /** 百分号解码（保留 '+' 字符本身，不做表单语义转换）。 */
-    private fun decode(value: String): String =
-        runCatching { URLDecoder.decode(value.replace("+", "%2B"), "UTF-8") }.getOrDefault(value)
+/** 本地图片：Coil 加载文件，点击全屏预览。 */
+@Composable
+private fun LocalImage(file: File, onImageClick: (File) -> Unit) {
+    AsyncImage(
+        model = ImageRequest.Builder(coil3.compose.LocalPlatformContext.current)
+            .data(Uri.fromFile(file))
+            .crossfade(true)
+            .build(),
+        contentDescription = file.name,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onImageClick(file) },
+        loading = { ImageLoadingIndicator() },
+        error = { MissingImagePlaceholder() }
+    )
+}
+
+/** 网络图片：护栏校验通过后经受控客户端加载，失败给原因 + 重试。 */
+@Composable
+private fun RemoteImage(link: String, maxBytes: Long) {
+    // 重试计数：改变 key 让 Coil 重新发起请求
+    var retry by remember(link) { mutableIntStateOf(0) }
+    val blocked = remember(link, maxBytes) { NetworkImageGuard.check(link, maxBytes) }
+    if (blocked != null) {
+        NetworkImageError(blocked, retryable = false, onRetry = {})
+        return
+    }
+    // key(retry) 重建 AsyncImage：网络图片无缓存，唯有重建 painter 才能重新发起请求
+    key(retry) {
+        AsyncImage(
+            model = ImageRequest.Builder(coil3.compose.LocalPlatformContext.current)
+                .data(link)
+                .size(Size.ORIGINAL)
+                .crossfade(true)
+                .build(),
+            contentDescription = link.substringAfterLast('/'),
+            modifier = Modifier.fillMaxWidth(),
+            loading = { ImageLoadingIndicator() },
+            error = { state ->
+                val failure = NetworkImageGuard.classify((state as? AsyncImagePainter.State.Error)?.result?.throwable)
+                    ?: NetworkImageGuard.Failure.UNSUPPORTED
+                NetworkImageError(failure, retryable = true, onRetry = { retry++ })
+            }
+        )
+    }
+}
+
+/** 加载中占位：居中指示器，避免图片区域塌陷成空白。 */
+@Composable
+private fun ImageLoadingIndicator() {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 24.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        CircularProgressIndicator(modifier = Modifier.size(28.dp))
+    }
+}
+
+/** 本地图片缺失占位。 */
+@Composable
+private fun MissingImagePlaceholder() {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 16.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = stringResource(R.string.image_missing_placeholder),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+/** 网络图片失败：展示可读原因；可重试时附「点击重试」。 */
+@Composable
+private fun NetworkImageError(failure: NetworkImageGuard.Failure, retryable: Boolean, onRetry: () -> Unit) {
+    val reason = stringResource(
+        when (failure) {
+            NetworkImageGuard.Failure.DISABLED -> R.string.remote_image_disabled
+            NetworkImageGuard.Failure.PRIVATE_ADDRESS -> R.string.remote_image_private
+            NetworkImageGuard.Failure.REDIRECT -> R.string.remote_image_redirect
+            NetworkImageGuard.Failure.TOO_LARGE -> R.string.remote_image_too_large
+            NetworkImageGuard.Failure.TIMEOUT -> R.string.remote_image_timeout
+            NetworkImageGuard.Failure.UNSUPPORTED -> R.string.remote_image_blocked
+        }
+    )
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 12.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(
+            text = reason,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.error
+        )
+        if (retryable) {
+            Text(
+                text = stringResource(R.string.remote_image_retry),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier
+                    .padding(top = 4.dp)
+                    .clickable(onClick = onRetry)
+            )
+        }
+    }
 }

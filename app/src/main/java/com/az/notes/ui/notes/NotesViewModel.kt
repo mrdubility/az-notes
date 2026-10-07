@@ -1,9 +1,12 @@
 package com.az.notes.ui.notes
 
+import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.az.notes.R
 import com.az.notes.data.local.ProgressRepository
+import com.az.notes.data.media.AttachmentRepository
+import com.az.notes.data.media.ImageImportRepository
 import com.az.notes.data.settings.SettingsRepository
 import com.az.notes.data.storage.TrashItem
 import com.az.notes.data.storage.TrashRepository
@@ -107,6 +110,8 @@ class NotesViewModel @Inject constructor(
     private val vaultRepository: VaultRepository,
     private val settingsRepository: SettingsRepository,
     private val trashRepository: TrashRepository,
+    private val attachmentRepository: AttachmentRepository,
+    private val imageImportRepository: ImageImportRepository,
     private val syncEngine: SyncEngine,
     private val syncScheduler: SyncScheduler,
     private val progressRepository: ProgressRepository,
@@ -314,8 +319,23 @@ class NotesViewModel @Inject constructor(
         viewModelScope.launch { runCatching { syncScheduler.scheduleSaveSync() } }
     }
 
-    /** 删除：启用回收站时移入回收站（横幅可撤销恢复）；关闭时直接物理删除（设置页有警示确认）。 */
-    fun delete(node: FileNode) {
+    /**
+     * 删除确认框前置查询：本文引用附件的统计。
+     * 关闭「删除/移动提示附件」开关、目标为目录或未选仓库时返回 null，对话框维持原样、不走联动。
+     */
+    suspend fun referencedAttachmentsFor(node: FileNode): AttachmentRepository.ReferencedAttachments? {
+        if (!currentSettings.attachmentPromptEnabled || node.isDirectory) return null
+        val vault = currentSettings.vaultPath?.takeIf { it.isNotBlank() } ?: return null
+        return withContext(Dispatchers.IO) {
+            runCatching { attachmentRepository.referencedByNote(File(vault), node.absolutePath) }.getOrNull()
+        }
+    }
+
+    /**
+     * 删除：启用回收站时移入回收站（横幅可撤销恢复）；关闭时直接物理删除（设置页有警示确认）。
+     * [alsoTrashAttachments] 为真时，把「仅本文引用」的附件同批移入回收站/删除，撤销时对整批恢复。
+     */
+    fun delete(node: FileNode, alsoTrashAttachments: Boolean = false) {
         viewModelScope.launch {
             val vault = currentSettings.vaultPath
             if (vault.isNullOrBlank()) {
@@ -323,16 +343,39 @@ class NotesViewModel @Inject constructor(
                 return@launch
             }
             val toTrash = currentSettings.trashEnabled
-            val trashed = if (toTrash) {
-                withContext(Dispatchers.IO) { trashRepository.moveToTrash(vault, node.absolutePath) }
-            } else null
-            val ok = if (toTrash) trashed != null
-            else withContext(Dispatchers.IO) { vaultRepository.delete(node.absolutePath) }
+            // 需联动的「仅本文引用」附件（勾选且开关开启、且为单篇笔记时）
+            val attachFiles: List<File> = if (alsoTrashAttachments &&
+                currentSettings.attachmentPromptEnabled && !node.isDirectory
+            ) {
+                withContext(Dispatchers.IO) {
+                    runCatching {
+                        attachmentRepository.referencedByNote(File(vault), node.absolutePath).exclusiveFiles
+                    }.getOrDefault(emptyList())
+                }
+            } else emptyList()
+            val batch = withContext(Dispatchers.IO) {
+                val items = ArrayList<TrashItem>()
+                var primaryOk: Boolean
+                if (toTrash) {
+                    val trashed = trashRepository.moveToTrash(vault, node.absolutePath)
+                    if (trashed != null) items += trashed
+                    primaryOk = trashed != null
+                    attachFiles.forEach { f ->
+                        trashRepository.moveToTrash(vault, f.absolutePath)?.let { items += it }
+                    }
+                } else {
+                    primaryOk = vaultRepository.delete(node.absolutePath)
+                    attachFiles.forEach { f -> runCatching { vaultRepository.delete(f.absolutePath) } }
+                }
+                primaryOk to items
+            }
+            val ok = batch.first
+            val trashed = batch.second
             _state.update {
                 it.copy(
                     message = when {
                         !ok -> UiMessage(UiText.of(R.string.msg_delete_failed))
-                        trashed != null -> UiMessage(
+                        toTrash -> UiMessage(
                             text = UiText.of(R.string.msg_moved_to_trash, node.name),
                             undo = undoRestoreFromTrash(vault, trashed)
                         )
@@ -347,10 +390,10 @@ class NotesViewModel @Inject constructor(
         }
     }
 
-    /** 撤销入口：把刚移入回收站的条目恢复到 Vault 原路径并刷新列表。 */
-    private fun undoRestoreFromTrash(vault: String, item: TrashItem): () -> Unit = {
+    /** 撤销入口：把刚移入回收站的整批条目（笔记 + 联动附件）恢复到 Vault 原路径并刷新列表。 */
+    private fun undoRestoreFromTrash(vault: String, items: List<TrashItem>): () -> Unit = {
         viewModelScope.launch {
-            withContext(Dispatchers.IO) { trashRepository.restore(vault, item) }
+            withContext(Dispatchers.IO) { items.forEach { trashRepository.restore(vault, it) } }
             reloadItems(pullRefresh = false)
             scheduleSaveSync()
         }
@@ -384,6 +427,53 @@ class NotesViewModel @Inject constructor(
                 }
             }.getOrNull()
             if (createdPath == null) {
+                _state.update { it.copy(message = UiMessage(UiText.of(R.string.msg_share_note_failed))) }
+                return@launch
+            }
+            reloadItems(pullRefresh = false)
+            scheduleSaveSync()
+            onCreated(createdPath)
+        }
+    }
+
+    /**
+     * 从系统分享（ACTION_SEND image/*）新建图文笔记：先把图片按导入管线落到
+     * 笔记同目录 `assets/`（受压缩开关控制，默认开），成功后写 `# 标题 + 图片` 正文，
+     * 失败则不创建笔记（不留孤儿笔记）；导入成功但写正文失败则回滚刚导入的图片。
+     */
+    fun createNoteFromSharedImage(uri: Uri, onCreated: (String) -> Unit) {
+        viewModelScope.launch {
+            val snapshot = runCatching { settingsRepository.settings.first() }.getOrNull()
+            val vault = snapshot?.vaultPath ?: currentSettings.vaultPath
+            if (vault.isNullOrBlank()) {
+                _state.update { it.copy(message = UiMessage(UiText.of(R.string.home_no_vault))) }
+                return@launch
+            }
+            // 与文本分享同一套目录解析（per-vault shareFolder，留空则当前目录）
+            val shareRel = snapshot?.shareFolder ?: currentSettings.shareFolder
+            val dir = if (!shareRel.isNullOrBlank()) File(vault, shareRel).absolutePath
+            else (_state.value.currentDir ?: vault)
+            val baseName = VaultRepository.resolveDateName(
+                snapshot?.defaultNoteName ?: currentSettings.defaultNoteName
+            )
+            val noteFile = File(vaultRepository.uniqueNotePath(dir, baseName))
+            val compress = snapshot?.imageCompressEnabled ?: currentSettings.imageCompressEnabled
+            val media = withContext(Dispatchers.IO) {
+                runCatching { imageImportRepository.import(uri, vault, noteFile, compress) }.getOrNull()
+            }
+            if (media == null) {
+                _state.update { it.copy(message = UiMessage(UiText.of(R.string.share_image_failed))) }
+                return@launch
+            }
+            val body = "# $baseName\n\n![](${media.link})\n"
+            val createdPath = runCatching {
+                withContext(Dispatchers.IO) {
+                    if (vaultRepository.createFile(noteFile.absolutePath, body)) noteFile.absolutePath else null
+                }
+            }.getOrNull()
+            if (createdPath == null) {
+                // 正文写入失败：清理刚导入的图片，不留孤儿附件
+                runCatching { withContext(Dispatchers.IO) { vaultRepository.delete(media.absolutePath) } }
                 _state.update { it.copy(message = UiMessage(UiText.of(R.string.msg_share_note_failed))) }
                 return@launch
             }

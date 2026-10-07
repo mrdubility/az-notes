@@ -41,7 +41,13 @@ data class BackupSettings(
     val language: String? = null,
     val trashEnabled: Boolean? = null,
     val editorToolOrder: List<String>? = null,
-    val editorToolDisabled: List<String>? = null
+    val editorToolDisabled: List<String>? = null,
+    /** 图片相关配置（本批新增；缺失 / 无效均回落默认，逐字段容错） */
+    val imageCompressEnabled: Boolean? = null,
+    val orphanScanEnabled: Boolean? = null,
+    val attachmentPromptEnabled: Boolean? = null,
+    val remoteImageMaxMb: Int? = null,
+    val remoteImageTimeoutSeconds: Int? = null
 )
 
 /** 单个仓库的备份：注册表信息 + per-vault 配置（收藏 / 分享目录 / 同步配置）。 */

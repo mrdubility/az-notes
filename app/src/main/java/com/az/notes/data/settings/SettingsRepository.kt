@@ -72,6 +72,11 @@ class SettingsRepository @Inject constructor(
         val TRASH_ENABLED = booleanPreferencesKey("trash_enabled")
         val TOOL_ORDER = stringPreferencesKey("editor_tool_order")
         val TOOL_DISABLED = stringPreferencesKey("editor_tool_disabled")
+        val IMAGE_COMPRESS = booleanPreferencesKey("image_compress_enabled")
+        val ORPHAN_SCAN = booleanPreferencesKey("orphan_scan_enabled")
+        val ATTACHMENT_PROMPT = booleanPreferencesKey("attachment_prompt_enabled")
+        val REMOTE_IMAGE_MAX_MB = intPreferencesKey("remote_image_max_mb")
+        val REMOTE_IMAGE_TIMEOUT = intPreferencesKey("remote_image_timeout_seconds")
 
         /** 仓库注册表（JSON 序列化的 [VaultInfo] 列表） */
         val VAULTS = stringPreferencesKey("vaults")
@@ -134,7 +139,16 @@ class SettingsRepository @Inject constructor(
                 ?.toSet()
                 ?: emptySet(),
             favoritePaths = prefs[favoritesKey(currentId)] ?: emptySet(),
-            shareFolder = prefs[shareFolderKey(currentId)]?.takeIf { it.isNotBlank() }
+            shareFolder = prefs[shareFolderKey(currentId)]?.takeIf { it.isNotBlank() },
+            imageCompressEnabled = prefs[Keys.IMAGE_COMPRESS] ?: true,
+            orphanScanEnabled = prefs[Keys.ORPHAN_SCAN] ?: true,
+            attachmentPromptEnabled = prefs[Keys.ATTACHMENT_PROMPT] ?: true,
+            remoteImageMaxMb = (prefs[Keys.REMOTE_IMAGE_MAX_MB]
+                ?: AppSettings.DEFAULT_REMOTE_IMAGE_MAX_MB)
+                .coerceIn(0, AppSettings.REMOTE_IMAGE_MAX_MB_LIMIT),
+            remoteImageTimeoutSeconds = (prefs[Keys.REMOTE_IMAGE_TIMEOUT]
+                ?: AppSettings.DEFAULT_REMOTE_IMAGE_TIMEOUT_SECONDS)
+                .coerceIn(AppSettings.REMOTE_IMAGE_TIMEOUT_RANGE)
         )
     }
 
@@ -315,6 +329,28 @@ class SettingsRepository @Inject constructor(
     suspend fun setShareFolder(relativePath: String?) = edit { prefs ->
         val key = shareFolderKey(currentVaultIdOf(prefs))
         if (relativePath.isNullOrBlank()) prefs.remove(key) else prefs[key] = relativePath
+    }
+
+    // ---------------------------------------------------------------- 图片（本批新增）
+
+    /** 导入图片时是否压缩（固定参数，见 ImageCompressor）。 */
+    suspend fun setImageCompressEnabled(enabled: Boolean) = edit { it[Keys.IMAGE_COMPRESS] = enabled }
+
+    /** 是否允许扫描附件引用（孤儿图片）。 */
+    suspend fun setOrphanScanEnabled(enabled: Boolean) = edit { it[Keys.ORPHAN_SCAN] = enabled }
+
+    /** 删除 / 移动笔记时是否提示附件引用情况。 */
+    suspend fun setAttachmentPromptEnabled(enabled: Boolean) =
+        edit { it[Keys.ATTACHMENT_PROMPT] = enabled }
+
+    /** 网络图片体积上限（MB）：0 = 不加载网络图片，越界回落允许区间。 */
+    suspend fun setRemoteImageMaxMb(mb: Int) = edit {
+        it[Keys.REMOTE_IMAGE_MAX_MB] = mb.coerceIn(0, AppSettings.REMOTE_IMAGE_MAX_MB_LIMIT)
+    }
+
+    /** 网络图片读取超时（秒）：限定 1..30。 */
+    suspend fun setRemoteImageTimeoutSeconds(seconds: Int) = edit {
+        it[Keys.REMOTE_IMAGE_TIMEOUT] = seconds.coerceIn(AppSettings.REMOTE_IMAGE_TIMEOUT_RANGE)
     }
 
     // ------------------------------------------------- 配置备份 / 恢复（§5.6）

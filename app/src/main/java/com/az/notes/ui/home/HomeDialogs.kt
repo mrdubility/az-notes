@@ -1,6 +1,12 @@
 package com.az.notes.ui.home
 
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -10,8 +16,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.dp
 import com.az.notes.R
+import com.az.notes.data.media.AttachmentRepository
 import com.az.notes.domain.model.FileNode
 
 /**
@@ -22,23 +32,55 @@ import com.az.notes.domain.model.FileNode
 @Composable
 internal fun DeleteDialog(
     node: FileNode,
+    referenced: AttachmentRepository.ReferencedAttachments?,
     onDismiss: () -> Unit,
-    onConfirm: () -> Unit
+    onConfirm: (alsoTrashAttachments: Boolean) -> Unit
 ) {
+    // 仅当存在「只被本文引用」的附件时才允许勾选联动清理
+    var trashAttachments by remember { mutableStateOf(false) }
+    val hasExclusive = referenced?.hasExclusive == true
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.action_delete)) },
         text = {
-            Text(
-                if (node.isDirectory) {
-                    stringResource(R.string.delete_folder_message, node.name)
-                } else {
-                    stringResource(R.string.delete_note_message, node.name)
+            Column {
+                Text(
+                    if (node.isDirectory) {
+                        stringResource(R.string.delete_folder_message, node.name)
+                    } else {
+                        stringResource(R.string.delete_note_message, node.name)
+                    }
+                )
+                if (referenced != null && referenced.total > 0) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text = stringResource(
+                            R.string.delete_note_attachments,
+                            referenced.total,
+                            referenced.exclusiveCount
+                        ),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    if (hasExclusive) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .clickable { trashAttachments = !trashAttachments }
+                                .height(44.dp)
+                        ) {
+                            Checkbox(
+                                checked = trashAttachments,
+                                onCheckedChange = { trashAttachments = it }
+                            )
+                            Text(stringResource(R.string.delete_note_trash_attachments))
+                        }
+                    }
                 }
-            )
+            }
         },
         confirmButton = {
-            TextButton(onClick = onConfirm) {
+            TextButton(onClick = { onConfirm(hasExclusive && trashAttachments) }) {
                 Text(stringResource(R.string.action_delete), color = MaterialTheme.colorScheme.error)
             }
         },
