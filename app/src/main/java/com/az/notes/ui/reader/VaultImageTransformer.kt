@@ -166,8 +166,7 @@ class VaultImageTransformer(
                                 httpEx?.let { ex ->
                                     put("status", ex.code)
                                     ex.requestUrl?.let { put("reqUrl", it.take(200)) }
-                                    ex.serverHeader?.let { put("server", it.take(80)) }
-                                    ex.gatewayHeader?.let { put("gateway", it.take(160)) }
+                                    ex.responseHeaders?.let { put("respHeaders", it.take(240)) }
                                     ex.bodyPreview?.let { put("body", it.take(160)) }
                                 }
                             }

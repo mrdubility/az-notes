@@ -1,5 +1,8 @@
 package com.az.notes.di
 
+import com.az.notes.data.debug.DebugLogRepository
+import com.az.notes.data.debug.DebugLogType
+import com.az.notes.data.debug.DebugLogLevel
 import com.az.notes.data.settings.SettingsRepository
 import com.az.notes.ui.reader.NetworkImageGuard
 import okhttp3.OkHttpClient
@@ -17,7 +20,8 @@ import kotlinx.coroutines.flow.first
  */
 @Singleton
 class CoilHolder @Inject constructor(
-    private val settingsRepository: SettingsRepository
+    private val settingsRepository: SettingsRepository,
+    private val debugLogRepository: DebugLogRepository
 ) {
 
     /** 当前生效配置（超时变化时更新，渲染层以此为 key 重建 painter）。 */
@@ -34,7 +38,17 @@ class CoilHolder @Inject constructor(
         val timeout = config.value.timeoutSeconds
         val existing = cached
         if (existing != null && cachedTimeout == timeout) return existing
-        val built = NetworkImageGuard.newClient({ currentMaxBytes() }, timeout)
+        val built = NetworkImageGuard.newClient(
+            maxBytesProvider = { currentMaxBytes() },
+            timeoutSeconds = timeout,
+            // 连接诊断落 IMAGE 日志：远程图命中不明来源的 504/403 时，据此判断
+            // 实际连到的 IP / 是否走本地代理 / 协商的协议与 TLS（未开日志时静默）。
+            logEvent = { data ->
+                debugLogRepository.log(
+                    DebugLogLevel.INFO, DebugLogType.IMAGE, "image-conn", data
+                )
+            }
+        )
         cached = built
         cachedTimeout = timeout
         return built

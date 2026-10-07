@@ -8,9 +8,15 @@ import okio.BufferedSource
 import okio.ForwardingSource
 import okio.Source
 import okio.buffer
+import java.net.InetSocketAddress
+import java.net.Proxy
+import java.util.concurrent.ConcurrentHashMap
+import okhttp3.Call
+import okhttp3.Connection
+import okhttp3.EventListener
+import okhttp3.HttpUrl
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
-import okhttp3.Protocol
 import okhttp3.Response
 import okhttp3.ResponseBody
 
@@ -27,7 +33,8 @@ import okhttp3.ResponseBody
  *    （压缩内网探测面，同时不误伤域名型局域网 Wiki 图床）；
  * 5. 请求头白名单：浏览器级 UA + `Accept` 限定图片类型 + `Accept-Language`，
  *    剥离 Cookie / Authorization，避免凭据外泄；
- * 6. 不重试、强制 HTTP/1.1、不落磁盘缓存（见 AzNotesApp 的 ImageLoader 配置）。
+ * 6. 协议协商、连接重试等网络层行为保持 OkHttp 默认（与浏览器 / 主流图片库一致），
+ *    仅不落磁盘缓存（见 AzNotesApp 的 ImageLoader 配置）——避免与中间网关的默认路径相克。
  */
 object NetworkImageGuard {
 
@@ -65,15 +72,14 @@ object NetworkImageGuard {
      * 家族，理由同上）。
      *
      * [requestUrl]：实际请求的完整 URL（验证链接解析是否被截断）；
-     * [serverHeader] / [gatewayHeader]：响应 Server 与 Via / X-Cache / X-Nache / X-Verver
-     * 等中间网关特征头——用于辨识 504 等服务端错误的真实来源（目标站 / 中间网关 / 本地代理）；
-     * [bodyPreview]：5xx 响应体少量摘要（错误页常注明拦截原因，最多 240 字符）。
+     * [responseHeaders]：**全部**响应头拼接（截 400 字符）——头全空往往意味着
+     * 错误由本地/就近的拦截组件伪造而非目标站返回；
+     * [bodyPreview]：响应体少量摘要（错误页常注明拦截原因，最多 240 字符）。
      */
     class HttpStatusException(
         val code: Int,
         val requestUrl: String? = null,
-        val serverHeader: String? = null,
-        val gatewayHeader: String? = null,
+        val responseHeaders: String? = null,
         val bodyPreview: String? = null
     ) : IOException("HTTP $code")
 
@@ -163,7 +169,12 @@ object NetworkImageGuard {
      * @param timeoutSeconds   读取超时（秒）；改动时由 [com.az.notes.di.CoilHolder] 重建客户端，
      *                         渲染层以超时值为 key 重建 painter
      */
-    fun newClient(maxBytesProvider: () -> Long, timeoutSeconds: Int): OkHttpClient {
+    fun newClient(
+        maxBytesProvider: () -> Long,
+        timeoutSeconds: Int,
+        /** 单次请求的连接诊断回调（DNS/代理/实际连接地址/协议/TLS）；未开启日志时静默。 */
+        logEvent: (Map<String, Any?>) -> Unit = {}
+    ): OkHttpClient {
         val timeout = timeoutSeconds.coerceIn(1, 30).toLong()
         return OkHttpClient.Builder()
             .connectTimeout(CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS)
@@ -174,8 +185,11 @@ object NetworkImageGuard {
             .callTimeout(timeout + CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS)
             .followRedirects(false)
             .followSslRedirects(false)
-            .retryOnConnectionFailure(false)
-            .protocols(listOf(Protocol.HTTP_1_1))
+            // 重试与协议协商均用 OkHttp 默认：多 IP / 遇协议错误时自动换路由，
+            // h2 + http/1.1 按 ALPN 与服务器协商——不再强制 HTTP/1.1，以贴近浏览器/
+            // 主流图片库（实测其他笔记 App 同 URL 能加载，差异在我们的配置）。
+            .retryOnConnectionFailure(true)
+            .eventListenerFactory { CallDiagnostics(logEvent) }
             .addInterceptor(HeaderWhitelistInterceptor)
             .addInterceptor(SizeCapInterceptor(maxBytesProvider))
             .build()
@@ -216,20 +230,17 @@ object NetworkImageGuard {
             if (resp.code !in 200..299) throw HttpStatusException(
                 code = resp.code,
                 requestUrl = resp.request.url.toString(),
-                serverHeader = resp.header("Server"),
-                gatewayHeader = listOfNotNull(
-                    resp.header("Via")?.let { "Via=$it" },
-                    resp.header("X-Cache")?.let { "X-Cache=$it" },
-                    resp.header("X-Nache")?.let { "X-Nache=$it" },
-                    resp.header("X-Verver")?.let { "X-Verver=$it" },
-                    resp.header("X-Powered-By")?.let { "X-Powered-By=$it" }
-                ).joinToString(",").ifBlank { null },
-                // 5xx 网关错误的响应体通常极小（HTML 错误页）：读少量摘要帮助定位
-                // 拦截来源；读取失败或超时不阻塞主流程，异常仍按状态码抛出。
-                bodyPreview = if (resp.code in 500..599) runCatching {
+                // 全量响应头：若头几乎为空（如无 Server/Via），强烈指向本地/就近拦截
+                // 组件伪造该错误而非目标站返回（目标站实测总带 Server 等特征头）。
+                responseHeaders = runCatching {
+                    resp.headers.joinToString("; ") { "${it.first}:${it.second}" }
+                }.getOrNull()?.take(400)?.ifBlank { null },
+                // 响应体摘要：非 2xx 常为 HTML 错误页，可能注明拦截原因/来源。
+                // 读取失败或超时不阻塞主流程，异常仍按状态码抛出。
+                bodyPreview = runCatching {
                     resp.peekBody(1200L).string()
                         .replace('\n', ' ').replace('\r', ' ').trim().take(240)
-                }.getOrNull()?.ifBlank { null } else null
+                }.getOrNull()?.ifBlank { null }
             )
             val declared = resp.headers["Content-Length"]?.toLongOrNull()
             if (declared != null && declared > maxBytes) throw TooLargeException(maxBytes)
@@ -305,4 +316,67 @@ object NetworkImageGuard {
 
     /** 从异常链提取 HTTP 状态码（仅 [HttpStatusException] 携带）。 */
     fun httpStatusOf(t: Throwable?): Int? = httpStatusExceptionOf(t)?.code
+
+    /**
+     * 单次请求的连接诊断：经 OkHttp [EventListener] 采集 DNS 解析结果、代理选择、
+     * 实际连接地址、协商协议（h2 / http/1.1）与 TLS 版本，在请求结束/失败时汇总输出。
+     *
+     * 用途：当远程图命中不明来源的 504/403 时，据此判断 App 实际连到了哪个 IP、
+     * 是否经过本地代理、走了哪种协议——把「目标站 vs 中间网关 vs 本地代理」定位到具体一层。
+     * 每请求由 [eventListenerFactory] 新建独立实例，以 [Call] 为 key 聚合。
+     */
+    private class CallDiagnostics(
+        private val emit: (Map<String, Any?>) -> Unit
+    ) : EventListener() {
+
+        private val data = ConcurrentHashMap<Call, MutableMap<String, Any?>>()
+
+        private inline fun record(call: Call, block: (MutableMap<String, Any?>) -> Unit) {
+            val map = data.getOrPut(call) { HashMap() }
+            synchronized(map) { block(map) }
+        }
+
+        override fun dnsEnd(call: Call, hostname: String, inetAddressList: List<InetAddress>) {
+            record(call) {
+                it["dns"] = "$hostname→" +
+                    inetAddressList.joinToString(",") { a -> a.hostAddress ?: "?" }.take(140)
+            }
+        }
+
+        override fun proxySelectEnd(call: Call, url: HttpUrl, proxies: List<Proxy>) {
+            record(call) {
+                it["url"] = url.toString().take(160)
+                if (proxies.isNotEmpty() && proxies.none { p -> p.type() == Proxy.Type.DIRECT }) {
+                    it["proxy"] = proxies.joinToString(",") { p -> p.toString() }.take(120)
+                }
+            }
+        }
+
+        override fun connectStart(
+            call: Call,
+            inetSocketAddress: InetSocketAddress,
+            proxy: Proxy
+        ) {
+            record(call) {
+                it["connect"] =
+                    "${inetSocketAddress.address?.hostAddress ?: "?"}:${inetSocketAddress.port}"
+            }
+        }
+
+        override fun connectionAcquired(call: Call, connection: Connection) {
+            record(call) {
+                it["proto"] = connection.protocol().toString()
+                connection.handshake()?.let { h -> it["tls"] = h.tlsVersion }
+            }
+        }
+
+        override fun callEnd(call: Call) = flush(call)
+
+        override fun callFailed(call: Call, ioe: IOException) = flush(call)
+
+        private fun flush(call: Call) {
+            val map = data.remove(call) ?: return
+            if (map.isNotEmpty()) emit(map.toMap())
+        }
+    }
 }
