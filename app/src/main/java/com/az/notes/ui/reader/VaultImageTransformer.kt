@@ -87,7 +87,7 @@ class VaultImageTransformer(
             log(
                 DebugLogLevel.INFO,
                 "transform-enter",
-                mapOf("link" to link.take(80), "remote" to remote)
+                mapOf("link" to link.take(200), "remote" to remote)
             )
             Unit
         }
@@ -107,7 +107,7 @@ class VaultImageTransformer(
                     log(
                         DebugLogLevel.INFO,
                         "remote-image-blocked",
-                        mapOf("link" to link.take(80), "failure" to blocked.name)
+                        mapOf("link" to link.take(200), "failure" to blocked.name)
                     )
                     Unit
                 }
@@ -131,7 +131,7 @@ class VaultImageTransformer(
                 log(
                     DebugLogLevel.INFO,
                     "remote-painter-created",
-                    mapOf("link" to link.take(80), "retry" to retry)
+                    mapOf("link" to link.take(200), "retry" to retry)
                 )
                 Unit
             }
@@ -141,14 +141,36 @@ class VaultImageTransformer(
                     val cause = s.result.throwable
                     val failure = NetworkImageGuard.classify(cause)
                         ?: NetworkImageGuard.Failure.UNSUPPORTED
+                    // 错误埋点（WARN）：除异常类型与完整异常链外，携带 HTTP 诊断信息
+                    //（状态码、实际请求 URL、响应 Server/网关特征头、5xx 响应体摘要）——
+                    // 用于辨识 403/504 等错误的真实来源（目标站 / 中间网关 / 本地代理）。
                     remember(s) {
+                        val httpEx = NetworkImageGuard.httpStatusExceptionOf(cause)
                         log(
                             DebugLogLevel.WARN,
                             "remote-image-error",
-                            mapOf(
-                                "link" to link.take(80),
-                                "cause" to (cause?.javaClass?.simpleName ?: "null")
-                            )
+                            buildMap<String, Any?> {
+                                put("link", link.take(200))
+                                put(
+                                    "cause",
+                                    cause?.let { "${it.javaClass.simpleName}: ${it.message}" }
+                                        ?.take(200) ?: "null"
+                                )
+                                put(
+                                    "chain",
+                                    cause?.let { c ->
+                                        generateSequence(c) { it.cause }.take(6)
+                                            .joinToString("<-") { it.javaClass.simpleName }
+                                    } ?: "null"
+                                )
+                                httpEx?.let { ex ->
+                                    put("status", ex.code)
+                                    ex.requestUrl?.let { put("reqUrl", it.take(200)) }
+                                    ex.serverHeader?.let { put("server", it.take(80)) }
+                                    ex.gatewayHeader?.let { put("gateway", it.take(160)) }
+                                    ex.bodyPreview?.let { put("body", it.take(160)) }
+                                }
+                            }
                         )
                         Unit
                     }
@@ -173,7 +195,7 @@ class VaultImageTransformer(
                         log(
                             DebugLogLevel.INFO,
                             "remote-image-success",
-                            mapOf("link" to link.take(80), "w" to w, "h" to h)
+                            mapOf("link" to link.take(200), "w" to w, "h" to h)
                         )
                         Unit
                     }
@@ -195,7 +217,7 @@ class VaultImageTransformer(
         }
         if (file == null) {
             remember(link) {
-                log(DebugLogLevel.INFO, "local-image-missing", mapOf("link" to link.take(80)))
+                log(DebugLogLevel.INFO, "local-image-missing", mapOf("link" to link.take(200)))
                 Unit
             }
             return ImageData(painter = reasonPainter(reasonText(null, retryable = false)))

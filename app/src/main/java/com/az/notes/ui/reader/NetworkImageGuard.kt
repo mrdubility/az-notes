@@ -25,7 +25,8 @@ import okhttp3.ResponseBody
  * 3. 不跟随重定向：`3xx` 直接判失败，杜绝「小图链接 302 到 GB 级文件 / 内网地址」；
  * 4. 地址合规：仅允许 http/https/data 图片，IP 字面量的私网/环回/链路本地段拒绝加载
  *    （压缩内网探测面，同时不误伤域名型局域网 Wiki 图床）；
- * 5. 请求头白名单：只发 `Accept` 限定图片类型，剥离 Cookie / Authorization，避免凭据外泄；
+ * 5. 请求头白名单：浏览器级 UA + `Accept` 限定图片类型 + `Accept-Language`，
+ *    剥离 Cookie / Authorization，避免凭据外泄；
  * 6. 不重试、强制 HTTP/1.1、不落磁盘缓存（见 AzNotesApp 的 ImageLoader 配置）。
  */
 object NetworkImageGuard {
@@ -42,9 +43,12 @@ object NetworkImageGuard {
     /** data: 内联图片的字符长度上限（超大 base64 不渲染）。 */
     const val DATA_URI_MAX_CHARS = 1_000_000
 
-    /** 标准移动端浏览器 UA，解决中国 CDN 网关对无 UA 请求返回 504 的问题。 */
+    /** 标准移动端浏览器 UA：贴近真实浏览器请求特征，降低 CDN / WAF / 网关误伤概率。 */
     private const val DEFAULT_USER_AGENT =
         "Mozilla/5.0 (Linux; Android 14; Pixel 6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
+
+    /** 浏览器级语言头：与 UA 配套，进一步贴近真实浏览器请求。 */
+    private const val DEFAULT_ACCEPT_LANGUAGE = "zh-CN,zh;q=0.9,en;q=0.8"
 
     /**
      * 拒绝请求的异常（[failure] 可直接映射到用户可读文案）。
@@ -56,8 +60,22 @@ object NetworkImageGuard {
      */
     class BlockedReason(val failure: Failure) : IOException(failure.name)
 
-    /** 服务端返回非 2xx 状态码（403/404 等），具体码由 [code] 携带（同属 IOException 家族，理由同上）。 */
-    class HttpStatusException(val code: Int) : IOException("HTTP $code")
+    /**
+     * 服务端返回非 2xx 状态码（403/404/504 等），具体码由 [code] 携带（同属 IOException
+     * 家族，理由同上）。
+     *
+     * [requestUrl]：实际请求的完整 URL（验证链接解析是否被截断）；
+     * [serverHeader] / [gatewayHeader]：响应 Server 与 Via / X-Cache / X-Nache / X-Verver
+     * 等中间网关特征头——用于辨识 504 等服务端错误的真实来源（目标站 / 中间网关 / 本地代理）；
+     * [bodyPreview]：5xx 响应体少量摘要（错误页常注明拦截原因，最多 240 字符）。
+     */
+    class HttpStatusException(
+        val code: Int,
+        val requestUrl: String? = null,
+        val serverHeader: String? = null,
+        val gatewayHeader: String? = null,
+        val bodyPreview: String? = null
+    ) : IOException("HTTP $code")
 
     /** 体积超限异常（流式读满上限时抛出，由 Coil 收敛为加载失败；同属 IOException 家族）。 */
     class TooLargeException(val maxBytes: Long) : IOException("image exceeds $maxBytes bytes")
@@ -164,11 +182,10 @@ object NetworkImageGuard {
     }
 
     /**
-     * 请求头白名单：只保留 Accept + UA，凭据类头一律剥离。
+     * 请求头白名单：只保留 Accept + UA + Accept-Language，凭据类头一律剥离。
      *
-     * 必须添加浏览器级 User-Agent：中国 CDN 网关（csdnimg/gxrb 等）对无 UA 请求会挂起到
-     * 上游超时后返回 504 Gateway Timeout（而非 403），导致所有远程图加载失败。
-     * OkHttp 默认不发送 User-Agent，必须显式添加。
+     * OkHttp 默认不发送 User-Agent，非浏览器特征的请求容易在部分 CDN / WAF / 网关
+     * 被误伤（403 / 504 等），必须补齐浏览器级特征头，尽量贴近真实浏览器请求。
      */
     private object HeaderWhitelistInterceptor : Interceptor {
         override fun intercept(chain: Interceptor.Chain): Response {
@@ -176,6 +193,7 @@ object NetworkImageGuard {
             val stripped = request.newBuilder()
                 .header("User-Agent", DEFAULT_USER_AGENT)
                 .header("Accept", "image/avif,image/webp,image/apng,image/*,*/*;q=0.8")
+                .header("Accept-Language", DEFAULT_ACCEPT_LANGUAGE)
                 .removeHeader("Authorization")
                 .removeHeader("Cookie")
                 .removeHeader("Proxy-Authorization")
@@ -193,8 +211,26 @@ object NetworkImageGuard {
             if (maxBytes <= 0L) throw BlockedReason(Failure.DISABLED)
             val resp = chain.proceed(chain.request())
             if (resp.code in 300..399) throw BlockedReason(Failure.REDIRECT)
-            // 非 2xx（403/404 等）：不返回响应体，抛携带状态码的异常，UI 呈现真实原因
-            if (resp.code !in 200..299) throw HttpStatusException(resp.code)
+            // 非 2xx（403/404 等）：不返回响应体，抛携带状态码与响应诊断信息的异常，
+            // UI 呈现真实原因；诊断字段供日志辨识错误来源（如 504 由哪一层返回）。
+            if (resp.code !in 200..299) throw HttpStatusException(
+                code = resp.code,
+                requestUrl = resp.request.url.toString(),
+                serverHeader = resp.header("Server"),
+                gatewayHeader = listOfNotNull(
+                    resp.header("Via")?.let { "Via=$it" },
+                    resp.header("X-Cache")?.let { "X-Cache=$it" },
+                    resp.header("X-Nache")?.let { "X-Nache=$it" },
+                    resp.header("X-Verver")?.let { "X-Verver=$it" },
+                    resp.header("X-Powered-By")?.let { "X-Powered-By=$it" }
+                ).joinToString(",").ifBlank { null },
+                // 5xx 网关错误的响应体通常极小（HTML 错误页）：读少量摘要帮助定位
+                // 拦截来源；读取失败或超时不阻塞主流程，异常仍按状态码抛出。
+                bodyPreview = if (resp.code in 500..599) runCatching {
+                    resp.peekBody(1200L).string()
+                        .replace('\n', ' ').replace('\r', ' ').trim().take(240)
+                }.getOrNull()?.ifBlank { null } else null
+            )
             val declared = resp.headers["Content-Length"]?.toLongOrNull()
             if (declared != null && declared > maxBytes) throw TooLargeException(maxBytes)
             val body = resp.body ?: return resp
@@ -257,13 +293,16 @@ object NetworkImageGuard {
         return null
     }
 
-    /** 从异常链提取 HTTP 状态码（仅 [HttpStatusException] 携带）。 */
-    fun httpStatusOf(t: Throwable?): Int? {
+    /** 从异常链提取 [HttpStatusException]（携带状态码与响应诊断字段）。 */
+    fun httpStatusExceptionOf(t: Throwable?): HttpStatusException? {
         var cur = t
         while (cur != null) {
-            if (cur is HttpStatusException) return cur.code
+            if (cur is HttpStatusException) return cur
             cur = cur.cause
         }
         return null
     }
+
+    /** 从异常链提取 HTTP 状态码（仅 [HttpStatusException] 携带）。 */
+    fun httpStatusOf(t: Throwable?): Int? = httpStatusExceptionOf(t)?.code
 }
