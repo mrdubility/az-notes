@@ -15,8 +15,6 @@ import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -81,8 +79,8 @@ class AzNotesApp : Application(), SingletonImageLoader.Factory {
      * 等日志配置首次回流后再写（配置快照未就绪时 log() 会静默丢弃）。
      */
     private suspend fun logBuildFingerprint() {
-        runCatching { debugLogRepository.config.first() }
-        delay(200)
+        // 等配置快照首次回流完成再写（固定 delay 在慢设备上可能未就绪而丢首条日志）
+        runCatching { debugLogRepository.awaitConfigReady() }
         debugLogRepository.log(
             DebugLogLevel.INFO,
             DebugLogType.APP,

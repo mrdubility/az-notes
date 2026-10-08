@@ -57,6 +57,7 @@ import com.az.notes.domain.model.FabAction
 import com.az.notes.domain.model.FontFamilyPreference
 import com.az.notes.domain.model.NoteSortOrder
 import com.az.notes.domain.model.ThemeMode
+import com.az.notes.ui.common.label
 import com.az.notes.ui.components.MoveTargetDialog
 import com.az.notes.ui.components.SliderDialog
 import com.az.notes.util.LocaleHelper

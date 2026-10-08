@@ -54,10 +54,21 @@ data class GalleryUiState(
     val selected: Set<String> = emptySet(),
     val message: UiMessage? = null
 ) {
+    /** 展示列表实例缓存：state 实例不可变（同实例的 images 与过滤条件不会变化），避免重复重组反复建表。 */
+    private var cachedDisplayed: List<GalleryImage>? = null
+
     /** 当前展示的图片：过滤开关开启时仅保留未被引用的。 */
     val displayed: List<GalleryImage>
-        get() = if (unreferencedOnly) images.filter { it.file.absolutePath in unreferencedPaths }
-        else images
+        get() {
+            cachedDisplayed?.let { return it }
+            val result = if (unreferencedOnly) {
+                images.filter { it.file.absolutePath in unreferencedPaths }
+            } else {
+                images
+            }
+            cachedDisplayed = result
+            return result
+        }
 }
 
 /**

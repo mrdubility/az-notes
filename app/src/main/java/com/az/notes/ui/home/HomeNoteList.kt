@@ -56,12 +56,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.az.notes.R
 import com.az.notes.domain.model.FileNode
+import com.az.notes.ui.common.formatDateTimeSeconds
 import com.az.notes.ui.common.resolve
 import com.az.notes.ui.notes.NoteListItem
 import com.az.notes.ui.notes.NotesUiState
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 /**
  * 主页笔记列表内容：下拉刷新 + 卡片列表（文件夹在前，笔记随后）；
@@ -271,7 +269,7 @@ private fun NoteRow(
             }
         } else {
             Text(
-                text = formatDateTime(node.lastModified),
+                text = formatDateTimeSeconds(node.lastModified),
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -427,8 +425,3 @@ private fun NoteMoreButton(
 /** 列表展示标题：笔记去掉 .md 扩展名。 */
 private fun displayTitle(node: FileNode): String =
     if (node.isMarkdown) node.name.substringBeforeLast('.') else node.name
-
-/** 列表日期格式化器：UI 线程使用；缓存实例，避免滚动时为每个条目新建 SimpleDateFormat。 */
-private val LIST_DATE_FORMAT = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
-
-private fun formatDateTime(millis: Long): String = LIST_DATE_FORMAT.format(Date(millis))

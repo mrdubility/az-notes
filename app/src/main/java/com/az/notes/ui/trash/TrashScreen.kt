@@ -55,10 +55,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.az.notes.R
 import com.az.notes.data.storage.TrashBatch
 import com.az.notes.data.storage.TrashItem
+import com.az.notes.ui.common.formatDateTime
+import com.az.notes.ui.common.formatSize
 import com.az.notes.ui.common.resolve
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**
@@ -296,15 +295,6 @@ private fun EmptyTrash() {
             modifier = Modifier.padding(horizontal = 32.dp)
         )
     }
-}
-
-private fun formatDateTime(millis: Long): String =
-    SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(millis))
-
-private fun formatSize(bytes: Long): String = when {
-    bytes >= 1024L * 1024L -> "%.1f MB".format(bytes / 1024.0 / 1024.0)
-    bytes >= 1024L -> "%.1f KB".format(bytes / 1024.0)
-    else -> "$bytes B"
 }
 
 /** 可撤销横幅（恢复/永久删除/清空等）的显示时长（毫秒）：超时视为放弃撤销。 */

@@ -314,10 +314,12 @@ internal object MarkdownListContinuation : InputTransformation {
     private val prefixRegex = Regex("^(\\s*)([-+*]|>|\\d+[.)])(\\s+)(\\[[ xX]\\]\\s+)?")
 
     override fun TextFieldBuffer.transformInput() {
-        val new = asCharSequence().toString()
         val selAfter = selection
-        // 快速排除：只有“光标紧随换行”的输入才与回车续行相关，其余按键零开销放行
-        if (!selAfter.collapsed || selAfter.min == 0 || new[selAfter.min - 1] != '\n') return
+        // 快速排除（先于全文拷贝）：只有“光标紧随换行”的输入才与回车续行相关，
+        // 其余按键在 toString() 之前零开销放行（大文档下每键全文复制的成本显著）
+        if (!selAfter.collapsed || selAfter.min == 0) return
+        val new = asCharSequence().toString()
+        if (new[selAfter.min - 1] != '\n') return
         // 取编辑前文本：先整体回退缓冲区（originalValue 为 internal 不可用），
         // 随后在回退状态上重建本次编辑（需要时合并续行内容），撤销仍为一步到位
         revertAllChanges()

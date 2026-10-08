@@ -331,7 +331,8 @@ class VaultRepository @Inject constructor() {
         val tmp = File(target.parentFile, target.name + ".tmp")
         val normalized = content.replace("\r\n", "\n").replace("\r", "\n")
         tmp.writeText(normalized, StandardCharsets.UTF_8)
-        if (target.exists()) target.delete()
+        // 直接 rename 覆盖目标（Linux rename(2) 对已存在目标是原子替换）：不再先 delete 目标，
+        // 消除「删旧完成、rename 前进程被杀」原文件已丢失的窗口（.tmp 仍在，可人工找回）
         if (!tmp.renameTo(target)) {
             // rename 失败兜底：直接覆盖写
             target.writeText(normalized, StandardCharsets.UTF_8)

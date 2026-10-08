@@ -55,6 +55,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
 import com.az.notes.R
+import com.az.notes.ui.common.formatSize
 import com.az.notes.ui.common.resolve
 import com.az.notes.ui.reader.ImagePreviewDialog
 import java.io.File
@@ -86,7 +87,8 @@ fun GalleryScreen(
     BackHandler(enabled = state.selectMode) { viewModel.exitSelectMode() }
 
     val displayed = state.displayed
-    val totalBytes = displayed.sumOf { it.size }
+    // 仅当展示列表变化时重算（选择 / 预览等状态重组不再触发 O(n) 求和）
+    val totalBytes = remember(displayed) { displayed.sumOf { it.size } }
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -315,11 +317,4 @@ private fun EmptyHint(text: String) {
             textAlign = TextAlign.Center
         )
     }
-}
-
-/** 文件大小：B / KB / MB（各档保留一位小数）。 */
-private fun formatSize(bytes: Long): String = when {
-    bytes >= 1024L * 1024L -> "%.1f MB".format(bytes / 1024.0 / 1024.0)
-    bytes >= 1024L -> "%.1f KB".format(bytes / 1024.0)
-    else -> "$bytes B"
 }

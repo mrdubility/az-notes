@@ -63,13 +63,16 @@ class VaultViewModel @Inject constructor(
     }
 
     /**
-     * 添加仓库：先在主线程做轻量校验（目录存在可读），再入注册表并设为当前。
+     * 添加仓库：先在 IO 线程校验目录可用（存在可读），通过后入注册表并设为当前。
      * 路径已注册时内部仅切换过去（不重复添加）。
      * @return 路径是否有效（false 时 UI 提示目录不可用）
      */
-    fun addVault(path: String): Boolean {
+    suspend fun addVault(path: String): Boolean {
         val normalized = path.trim().trimEnd('/')
-        if (normalized.isEmpty() || !vaultRepository.isValidVault(normalized)) return false
+        if (normalized.isEmpty()) return false
+        val valid = withContext(Dispatchers.IO) { vaultRepository.isValidVault(normalized) }
+        if (!valid) return false
+        // 注册表写入仍走 viewModelScope：离开页面不取消，与原有异步语义一致
         viewModelScope.launch {
             settingsRepository.addVault(normalized)
             runCatching { syncScheduler.reschedulePeriodic() }

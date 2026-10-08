@@ -52,6 +52,7 @@ import androidx.compose.ui.unit.dp
 import com.az.notes.R
 import com.az.notes.domain.model.NoteSortOrder
 import com.az.notes.domain.model.VaultInfo
+import com.az.notes.ui.common.label
 
 /**
  * 主页顶栏：抽屉/返回 + 标题（或搜索输入、多选计数）+ 同步/搜索/排序（或全选 + 批量操作菜单）。
@@ -266,16 +267,6 @@ internal fun HomeTopBar(
         }
     )
 }
-
-@Composable
-internal fun NoteSortOrder.label(): String = stringResource(
-    when (this) {
-        NoteSortOrder.MODIFIED_DESC -> R.string.sort_modified_desc
-        NoteSortOrder.MODIFIED_ASC -> R.string.sort_modified_asc
-        NoteSortOrder.NAME_ASC -> R.string.sort_name_asc
-        NoteSortOrder.NAME_DESC -> R.string.sort_name_desc
-    }
-)
 
 /**
  * 根目录标题：仓库名 + 下拉箭头；点按弹出仓库切换菜单

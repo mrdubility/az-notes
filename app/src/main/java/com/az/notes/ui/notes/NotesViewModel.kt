@@ -36,7 +36,8 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.util.concurrent.ConcurrentHashMap
+import java.util.Collections
+import java.util.LinkedHashMap
 import javax.inject.Inject
 
 /**
@@ -134,8 +135,19 @@ class NotesViewModel @Inject constructor(
     /** 当前目录尚未装载预览的后续笔记（滚动到底逐批加载） */
     private var pendingNotes: List<FileNode> = emptyList()
 
-    /** 正文预览内存缓存（绝对路径 → 文件 mtime + 预览）：跨目录往返与重复刷新零重读。 */
-    private val previewCache = ConcurrentHashMap<String, CachedPreview>()
+    /**
+     * 正文预览内存缓存（绝对路径 → 文件 mtime + 预览）：跨目录往返与重复刷新零重读。
+     * 按访问序 LRU：超限时逐出最久未访问条目而非清空整表（避免周期性命中率归零）；
+     * [Collections.synchronizedMap] 保证多协程（列表装载 / 搜索）并发访问安全。
+     */
+    private val previewCache: MutableMap<String, CachedPreview> =
+        Collections.synchronizedMap(
+            object : LinkedHashMap<String, CachedPreview>(256, 0.75f, true) {
+                override fun removeEldestEntry(
+                    eldest: MutableMap.MutableEntry<String, CachedPreview>
+                ): Boolean = size > PREVIEW_CACHE_LIMIT
+            }
+        )
 
     init {
         viewModelScope.launch {
@@ -329,8 +341,14 @@ class NotesViewModel @Inject constructor(
     /**
      * 删除：启用回收站时移入回收站（横幅可撤销恢复）；关闭时直接物理删除（设置页有警示确认）。
      * [alsoTrashAttachments] 为真时，把「仅本文引用」的附件同批移入回收站/删除，撤销时对整批恢复。
+     * [exclusiveAttachments]：确认对话框已查过引用索引时直接传入（避免确认后再全库重扫），
+     * 缺失时回退现场扫描。
      */
-    fun delete(node: FileNode, alsoTrashAttachments: Boolean = false) {
+    fun delete(
+        node: FileNode,
+        alsoTrashAttachments: Boolean = false,
+        exclusiveAttachments: List<File>? = null
+    ) {
         viewModelScope.launch {
             val vault = currentSettings.vaultPath
             if (vault.isNullOrBlank()) {
@@ -342,7 +360,7 @@ class NotesViewModel @Inject constructor(
             val attachFiles: List<File> = if (alsoTrashAttachments &&
                 currentSettings.attachmentPromptEnabled && !node.isDirectory
             ) {
-                withContext(Dispatchers.IO) {
+                exclusiveAttachments ?: withContext(Dispatchers.IO) {
                     runCatching {
                         attachmentRepository.referencedByNote(File(vault), node.absolutePath).exclusiveFiles
                     }.getOrDefault(emptyList())
@@ -687,7 +705,8 @@ class NotesViewModel @Inject constructor(
             val src = File(sourcePath)
             if (File(targetDir).absolutePath == src.parentFile?.absolutePath) return@launch
             val target = File(targetDir, src.name).absolutePath
-            if (File(target).exists()) {
+            // exists 为文件系统调用：放 IO 执行（外部存储上 stat 可能毫秒级）
+            if (withContext(Dispatchers.IO) { File(target).exists() }) {
                 _state.update { it.copy(message = UiMessage(UiText.of(R.string.msg_move_failed_exists))) }
                 return@launch
             }
@@ -828,10 +847,12 @@ class NotesViewModel @Inject constructor(
                 _state.update { it.copy(message = UiMessage(UiText.of(R.string.home_no_vault))) }
                 return@launch
             }
-            val rels = _state.value.selectedPaths
-                .filter { File(it).isFile }
-                .mapNotNull { vaultRelative(vault, it) }
-                .toSet()
+            val selected = _state.value.selectedPaths
+            val rels = withContext(Dispatchers.IO) {
+                selected.filter { File(it).isFile }
+                    .mapNotNull { vaultRelative(vault, it) }
+                    .toSet()
+            }
             if (rels.isEmpty()) return@launch
             settingsRepository.addFavorites(rels)
             _state.update {
@@ -1030,7 +1051,7 @@ class NotesViewModel @Inject constructor(
         if (cached != null && cached.lastModified == node.lastModified) return cached.preview
         val preview = vaultRepository.readPreview(node.absolutePath, previewChars)
         if (preview.isNotEmpty()) {
-            if (previewCache.size >= PREVIEW_CACHE_LIMIT) previewCache.clear()
+            // 超限由 LRU 自动逐出最久未访问条目（不再清空整表）
             previewCache[node.absolutePath] = CachedPreview(node.lastModified, preview)
         }
         return preview
@@ -1044,7 +1065,7 @@ class NotesViewModel @Inject constructor(
     }
 
     private companion object {
-        /** 预览缓存上限：超过后整体清空，控制内存占用。 */
+        /** 预览缓存上限：超过后按访问序逐出最旧条目（LRU），控制内存占用。 */
         const val PREVIEW_CACHE_LIMIT = 2000
 
         /** 列表每批装载的笔记数：首屏只读首批预览，其余滚动到底自动加载。 */

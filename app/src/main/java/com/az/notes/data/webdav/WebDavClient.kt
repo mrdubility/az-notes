@@ -77,11 +77,8 @@ class WebDavClient(
     private val basePath: String = runCatching { rootUrl.toHttpUrl().encodedPath }
         .getOrDefault("/")
 
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(20, TimeUnit.SECONDS)
-        .readTimeout(60, TimeUnit.SECONDS)
-        .writeTimeout(120, TimeUnit.SECONDS)
-        .build()
+    /** 共享 OkHttpClient（超时参数固定，与实例无关）：连接池 / TLS 会话跨实例复用。 */
+    private val client = SHARED_CLIENT
 
     /** 请求闸门：保证传输类请求串行执行（对应官方插件 Bottleneck maxConcurrent = 1）。 */
     private val requestGate = Mutex()
@@ -205,7 +202,8 @@ class WebDavClient(
             target.parentFile?.mkdirs()
             val tmp = File(target.parentFile, target.name + ".part")
             body.byteStream().use { input -> tmp.outputStream().use { output -> input.copyTo(output) } }
-            if (target.exists()) target.delete()
+            // 直接 rename 覆盖（Linux rename(2) 原子替换已存在目标）：不再先删旧文件，
+            // 消除「删旧完成、rename 前中断」本地旧版本丢失的窗口
             if (!tmp.renameTo(target)) {
                 tmp.copyTo(target, overwrite = true)
                 tmp.delete()
@@ -410,6 +408,20 @@ class WebDavClient(
         if (relativePath.endsWith(".md", ignoreCase = true)) MARKDOWN_MEDIA else BINARY_MEDIA
 
     private companion object {
+        /**
+         * 共享 OkHttpClient：连接池 / 线程池跨实例复用（超时参数固定）。
+         * 一次同步会话会多次构造 WebDavClient（testConnection / plan / execute /
+         * applyRemoteRename），各自新建客户端会让 plan→execute 之间连接与 TLS 会话
+         * 全部失效、反复重新握手（对坚果云等远端是秒级开销）。
+         */
+        private val SHARED_CLIENT: OkHttpClient by lazy {
+            OkHttpClient.Builder()
+                .connectTimeout(20, TimeUnit.SECONDS)
+                .readTimeout(60, TimeUnit.SECONDS)
+                .writeTimeout(120, TimeUnit.SECONDS)
+                .build()
+        }
+
         /** 传输类请求的最小间隔毫秒数：对齐坚果云官方插件的 Bottleneck minTime = 200。 */
         private const val MIN_REQUEST_INTERVAL_MS = 200L
 

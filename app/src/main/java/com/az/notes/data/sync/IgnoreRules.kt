@@ -33,10 +33,13 @@ class IgnoreRules(pattern: String) {
         val segments = path.split('/').filter { it.isNotEmpty() }
         if (segments.isEmpty()) return false
         var ignored = false
+        // 单次遍历累积各层前缀（避免逐层 take + joinToString 重新分配）
+        val prefix = StringBuilder()
         for (depth in 1..segments.size) {
-            val prefix = segments.take(depth).joinToString("/")
+            if (depth > 1) prefix.append('/')
+            prefix.append(segments[depth - 1])
             val isDir = depth < segments.size || isDirectory
-            val decision = lastMatch(prefix, isDir) ?: continue
+            val decision = lastMatch(prefix.toString(), isDir) ?: continue
             ignored = decision
         }
         return ignored

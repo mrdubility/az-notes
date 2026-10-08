@@ -95,8 +95,9 @@ fun VaultScreen(
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
         val path = SafPathUtils.treeUriToPath(uri)
-        if (path == null || !viewModel.addVault(path)) {
-            scope.launch {
+        scope.launch {
+            // addVault 在 IO 线程校验目录可用性（外部路径 stat 可能毫秒级）；无效时提示目录不可用
+            if (path == null || !viewModel.addVault(path)) {
                 snackbarHostState.showSnackbar(context.getString(R.string.vault_dir_invalid, path ?: ""))
             }
         }

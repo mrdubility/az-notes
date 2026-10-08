@@ -57,10 +57,9 @@ import coil3.request.ImageRequest
 import coil3.request.crossfade
 import com.az.notes.R
 import com.az.notes.domain.markdown.Heading
+import com.az.notes.ui.common.formatDateTimeSeconds
+import com.az.notes.ui.common.formatSize
 import java.io.File
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 /**
  * 预览页浮层与对话框：大纲面板 / 全屏图片预览 / 文档信息。
@@ -262,8 +261,7 @@ internal fun DocInfoDialog(info: DocInfo, onDismiss: () -> Unit) {
                 DocInfoRow(stringResource(R.string.reader_info_size), formatSize(info.sizeBytes))
                 DocInfoRow(
                     stringResource(R.string.reader_info_modified),
-                    SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
-                        .format(Date(info.lastModified))
+                    formatDateTimeSeconds(info.lastModified)
                 )
                 DocInfoRow(stringResource(R.string.reader_info_chars), info.charCount.toString())
                 DocInfoRow(stringResource(R.string.reader_info_lines), info.lineCount.toString())
@@ -292,11 +290,4 @@ private fun DocInfoRow(label: String, value: String) {
             modifier = Modifier.weight(1f)
         )
     }
-}
-
-/** 文件大小：B / KB / MB（各档保留一位小数）。 */
-private fun formatSize(bytes: Long): String = when {
-    bytes < 1024 -> "$bytes B"
-    bytes < 1024 * 1024 -> "%.1f KB".format(bytes / 1024.0)
-    else -> "%.1f MB".format(bytes / (1024.0 * 1024.0))
 }

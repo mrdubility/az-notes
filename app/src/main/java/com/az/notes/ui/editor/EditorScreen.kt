@@ -58,13 +58,17 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.az.notes.R
 import com.az.notes.data.media.ImportedMedia
 import com.az.notes.domain.markdown.ImageReference
+import com.az.notes.ui.common.formatSize
 import com.az.notes.ui.common.resolve
 import com.az.notes.ui.components.InsertImageDialog
 import com.az.notes.ui.components.MoveTargetDialog
 import com.az.notes.ui.components.RenameDialog
 import com.az.notes.ui.theme.LocalReadingStyle
 import androidx.compose.ui.platform.LocalContext
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * 编辑页（§5.3 重设计）：工具条移到底部（键盘上方，横向可滚动）；
@@ -196,10 +200,15 @@ fun EditorScreen(
     }
 
     // 匹配区间（查找栏计数与编辑器内高亮共用；纯文本查询不会跨换行）
-    val matchRanges = remember(state.text, query) {
+    // 输入防抖 + 后台线程计算：大文档 + 短查询词会产出大量 Range，避免每次按键都全文档扫描
+    var matchRanges by remember { mutableStateOf<List<IntRange>>(emptyList()) }
+    LaunchedEffect(state.text, query) {
         if (query.isBlank()) {
-            emptyList()
-        } else {
+            matchRanges = emptyList()
+            return@LaunchedEffect
+        }
+        delay(SEARCH_DEBOUNCE_MS)
+        matchRanges = withContext(Dispatchers.Default) {
             Regex(Regex.escape(query), RegexOption.IGNORE_CASE)
                 .findAll(state.text)
                 .map { it.range }
@@ -360,9 +369,5 @@ private fun importedMessage(context: android.content.Context, media: ImportedMed
     }
 }
 
-/** 文件大小：B / KB / MB（与预览页文档信息一致的档位与精度）。 */
-private fun formatSize(bytes: Long): String = when {
-    bytes < 1024 -> "$bytes B"
-    bytes < 1024 * 1024 -> "%.1f KB".format(bytes / 1024.0)
-    else -> "%.1f MB".format(bytes / (1024.0 * 1024.0))
-}
+/** 查找匹配防抖窗口（毫秒）：输入停顿后才全文档扫描一次。 */
+private const val SEARCH_DEBOUNCE_MS = 250L

@@ -71,9 +71,11 @@ import com.az.notes.data.debug.DebugLogType
 import com.az.notes.ui.common.UiText
 import com.az.notes.ui.common.resolve
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -106,7 +108,10 @@ class DebugLogViewModel @Inject constructor(
     }
 
     fun refreshStatus() {
-        status = debugLogRepository.status()
+        // 状态统计为文件系统调用：放 IO 执行，避免主线程列目录 / stat
+        viewModelScope.launch {
+            status = withContext(Dispatchers.IO) { debugLogRepository.status() }
+        }
     }
 
     fun setEnabled(enabled: Boolean) = viewModelScope.launch {
@@ -124,8 +129,11 @@ class DebugLogViewModel @Inject constructor(
     }
 
     fun openLogs() {
-        logs = debugLogRepository.readAllLines()
-        refreshStatus()
+        // 全部分片读盘（最多约 2 MB）放 IO 执行
+        viewModelScope.launch {
+            logs = withContext(Dispatchers.IO) { debugLogRepository.readAllLines() }
+            refreshStatus()
+        }
     }
 
     fun closeLogs() {
@@ -133,8 +141,11 @@ class DebugLogViewModel @Inject constructor(
     }
 
     fun clearLogs() {
-        debugLogRepository.clearAll()
-        refreshStatus()
+        // 删除文件放 IO 执行；状态刷新在删除完成后触发
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { debugLogRepository.clearAll() }
+            refreshStatus()
+        }
         message = UiText.of(R.string.debug_logs_clear_done)
     }
 

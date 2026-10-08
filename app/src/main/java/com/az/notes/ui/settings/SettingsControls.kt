@@ -35,7 +35,6 @@ import com.az.notes.R
 import com.az.notes.domain.model.AppLanguage
 import com.az.notes.domain.model.FabAction
 import com.az.notes.domain.model.FontFamilyPreference
-import com.az.notes.domain.model.NoteSortOrder
 import com.az.notes.domain.model.ThemeMode
 
 /**
@@ -189,16 +188,6 @@ internal fun FontFamilyPreference.label(): String = stringResource(
         FontFamilyPreference.SANS -> R.string.settings_font_sans
         FontFamilyPreference.SERIF -> R.string.settings_font_serif
         FontFamilyPreference.MONO -> R.string.settings_font_mono
-    }
-)
-
-@Composable
-internal fun NoteSortOrder.label(): String = stringResource(
-    when (this) {
-        NoteSortOrder.MODIFIED_DESC -> R.string.sort_modified_desc
-        NoteSortOrder.MODIFIED_ASC -> R.string.sort_modified_asc
-        NoteSortOrder.NAME_ASC -> R.string.sort_name_asc
-        NoteSortOrder.NAME_DESC -> R.string.sort_name_desc
     }
 )
 

@@ -28,12 +28,21 @@ object HeadingExtractor {
     fun parse(markdown: String): Result {
         val parser = MarkdownParser(GFMFlavourDescriptor())
         val blocks = parser.buildMarkdownTreeFromString(markdown).children
+        // 单趟推进行号游标：块节点按文档序排列、startOffset 单调递增，
+        // 无需为每个标题从头扫描全文（避免 O(n·标题数) 的平方级扫描）
+        var line = 0
+        var scanned = 0
         val headings = blocks.mapIndexedNotNull { index, node ->
             val level = node.headingLevel() ?: return@mapIndexedNotNull null
+            val offset = node.startOffset.coerceAtMost(markdown.length)
+            while (scanned < offset) {
+                if (markdown[scanned] == '\n') line++
+                scanned++
+            }
             Heading(
                 level = level,
                 text = headingText(markdown, node),
-                line = lineOf(markdown, node.startOffset),
+                line = line,
                 blockIndex = index
             )
         }
@@ -69,17 +78,5 @@ object HeadingExtractor {
                 .lineSequence().first().trimStart('#', ' ', '\n')
         }
         return raw.trim()
-    }
-
-    /** 字符偏移 → 行号（0 基）。 */
-    private fun lineOf(markdown: String, offset: Int): Int {
-        var line = 0
-        var i = 0
-        val end = offset.coerceAtMost(markdown.length)
-        while (i < end) {
-            if (markdown[i] == '\n') line++
-            i++
-        }
-        return line
     }
 }

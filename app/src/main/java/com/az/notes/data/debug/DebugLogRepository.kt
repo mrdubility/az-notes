@@ -10,6 +10,7 @@ import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -89,8 +90,17 @@ class DebugLogRepository @Inject constructor(
     @Volatile
     private var snapshot = DebugLogConfig()
 
+    /** 配置首次回流完成信号：构建指纹等启动日志等它就绪后再写，避免被静默丢弃。 */
+    private val configReady = CompletableDeferred<Unit>()
+
     private val lock = Any()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /** 分片列表内存缓存（仅在 [lock] 内访问）：写入路径复用，避免每条日志列目录。 */
+    private var cachedSegments: List<File>? = null
+
+    /** 日志目录已就绪标记（避免每次写入都 mkdirs）。 */
+    private var dirReady = false
 
     private val logDir: File get() = File(context.filesDir, DIR_NAME)
 
@@ -114,8 +124,18 @@ class DebugLogRepository @Inject constructor(
     init {
         // 应用启动即跟踪配置变化：开关调整后无需重启即刻生效
         scope.launch {
-            runCatching { config.collect { snapshot = it } }
+            runCatching {
+                config.collect {
+                    snapshot = it
+                    configReady.complete(Unit) // 首次回流完成（重复 complete 无副作用）
+                }
+            }
         }
+    }
+
+    /** 等待配置首次回流完成：启动期日志在快照就绪后再写（未就绪时 log 会静默丢弃）。 */
+    suspend fun awaitConfigReady() {
+        configReady.await()
     }
 
     suspend fun setEnabled(enabled: Boolean) =
@@ -142,7 +162,7 @@ class DebugLogRepository @Inject constructor(
     ) {
         val cfg = snapshot
         if (!cfg.enabled || level.ordinal < cfg.minLevel.ordinal || type !in cfg.types) return
-        val ts = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSXXX", Locale.US).format(Date())
+        val ts = tsFormat.get().format(Date())
         val line = buildString {
             append("{\"ts\":\"").append(ts).append('"')
             append(",\"level\":\"").append(level.name).append('"')
@@ -187,6 +207,7 @@ class DebugLogRepository @Inject constructor(
     fun clearAll() {
         synchronized(lock) {
             runCatching { logDir.listFiles()?.forEach { it.delete() } }
+            cachedSegments = emptyList()
         }
     }
 
@@ -208,31 +229,35 @@ class DebugLogRepository @Inject constructor(
     private fun write(line: String) {
         synchronized(lock) {
             runCatching {
-                logDir.mkdirs()
-                currentSegment().appendText(line + "\n", Charsets.UTF_8)
-                trimSegments()
+                prepareDirLocked()
+                // 分片列表内存缓存：写入路径高频（每条日志），避免每次列目录 + 排序
+                val segments = cachedSegments ?: listSegments().also { cachedSegments = it }
+                val latest = segments.lastOrNull()
+                val target = if (latest != null && latest.length() < SEGMENT_MAX_BYTES) latest
+                else File(logDir, "$SEGMENT_PREFIX${fileStampFormat.format(Date())}.jsonl")
+                target.appendText(line + "\n", Charsets.UTF_8)
+                val isNew = target !== latest
+                val all = if (isNew) segments + target else segments
+                if (isNew) cachedSegments = all
+                // 超出分片上限：删最旧（复用同一次列举结果，不再二次列目录）
+                if (all.size > SEGMENT_LIMIT) {
+                    val overflow = all.take(all.size - SEGMENT_LIMIT)
+                    overflow.forEach { it.delete() }
+                    cachedSegments = all.drop(overflow.size)
+                }
             }
         }
     }
 
-    /** 当前待写分片：最新一片未超限则续写，否则新建（文件名内嵌时间戳，文件名序即时间序）。 */
-    private fun currentSegment(): File {
-        val latest = listSegments().lastOrNull()
-        return if (latest != null && latest.length() < SEGMENT_MAX_BYTES) latest
-        else File(logDir, "$SEGMENT_PREFIX${fileStampFormat.format(Date())}.jsonl")
+    /** 日志目录就绪标记（首次写入时 mkdirs 一次，避免每条日志重复调用）。 */
+    private fun prepareDirLocked() {
+        if (!dirReady) dirReady = logDir.mkdirs() || logDir.isDirectory
     }
 
     private fun listSegments(): List<File> =
         logDir.listFiles { f -> f.isFile && f.name.startsWith(SEGMENT_PREFIX) && f.name.endsWith(".jsonl") }
             ?.sortedBy { it.name }
             ?: emptyList()
-
-    private fun trimSegments() {
-        val segments = listSegments()
-        if (segments.size > SEGMENT_LIMIT) {
-            segments.take(segments.size - SEGMENT_LIMIT).forEach { it.delete() }
-        }
-    }
 
     private fun valueToJson(value: Any?): String = when (value) {
         null -> "null"
@@ -266,5 +291,10 @@ class DebugLogRepository @Inject constructor(
         const val SEGMENT_LIMIT = 8
 
         val fileStampFormat = SimpleDateFormat("yyyyMMdd-HHmmss-SSS", Locale.US)
+
+        /** 时间戳格式器：log 可跨线程调用，ThreadLocal 保证线程安全（SimpleDateFormat 非线程安全）。 */
+        val tsFormat: ThreadLocal<SimpleDateFormat> = ThreadLocal.withInitial {
+            SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSXXX", Locale.US)
+        }
     }
 }

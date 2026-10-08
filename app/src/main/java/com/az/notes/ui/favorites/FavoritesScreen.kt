@@ -48,10 +48,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.az.notes.R
 import com.az.notes.domain.model.FileNode
+import com.az.notes.ui.common.formatDateTime
 import com.az.notes.ui.common.resolve
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**
@@ -225,9 +223,6 @@ private fun folderLabel(relativePath: String): String {
 /** 列表展示标题：笔记去掉 .md 扩展名。 */
 private fun displayTitle(node: FileNode): String =
     if (node.isMarkdown) node.name.substringBeforeLast('.') else node.name
-
-private fun formatDateTime(millis: Long): String =
-    SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(millis))
 
 /** 可撤销横幅（取消收藏等）的显示时长（毫秒）：超时视为放弃撤销。 */
 private const val UNDO_BANNER_MS = 5_000L

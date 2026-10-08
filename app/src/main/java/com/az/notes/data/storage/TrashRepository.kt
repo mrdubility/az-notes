@@ -48,7 +48,8 @@ class TrashRepository @Inject constructor(
     /**
      * 把 Vault 内的文件 / 目录移入回收站（删除的唯一入口，不物理删除）。
      * [absolutePath] 必须严格位于 [vaultPath] 内；批次名取当前时刻（同秒合并），
-     * 先复制后删源；同批次出现同名副本时自动加序号，不覆盖已有回收内容。
+     * 同文件系统优先原子移动（renameTo 零拷贝），跨文件系统回退「先完整复制、成功后再删源」；
+     * 复制或删源失败时按失败返回 null（不谎报成功，源优先保留不丢数据）。
      * 返回入站后的条目（失败为 null），供调用方定位与撤销恢复。
      */
     suspend fun moveToTrash(vaultPath: String, absolutePath: String): TrashItem? {
@@ -61,12 +62,39 @@ class TrashRepository @Inject constructor(
             val batch = File(File(root(), vaultId), stampNow())
             val target = uniqueMoveTarget(batch, relativePath)
             target.parentFile?.mkdirs()
-            if (source.isDirectory) {
-                source.copyRecursively(target, overwrite = false)
-                source.deleteRecursively()
-            } else {
-                source.copyTo(target, overwrite = false)
-                source.delete()
+            // 同文件系统（默认仓库与 filesDir/trash 同属 App 私有目录）优先原子移动：
+            // rename 零拷贝且要么成功要么失败，无「半完成」状态
+            if (!source.renameTo(target)) {
+                // 跨文件系统（外部存储 ↔ App 私有目录）回退：先完整复制到专属临时名
+                // （避免与并发操作共用目标名），成功后再改名到位；失败只清理自己的临时文件
+                val staging = File(
+                    target.parentFile,
+                    "${target.name}.part-${System.nanoTime()}-${Thread.currentThread().id}"
+                )
+                val copied = runCatching {
+                    if (source.isDirectory) {
+                        source.copyRecursively(staging, overwrite = false)
+                    } else {
+                        source.copyTo(staging, overwrite = false)
+                        true
+                    }
+                }.getOrDefault(false)
+                if (!copied) {
+                    // 复制失败：清理本次的临时副本，源不动（防丢数据优先），按失败上报
+                    runCatching { if (staging.exists()) staging.deleteRecursively() }
+                    return@runCatching null
+                }
+                if (!staging.renameTo(target)) {
+                    // 目标名已被并发操作占用（极端）：源尚未删除，放弃本次并清理临时副本
+                    runCatching { staging.deleteRecursively() }
+                    return@runCatching null
+                }
+                val removed = if (source.isDirectory) source.deleteRecursively() else source.delete()
+                if (!removed) {
+                    // 删除源失败（可能已部分删除）：回收站副本保留（完整数据不丢），
+                    // 但 Vault 残留将导致状态不一致——按失败上报，供用户重试或手动处理
+                    return@runCatching null
+                }
             }
             TrashItem(
                 relativePath = target.absolutePath

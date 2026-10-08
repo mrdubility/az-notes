@@ -177,12 +177,10 @@ class EditorViewModel @Inject constructor(
             val src = File(absolutePath)
             if (newName == src.name) return@launch
             val target = File(src.parentFile, newName)
-            if (target.exists()) {
-                _state.update { it.copy(message = UiText.of(R.string.msg_rename_failed_exists)) }
-                return@launch
-            }
             val ok = runCatching {
                 withContext(Dispatchers.IO) {
+                    // 目标已存在则失败（与后续写盘、改名为同块 IO，避免主线程 stat）
+                    if (target.exists()) return@withContext false
                     // 先保存未落盘内容，避免改名后丢失编辑
                     if (current.dirty) vaultRepository.writeTextAtomically(absolutePath, current.text)
                     vaultRepository.rename(absolutePath, target.absolutePath)
@@ -240,7 +238,8 @@ class EditorViewModel @Inject constructor(
             val src = File(absolutePath)
             val target = File(targetDir, src.name)
             if (target.parentFile?.absolutePath == src.parentFile?.absolutePath) return@launch
-            if (target.exists()) {
+            // exists 为文件系统调用：放 IO 执行（保留提前返回，避免白白触发后续附件扫描）
+            if (withContext(Dispatchers.IO) { target.exists() }) {
                 _state.update { it.copy(message = UiText.of(R.string.msg_move_failed_exists)) }
                 return@launch
             }
@@ -294,8 +293,11 @@ class EditorViewModel @Inject constructor(
                 }
                 // 同仓库跨目录移动单篇笔记：若笔记相邻 assets/ 仍有内容，给出「附件未跟随」提示（不静默搬运）
                 if (!crossVault && settings?.attachmentPromptEnabled == true) {
-                    val srcAssets = src.parentFile?.let { File(it, VaultRepository.ATTACHMENT_DIR) }
-                    if (srcAssets?.isDirectory == true && srcAssets.listFiles()?.isNotEmpty() == true) {
+                    val hasAssets = withContext(Dispatchers.IO) {
+                        val srcAssets = src.parentFile?.let { File(it, VaultRepository.ATTACHMENT_DIR) }
+                        srcAssets?.isDirectory == true && srcAssets.listFiles()?.isNotEmpty() == true
+                    }
+                    if (hasAssets) {
                         movedMessage = UiText.of(R.string.editor_move_attachments_not_followed)
                     }
                 }

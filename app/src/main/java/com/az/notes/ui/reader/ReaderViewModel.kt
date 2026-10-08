@@ -106,32 +106,34 @@ class ReaderViewModel @Inject constructor(
         viewModelScope.launch {
             if (showLoading) _state.update { it.copy(loading = true, error = null) }
             try {
-                val vault = runCatching { settingsRepository.settings.first().vaultPath }.getOrNull()
-                val remoteMaxBytes = runCatching { settingsRepository.settings.first().remoteImageMaxBytes }.getOrDefault(0L)
-                val text = withContext(Dispatchers.IO) { vaultRepository.readText(absolutePath) }
-                val split = withContext(Dispatchers.IO) { FrontmatterParser.split(text) }
+                val settings = runCatching { settingsRepository.settings.first() }.getOrNull()
+                val vault = settings?.vaultPath
+                val remoteMaxBytes = settings?.remoteImageMaxBytes ?: 0L
+                // 读盘与解析合并为单个 IO 块（中间结果不来回切线程）；settings 只读一次复用。
                 // 预览专用预处理：把段落内图抽出成独立块（规避库的 inline Placeholder 不撑高段落
                 // 导致“图只显上半部分 + 下方文字不可见 + 无法下滑”的问题）。
                 // 与 HeadingExtractor 共用同一份预处理后字符串，保证大纲 blockIndex 与
                 // LazyColumn 下标仍严格一一对应；写盘（mutateBody / TaskExtractor）路径仍用原始 body。
-                val previewBody = withContext(Dispatchers.IO) { MarkdownImageLifter.lift(split.body) }
-                val noteType = split.value("note_type")?.trim()?.lowercase()
-                val parsed = withContext(Dispatchers.IO) { HeadingExtractor.parse(previewBody) }
-                val tasks = if (noteType == "task") {
-                    withContext(Dispatchers.IO) { TaskExtractor.extract(split.body) }
-                } else emptyList()
-                _state.update {
-                    it.copy(
-                        loading = false,
-                        content = previewBody,
-                        headings = parsed.headings,
-                        vaultPath = vault,
-                        remoteImageMaxBytes = remoteMaxBytes,
-                        noteType = noteType,
-                        attributes = split.entries,
-                        tasks = tasks,
-                        error = null
-                    )
+                withContext(Dispatchers.IO) {
+                    val text = vaultRepository.readText(absolutePath)
+                    val split = FrontmatterParser.split(text)
+                    val previewBody = MarkdownImageLifter.lift(split.body)
+                    val noteType = split.value("note_type")?.trim()?.lowercase()
+                    val parsed = HeadingExtractor.parse(previewBody)
+                    val tasks = if (noteType == "task") TaskExtractor.extract(split.body) else emptyList()
+                    _state.update {
+                        it.copy(
+                            loading = false,
+                            content = previewBody,
+                            headings = parsed.headings,
+                            vaultPath = vault,
+                            remoteImageMaxBytes = remoteMaxBytes,
+                            noteType = noteType,
+                            attributes = split.entries,
+                            tasks = tasks,
+                            error = null
+                        )
+                    }
                 }
             } catch (e: Exception) {
                 _state.update { it.copy(loading = false, error = e.toUiText(R.string.msg_read_failed)) }

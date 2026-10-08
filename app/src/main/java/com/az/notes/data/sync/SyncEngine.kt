@@ -886,6 +886,8 @@ class SyncEngine @Inject constructor(
      * 不做这一步，下次同步会把它当成“旧路径删除 + 新路径新增”，
      * 导致整个目录重新上传（慢且耗流量）。未配置同步、路径不在 Vault 内、
      * 远端不存在或 MOVE 失败时静默跳过（仅记一条日志），由下次常规同步兜底。
+     * 与同步会话（手动 / 自动）互斥：会话进行中时跳过本次即时改名，
+     * 避免 MOVE 与扫描 / 执行交错产生重复文件或假冲突副本。
      */
     suspend fun applyRemoteRename(vaultRoot: String, oldAbsPath: String, newAbsPath: String) {
         val vaultId = settingsRepository.requireCurrentVaultId() ?: return
@@ -896,25 +898,47 @@ class SyncEngine @Inject constructor(
         val oldRel = oldAbsPath.removePrefix(root).trim('/')
         val newRel = newAbsPath.removePrefix(root).trim('/')
         if (oldRel.isEmpty() || newRel.isEmpty()) return
-        val client = runCatching { buildClient(config) }.getOrNull() ?: return
-        // 本地已改名完成，旧路径不再存在；以新路径判定是否为文件夹
-        val isDirectory = withContext(Dispatchers.IO) { File(newAbsPath).isDirectory }
-        val ok = runCatching { client.move(oldRel, newRel, isDirectory) }.getOrDefault(false)
-        withContext(Dispatchers.IO) {
-            if (ok) remapBaseline(vaultId, oldRel, newRel)
-            syncLogDao.insertAll(
-                listOf(
-                    SyncLogEntity(
-                        vaultId = vaultId,
-                        ts = System.currentTimeMillis(),
-                        op = LOG_OP_REMOTE_MOVE,
-                        path = "$oldRel → $newRel",
-                        result = if (ok) "OK" else "SKIP",
-                        detail = if (ok) "重命名已同步到云端"
-                        else "云端未同步本次重命名，将在下次同步时处理"
+        // 抢会话锁（非阻塞）：同步进行中则本次跳过，交由下轮常规同步处理
+        if (!sessionMutex.tryLock()) {
+            withContext(Dispatchers.IO) {
+                syncLogDao.insertAll(
+                    listOf(
+                        SyncLogEntity(
+                            vaultId = vaultId,
+                            ts = System.currentTimeMillis(),
+                            op = LOG_OP_REMOTE_MOVE,
+                            path = "$oldRel → $newRel",
+                            result = "SKIP",
+                            detail = "同步进行中，改名交由下次同步处理"
+                        )
                     )
                 )
-            )
+            }
+            return
+        }
+        try {
+            val client = runCatching { buildClient(config) }.getOrNull() ?: return
+            // 本地已改名完成，旧路径不再存在；以新路径判定是否为文件夹
+            val isDirectory = withContext(Dispatchers.IO) { File(newAbsPath).isDirectory }
+            val ok = runCatching { client.move(oldRel, newRel, isDirectory) }.getOrDefault(false)
+            withContext(Dispatchers.IO) {
+                if (ok) remapBaseline(vaultId, oldRel, newRel)
+                syncLogDao.insertAll(
+                    listOf(
+                        SyncLogEntity(
+                            vaultId = vaultId,
+                            ts = System.currentTimeMillis(),
+                            op = LOG_OP_REMOTE_MOVE,
+                            path = "$oldRel → $newRel",
+                            result = if (ok) "OK" else "SKIP",
+                            detail = if (ok) "重命名已同步到云端"
+                            else "云端未同步本次重命名，将在下次同步时处理"
+                        )
+                    )
+                )
+            }
+        } finally {
+            sessionMutex.unlock()
         }
     }
 

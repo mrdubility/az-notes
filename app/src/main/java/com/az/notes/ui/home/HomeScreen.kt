@@ -437,7 +437,8 @@ fun HomeScreen(
             referenced = deleteReferenced,
             onDismiss = { deleteTarget = null },
             onConfirm = { alsoTrashAttachments ->
-                viewModel.delete(target.node, alsoTrashAttachments)
+                // 复用打开对话框时已查的引用索引，避免确认后再全库重扫
+                viewModel.delete(target.node, alsoTrashAttachments, deleteReferenced?.exclusiveFiles)
                 deleteTarget = null
             }
         )
