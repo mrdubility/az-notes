@@ -8,10 +8,13 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -41,6 +44,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -51,6 +55,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.unit.dp
@@ -65,6 +70,7 @@ import com.az.notes.ui.components.MoveTargetDialog
 import com.az.notes.ui.components.RenameDialog
 import com.az.notes.ui.theme.LocalReadingStyle
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -78,7 +84,7 @@ import kotlinx.coroutines.withContext
  * 屏幕）；工具栏直接编辑 [TextFieldState]，插入标记后光标 / 选区自动跟随；
  * 回车自动续行列表 / 任务 / 引用（见 [MarkdownListContinuation]）。
  */
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)
 @Composable
 fun EditorScreen(
     viewModel: EditorViewModel,
@@ -107,6 +113,13 @@ fun EditorScreen(
     var layoutResult by remember { mutableStateOf<TextLayoutResult?>(null) }
     // 笔记文本是否已灌入编辑器；配置重建时经 rememberSaveable 恢复，避免重复灌入
     var initialized by rememberSaveable { mutableStateOf(false) }
+    // —— 输入法遮挡校正相关状态 ——
+    // 编辑视口高度（像素，文本可滚动区）：随 IME 弹出逐帧收缩，供下方校正使用
+    var viewportHeightPx by remember { mutableIntStateOf(0) }
+    // 光标滚入可视区后与视口边缘保持的间距（像素）
+    val cursorMarginPx = with(LocalDensity.current) { CURSOR_MARGIN_DP.dp.roundToPx() }
+    // 键盘可见性：校正仅在键盘可见期间生效；键盘收起后不介入，避免干扰滚动浏览
+    val imeVisible = WindowInsets.isImeVisible
 
     // 在光标 / 选区处插入图片 Markdown：`![](link)`；有选区时替换选中文本；
     // altInCursor=true 时光标停在方括号内供填写 alt
@@ -151,6 +164,30 @@ fun EditorScreen(
     LaunchedEffect(editorVisible) {
         if (!editorVisible) return@LaunchedEffect
         snapshotFlow { textState.text.toString() }.collect { viewModel.onTextChange(it) }
+    }
+
+    // —— 输入法遮挡校正：内建光标自滚动只在光标 / 文本 / 排版变化时触发，
+    // IME 弹出使编辑视口收缩（imePadding 抬升）时不触发——点选屏幕偏下方文本后，
+    // 光标会留在键盘后面。键盘可见期间跟随视口 / 光标 / 排版变化主动校正：光标
+    // 超出可视区（含余量）即滚动到带余量的位置，随键盘弹出逐帧平稳跟随；
+    // 键盘收起后不介入（不干扰滚动浏览）。取选区活动端（end，与内建自滚同端），
+    // 跨屏选择时不会把视口拉向另一端点。 ——
+    LaunchedEffect(textState.selection, layoutResult, viewportHeightPx, imeVisible) {
+        val layout = layoutResult ?: return@LaunchedEffect
+        if (!imeVisible || viewportHeightPx <= 0) return@LaunchedEffect
+        val cursor = layout.getCursorRect(
+            textState.selection.end.coerceIn(0, layout.layoutInput.text.length)
+        )
+        val viewportTop = scrollState.value.toFloat()
+        val viewportBottom = viewportTop + viewportHeightPx
+        val target = when {
+            cursor.bottom + cursorMarginPx > viewportBottom ->
+                cursor.bottom + cursorMarginPx - viewportHeightPx
+            cursor.top - cursorMarginPx < viewportTop ->
+                cursor.top - cursorMarginPx
+            else -> return@LaunchedEffect
+        }
+        scrollState.scrollTo(target.toInt().coerceIn(0, scrollState.maxValue))
     }
 
     // 系统返回 / 返回按钮共用：先同步编辑器最新文本给 ViewModel，
@@ -296,6 +333,8 @@ fun EditorScreen(
                             modifier = Modifier
                                 .fillMaxSize()
                                 .padding(16.dp)
+                                // 视口高度 = 文本可滚动区尺寸（padding 之后）；供输入法遮挡校正
+                                .onSizeChanged { viewportHeightPx = it.height }
                                 .drawBehind {
                                     // 查找高亮：绘制在文本下层（drawBehind 先于内容绘制）
                                     if (searchActive) {
@@ -371,3 +410,6 @@ private fun importedMessage(context: android.content.Context, media: ImportedMed
 
 /** 查找匹配防抖窗口（毫秒）：输入停顿后才全文档扫描一次。 */
 private const val SEARCH_DEBOUNCE_MS = 250L
+
+/** 输入法遮挡校正余量（dp）：光标滚入可视区后与视口边缘保持的间距。 */
+private const val CURSOR_MARGIN_DP = 24
