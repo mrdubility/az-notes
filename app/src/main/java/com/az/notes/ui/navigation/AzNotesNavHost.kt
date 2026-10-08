@@ -22,6 +22,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.az.notes.ui.MainViewModel
+import com.az.notes.ui.ai.AiChatScreen
 import com.az.notes.ui.ai.AiProviderScreen
 import com.az.notes.ui.debug.DebugLogScreen
 import com.az.notes.ui.editor.EditorScreen
@@ -76,6 +77,8 @@ fun AzNotesNavHost(
                 onOpenTrash = { navController.navigate(Routes.TRASH) },
                 onOpenFavorites = { navController.navigate(Routes.FAVORITES) },
                 onOpenGallery = { navController.navigate(Routes.GALLERY) },
+                // AI 对话（B2）：抽屉入口
+                onOpenAiChat = { navController.navigate(Routes.AI_CHAT) },
                 // 主页右上角“立即同步”在本页以弹窗完成（扫描 → 确认 → 执行），无需导航；
                 // 同步配置从抽屉 → 设置 → 同步进入
                 onSettings = { navController.navigate(Routes.SETTINGS) },
@@ -167,6 +170,15 @@ fun AzNotesNavHost(
             AiProviderScreen(
                 viewModel = hiltViewModel(),
                 onBack = { navController.popBackStackSafely(entry) }
+            )
+        }
+
+        composable(Routes.AI_CHAT) { entry ->
+            AiChatScreen(
+                viewModel = hiltViewModel(),
+                onBack = { navController.popBackStackSafely(entry) },
+                // 空态 / 错误条的「去设置」：直达供应商管理页
+                onOpenProviders = { navController.navigate(Routes.AI_PROVIDERS) }
             )
         }
 

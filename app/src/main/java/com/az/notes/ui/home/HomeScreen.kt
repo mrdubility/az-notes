@@ -88,6 +88,8 @@ fun HomeScreen(
     onOpenTrash: () -> Unit,
     onOpenFavorites: () -> Unit,
     onOpenGallery: () -> Unit,
+    /** AI 对话页（B2）：抽屉入口 */
+    onOpenAiChat: () -> Unit,
     onSettings: () -> Unit,
     /** 顶栏切换当前仓库（记忆为下次启动 / 分享的目标仓库） */
     onSwitchVault: (String) -> Unit,
@@ -243,6 +245,10 @@ fun HomeScreen(
                     onFavorites = {
                         scope.launch { drawerState.close() }
                         onOpenFavorites()
+                    },
+                    onOpenAiChat = {
+                        scope.launch { drawerState.close() }
+                        onOpenAiChat()
                     },
                     onGallery = {
                         scope.launch { drawerState.close() }

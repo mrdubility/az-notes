@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- AI 供应商 http 明文放行（B2 提前项，原方案 B4）：
+     支持 Ollama 本地服务（http://127.0.0.1:11434）与自建中转站直连；
+     表单侧对 http:// 已有「明文传输」警示文案（ai_provider_http_warning）。 -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

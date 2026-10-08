@@ -7,6 +7,7 @@ import com.az.notes.data.ai.AiConnectionTester
 import com.az.notes.data.ai.AiKeyStore
 import com.az.notes.data.ai.AiProviderRepository
 import com.az.notes.data.ai.AiTestResult
+import com.az.notes.data.ai.ModelListResult
 import com.az.notes.domain.ai.AiModel
 import com.az.notes.domain.ai.AiProtocol
 import com.az.notes.domain.ai.AiProvider
@@ -76,6 +77,14 @@ class AiProviderViewModel @Inject constructor(
     private val _testResult = MutableStateFlow<AiTestResult?>(null)
     val testResult: StateFlow<AiTestResult?> = _testResult.asStateFlow()
 
+    /** 表单内「获取模型」进行中（B1 补丁快速添加）。 */
+    private val _fetchingModels = MutableStateFlow(false)
+    val fetchingModels: StateFlow<Boolean> = _fetchingModels.asStateFlow()
+
+    /** 「获取模型」返回的候选列表（非空 = 显示选择对话框；null = 不显示）。 */
+    private val _modelOptions = MutableStateFlow<List<String>?>(null)
+    val modelOptions: StateFlow<List<String>?> = _modelOptions.asStateFlow()
+
     private val _saving = MutableStateFlow(false)
     val saving: StateFlow<Boolean> = _saving.asStateFlow()
 
@@ -103,6 +112,7 @@ class AiProviderViewModel @Inject constructor(
             baseUrl = baseUrl
         )
         _testResult.value = null
+        _modelOptions.value = null
     }
 
     fun startEdit(id: String) {
@@ -119,6 +129,7 @@ class AiProviderViewModel @Inject constructor(
                 }
             )
             _testResult.value = null
+            _modelOptions.value = null
         }
     }
 
@@ -126,6 +137,7 @@ class AiProviderViewModel @Inject constructor(
         _draft.value = null
         _testResult.value = null
         _testing.value = false
+        _modelOptions.value = null
     }
 
     /** 删除供应商（含其加密存储的 Key）；UI 层已二次确认。 */
@@ -182,15 +194,7 @@ class AiProviderViewModel @Inject constructor(
             return
         }
         viewModelScope.launch {
-            val key = when {
-                draft.apiKeyInput.isNotBlank() -> draft.apiKeyInput.trim()
-                draft.providerId != null -> keyStore.getKey(draft.providerId)
-                else -> ""
-            }
-            if (key.isEmpty()) {
-                _message.value = UiText.of(R.string.ai_provider_err_key)
-                return@launch
-            }
+            val key = effectiveKey(draft) ?: return@launch
             _testing.value = true
             try {
                 val probe = AiProvider(
@@ -204,6 +208,53 @@ class AiProviderViewModel @Inject constructor(
                 _testing.value = false
             }
         }
+    }
+
+    /**
+     * 表单内「获取模型」（B1 补丁）：成功后弹出候选列表快速添加；
+     * 失败以 Snackbar 提示原因（复用测试连接文案），手填路径不受影响。
+     */
+    fun fetchDraftModels() {
+        val draft = _draft.value ?: return
+        if (_fetchingModels.value) return
+        val normalized = BaseUrlNormalizer.normalize(draft.baseUrl)
+        if (normalized == null) {
+            _message.value = UiText.of(R.string.ai_provider_err_url)
+            return
+        }
+        viewModelScope.launch {
+            val key = effectiveKey(draft) ?: return@launch
+            _fetchingModels.value = true
+            try {
+                val probe = AiProvider(
+                    id = draft.providerId.orEmpty(),
+                    name = draft.name.trim(),
+                    protocol = draft.protocol,
+                    baseUrl = normalized
+                )
+                when (val result = tester.fetchModels(probe, key)) {
+                    is ModelListResult.Success -> _modelOptions.value = result.modelIds
+                    is ModelListResult.Failure ->
+                        _message.value = resultText(AiTestResult.Failure(result.kind))
+                }
+            } finally {
+                _fetchingModels.value = false
+            }
+        }
+    }
+
+    /** 把获取到的模型 ID 追加进草稿（按 id 去重；对话框保持打开可连续添加）。 */
+    fun addFetchedModel(id: String) = mutateDraft { draft ->
+        val trimmed = id.trim()
+        if (trimmed.isEmpty() || draft.models.any { it.id.trim() == trimmed }) {
+            draft
+        } else {
+            draft.copy(models = draft.models + AiModelDraft(uid = nextDraftUid++, id = trimmed))
+        }
+    }
+
+    fun dismissModelOptions() {
+        _modelOptions.value = null
     }
 
     /** 保存草稿：校验 → 规范化 baseUrl → 落库（新增拿 id 后写 Key；编辑保留未编辑字段）。 */
@@ -258,6 +309,7 @@ class AiProviderViewModel @Inject constructor(
                 }
                 _draft.value = null
                 _testResult.value = null
+                _modelOptions.value = null
                 _message.value = UiText.of(R.string.ai_provider_saved)
             } finally {
                 _saving.value = false
@@ -270,6 +322,20 @@ class AiProviderViewModel @Inject constructor(
     }
 
     // ---------------------------------------------------------------- 内部
+
+    /** 草稿的有效 Key：新输入优先，编辑态回退已存值；为空时提示并返回 null。 */
+    private suspend fun effectiveKey(draft: ProviderDraft): String? {
+        val key = when {
+            draft.apiKeyInput.isNotBlank() -> draft.apiKeyInput.trim()
+            draft.providerId != null -> keyStore.getKey(draft.providerId)
+            else -> ""
+        }
+        if (key.isEmpty()) {
+            _message.value = UiText.of(R.string.ai_provider_err_key)
+            return null
+        }
+        return key
+    }
 
     private fun mutateDraft(transform: (ProviderDraft) -> ProviderDraft) {
         val current = _draft.value ?: return

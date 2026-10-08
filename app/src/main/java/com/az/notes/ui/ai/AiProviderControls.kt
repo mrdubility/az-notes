@@ -7,19 +7,29 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.DeleteOutline
+import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -33,13 +43,17 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -53,7 +67,8 @@ import com.az.notes.ui.common.resolve
 
 /**
  * 供应商管理页组件（对齐 ui/settings/SettingsControls 的拆分与交互惯例）：
- * 列表行 / 底部添加行（模板菜单）/ 协议选择行 / 模型编辑行 / 测试连接行。
+ * 列表行 / 底部添加行（模板菜单）/ 协议选择行 / 模型编辑行 / 测试连接行 /
+ * 获取模型按钮与候选列表对话框（B1 补丁）/ 输入法遮挡校正 [imeReveal]。
  * 选项类弹窗一律用锚点 DropdownMenu（禁用 ModalBottomSheet），偏移 56dp 避免紧贴屏幕左缘。
  */
 
@@ -317,7 +332,7 @@ internal fun ModelEditRow(
             onValueChange = onIdChange,
             label = { Text(stringResource(R.string.ai_provider_model_id)) },
             singleLine = true,
-            modifier = Modifier.weight(1f)
+            modifier = Modifier.weight(1f).imeReveal()
         )
         Spacer(Modifier.width(8.dp))
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -379,6 +394,103 @@ internal fun AddModelRow(onClick: () -> Unit) {
         Spacer(Modifier.width(6.dp))
         Text(stringResource(R.string.ai_provider_add_model))
     }
+}
+
+/** 模型区「获取模型」按钮（B1 补丁）：获取中转圈禁用；失败降级手填由上层 Snackbar 提示。 */
+@Composable
+internal fun FetchModelsButton(fetching: Boolean, onClick: () -> Unit) {
+    TextButton(
+        onClick = onClick,
+        enabled = !fetching,
+        contentPadding = PaddingValues(horizontal = 8.dp)
+    ) {
+        if (fetching) {
+            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+        } else {
+            Icon(Icons.Outlined.Download, null, Modifier.size(18.dp))
+        }
+        Spacer(Modifier.width(6.dp))
+        Text(
+            stringResource(
+                if (fetching) R.string.ai_provider_fetching_models
+                else R.string.ai_provider_fetch_models
+            )
+        )
+    }
+}
+
+/**
+ * 「获取模型」候选列表对话框（B1 补丁）：点击即添加到草稿（保持打开可连续添加）；
+ * 已添加项打勾置灰；空列表提示继续手填。
+ */
+@Composable
+internal fun FetchModelsDialog(
+    models: List<String>,
+    addedIds: Set<String>,
+    onAdd: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.ai_provider_fetch_models_title)) },
+        text = {
+            if (models.isEmpty()) {
+                Text(stringResource(R.string.ai_provider_fetch_models_empty))
+            } else {
+                LazyColumn(modifier = Modifier.heightIn(max = 360.dp)) {
+                    items(models, key = { it }) { id ->
+                        val added = id in addedIds
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable(enabled = !added) { onAdd(id) }
+                                .padding(horizontal = 8.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = id,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = if (added) MaterialTheme.colorScheme.onSurfaceVariant
+                                else MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.weight(1f)
+                            )
+                            if (added) {
+                                Icon(
+                                    imageVector = Icons.Filled.Check,
+                                    contentDescription = stringResource(
+                                        R.string.ai_provider_fetch_models_added
+                                    ),
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.action_close))
+            }
+        }
+    )
+}
+
+/**
+ * 输入法遮挡校正（B1 补丁，对齐编辑页「键盘可见期间逐帧校正」先例）：
+ * 字段聚焦期间随 IME 弹出 / 高度变化主动 bringIntoView（由外层 LazyColumn 滚动响应）；
+ * 键盘未弹出或未聚焦时不介入，不干扰正常滚动浏览。
+ */
+internal fun Modifier.imeReveal(): Modifier = composed {
+    val requester = remember { BringIntoViewRequester() }
+    var focused by remember { mutableStateOf(false) }
+    val imeVisible = WindowInsets.isImeVisible
+    val imeBottom = WindowInsets.ime.getBottom(LocalDensity.current)
+    LaunchedEffect(focused, imeVisible, imeBottom) {
+        if (focused && imeVisible) requester.bringIntoView()
+    }
+    this.onFocusChanged { focused = it.isFocused }.bringIntoViewRequester(requester)
 }
 
 /** 协议显示名（表单选择与列表徽标共用）。 */

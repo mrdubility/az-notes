@@ -254,6 +254,11 @@
     <string name="ai_provider_remove_model">Remove model</string>
     <string name="ai_provider_no_models">No models configured</string>
     <string name="ai_provider_model_count">%1$d model(s)</string>
+    <string name="ai_provider_fetch_models">Fetch models</string>
+    <string name="ai_provider_fetching_models">Fetching…</string>
+    <string name="ai_provider_fetch_models_title">Select models to add</string>
+    <string name="ai_provider_fetch_models_added">Added</string>
+    <string name="ai_provider_fetch_models_empty">The server returned no model list - enter model IDs manually</string>
     <string name="ai_provider_test">Test connection</string>
     <string name="ai_provider_testing">Testing…</string>
     <string name="ai_provider_test_ok">Connected successfully</string>
@@ -283,6 +288,38 @@
     <string name="ai_preset_kimi">Kimi (Moonshot)</string>
     <string name="ai_preset_glm">Zhipu GLM</string>
     <string name="ai_preset_ollama">Ollama (local)</string>
+
+    <!-- AI chat (B2: single-turn streaming; drawer entry) -->
+    <string name="ai_chat_title">AI Chat</string>
+    <string name="ai_chat_new_session">New chat</string>
+    <string name="ai_chat_new_session_message">Starting a new chat will clear the current conversation. This cannot be undone.</string>
+    <string name="ai_chat_clear">Clear</string>
+    <string name="ai_chat_no_model">No model configured</string>
+    <string name="ai_chat_no_provider">No AI provider configured yet. Add a provider and model first.</string>
+    <string name="ai_chat_go_provider">Configure provider</string>
+    <string name="ai_chat_welcome_title">Hi, I\'m your Az Notes assistant</string>
+    <string name="ai_chat_welcome_hint">Ask me anything. Vault browsing and document Q&amp;A are coming in a later version.</string>
+    <string name="ai_chat_input_hint">Type a message…</string>
+    <string name="ai_chat_send">Send</string>
+    <string name="ai_chat_stop">Stop generating</string>
+    <string name="ai_chat_copy">Copy</string>
+    <string name="ai_chat_copied">Copied</string>
+    <string name="ai_chat_edit_resend">Edit &amp; resend</string>
+    <string name="ai_chat_regenerate">Regenerate</string>
+    <string name="ai_chat_reasoning">Thinking process</string>
+    <string name="ai_chat_generating">Generating…</string>
+    <string name="ai_chat_retry">Retry</string>
+    <string name="ai_chat_go_settings">Settings</string>
+    <string name="ai_chat_back_to_bottom">Back to bottom</string>
+    <string name="ai_chat_error_unauthorized">Invalid API key or no permission. Check the provider settings.</string>
+    <string name="ai_chat_error_not_found">Endpoint or model not found. Check the Base URL and model list.</string>
+    <string name="ai_chat_error_insufficient_balance">Insufficient account balance.</string>
+    <string name="ai_chat_error_rate_limited">Too many requests. Please try again later.</string>
+    <string name="ai_chat_error_server">Server error. Please try again later.</string>
+    <string name="ai_chat_error_context_overflow">Context too long. Please start a new chat.</string>
+    <string name="ai_chat_error_network">Network unavailable or connection failed. Check your network and retry.</string>
+    <string name="ai_chat_error_api">Provider error: %1$s</string>
+    <string name="ai_chat_error_unknown">Generation failed. Please retry.</string>
 
     <!-- Backup &amp; restore (Settings → Backup; export / import all config) -->
     <string name="settings_backup_section">Backup</string>

@@ -1,0 +1,395 @@
+package com.az.notes.ui.ai
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.outlined.ExpandLess
+import androidx.compose.material.icons.outlined.ExpandMore
+import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilledIconButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import com.az.notes.R
+import com.az.notes.domain.ai.ChatMessage
+import com.az.notes.domain.ai.MessageStatus
+import com.az.notes.ui.common.UiText
+import com.az.notes.ui.common.resolve
+import com.mikepenz.markdown.m3.Markdown
+import com.mikepenz.markdown.model.DefaultMarkdownAnimation
+import com.mikepenz.markdown.model.ReferenceLinkHandlerImpl
+import com.mikepenz.markdown.model.rememberMarkdownState
+import org.intellij.markdown.flavours.gfm.GFMFlavourDescriptor
+import org.intellij.markdown.parser.MarkdownParser
+
+/**
+ * 对话页组件（§9.2，B2 版）：
+ * - [UserBubble] 右对齐气泡（无头像）+ 操作行（复制 / 编辑重发）
+ * - [AssistantBlock] 思考折叠行 + Markdown 正文 + 操作行（复制 / 重新生成）+ 错误条
+ * - [ChatInputCard] 多行自增输入卡片（生成中发送变停止）
+ * - [EmptyState] 欢迎语；无供应商 / 无模型时替换为配置引导
+ * - [ErrorBar] 红条 + 重试（401/404 附「去设置」）
+ */
+
+/** 用户消息气泡（右对齐）。[busy]（生成中）时隐藏会打断当前流的操作（编辑重发）。 */
+@Composable
+internal fun UserBubble(
+    message: ChatMessage,
+    busy: Boolean,
+    onCopy: () -> Unit,
+    onEditResend: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 4.dp),
+        horizontalAlignment = Alignment.End
+    ) {
+        Surface(
+            color = MaterialTheme.colorScheme.primaryContainer,
+            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+            shape = RoundedCornerShape(16.dp),
+            modifier = Modifier.widthIn(max = 320.dp)
+        ) {
+            Text(
+                text = message.text,
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+            )
+        }
+        ChatActionRow(
+            actions = buildList {
+                add(stringResource(R.string.ai_chat_copy) to onCopy)
+                if (!busy) add(stringResource(R.string.ai_chat_edit_resend) to onEditResend)
+            }
+        )
+    }
+}
+
+/**
+ * AI 消息块（无头像）：思考折叠行 + Markdown 正文 + 操作行 + 错误条。
+ * 思考默认展开 =「reasoning 非空且正文为空且流式中」；首个正文 delta 到达自然折叠；
+ * 用户手动 toggle 后以其选择为准（remember(message.id)）。
+ */
+@Composable
+internal fun AssistantBlock(
+    message: ChatMessage,
+    error: ChatErrorState?,
+    busy: Boolean,
+    onCopy: () -> Unit,
+    onRegenerate: () -> Unit,
+    onRetry: () -> Unit,
+    onOpenSettings: () -> Unit
+) {
+    val reasoning = message.reasoning
+    val streaming = message.status == MessageStatus.STREAMING
+    val hasText = message.text.isNotEmpty()
+
+    var userChoice by remember(message.id) { mutableStateOf<Boolean?>(null) }
+    val reasoningExpanded = userChoice
+        ?: (streaming && !hasText && !reasoning.isNullOrEmpty())
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 4.dp),
+        horizontalAlignment = Alignment.Start
+    ) {
+        if (!reasoning.isNullOrEmpty()) {
+            ReasoningSection(
+                reasoning = reasoning,
+                expanded = reasoningExpanded,
+                onToggle = { userChoice = !reasoningExpanded }
+            )
+            Spacer(Modifier.height(6.dp))
+        }
+
+        when {
+            hasText -> ChatMarkdown(text = message.text)
+
+            streaming && reasoning.isNullOrEmpty() -> Row(verticalAlignment = Alignment.CenterVertically) {
+                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = stringResource(R.string.ai_chat_generating),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
+        // 错误条：仅错误消息本人展示（关联 id 校验，防截断后残留）
+        if (message.status == MessageStatus.ERROR && error != null && error.messageId == message.id) {
+            Spacer(Modifier.height(4.dp))
+            ErrorBar(
+                text = error.text,
+                showSettings = error.showSettings,
+                onRetry = onRetry,
+                onOpenSettings = onOpenSettings
+            )
+        }
+
+        // 操作行：流结束后展示（复制 / 重新生成；错误条另含重试）
+        if (hasText && !streaming) {
+            ChatActionRow(
+                actions = buildList {
+                    add(stringResource(R.string.ai_chat_copy) to onCopy)
+                    if (!busy) add(stringResource(R.string.ai_chat_regenerate) to onRegenerate)
+                }
+            )
+        }
+    }
+}
+
+/** 正文 Markdown（mikepenz，流式中未闭合标记由库容错；关闭尺寸动画避免流式抖动）。 */
+@Composable
+private fun ChatMarkdown(text: String) {
+    // 解析链实例显式稳定化：默认参数在重组时会新建实例导致反复重新解析（对齐预览页先例）
+    val flavour = remember { GFMFlavourDescriptor() }
+    val parser = remember(flavour) { MarkdownParser(flavour) }
+    val linkHandler = remember { ReferenceLinkHandlerImpl() }
+    val staticAnimations = remember { DefaultMarkdownAnimation(animateTextSize = { this }) }
+    val markdownState = rememberMarkdownState(
+        content = text,
+        flavour = flavour,
+        parser = parser,
+        referenceLinkHandler = linkHandler
+    )
+    Markdown(
+        markdownState = markdownState,
+        modifier = Modifier.fillMaxWidth(),
+        animations = staticAnimations
+    )
+}
+
+/** 思考折叠行（不计时；仅本地展示——不回传、不导出）。 */
+@Composable
+private fun ReasoningSection(
+    reasoning: String,
+    expanded: Boolean,
+    onToggle: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f))
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onToggle)
+                .padding(horizontal = 8.dp, vertical = 6.dp)
+        ) {
+            Text(
+                text = stringResource(R.string.ai_chat_reasoning),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Icon(
+                imageVector = if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        if (expanded) {
+            Text(
+                text = reasoning,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 8.dp, end = 8.dp, bottom = 8.dp)
+            )
+        }
+    }
+}
+
+/** 错误条：红底 + 文案 + 重试；配置类错误（401/404）附「去设置」。 */
+@Composable
+internal fun ErrorBar(
+    text: UiText,
+    showSettings: Boolean,
+    onRetry: () -> Unit,
+    onOpenSettings: () -> Unit
+) {
+    Surface(
+        color = MaterialTheme.colorScheme.errorContainer,
+        contentColor = MaterialTheme.colorScheme.onErrorContainer,
+        shape = RoundedCornerShape(8.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(start = 10.dp, end = 4.dp, top = 2.dp, bottom = 2.dp)
+        ) {
+            Text(
+                text = text.resolve(),
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.weight(1f)
+            )
+            TextButton(
+                onClick = onRetry,
+                contentPadding = PaddingValues(horizontal = 8.dp)
+            ) {
+                Text(stringResource(R.string.ai_chat_retry), style = MaterialTheme.typography.labelMedium)
+            }
+            if (showSettings) {
+                TextButton(
+                    onClick = onOpenSettings,
+                    contentPadding = PaddingValues(horizontal = 8.dp)
+                ) {
+                    Text(
+                        stringResource(R.string.ai_chat_go_settings),
+                        style = MaterialTheme.typography.labelMedium
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** 紧凑操作行：小号文字按钮（复制 / 编辑重发 / 重新生成）。 */
+@Composable
+private fun ChatActionRow(actions: List<Pair<String, () -> Unit>>) {
+    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        actions.forEach { (label, action) ->
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(6.dp))
+                    .clickable(onClick = action)
+                    .padding(horizontal = 8.dp, vertical = 4.dp)
+            )
+        }
+    }
+}
+
+/** 输入卡片：多行自增；生成中发送按钮变停止。 */
+@Composable
+internal fun ChatInputCard(
+    value: String,
+    onValueChange: (String) -> Unit,
+    generating: Boolean,
+    canSend: Boolean,
+    onSend: () -> Unit,
+    onStop: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(24.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+    ) {
+        Row(
+            verticalAlignment = Alignment.Bottom,
+            modifier = Modifier.padding(start = 16.dp, end = 6.dp, top = 2.dp, bottom = 6.dp)
+        ) {
+            TextField(
+                value = value,
+                onValueChange = onValueChange,
+                modifier = Modifier.weight(1f),
+                placeholder = { Text(stringResource(R.string.ai_chat_input_hint)) },
+                maxLines = 6,
+                textStyle = MaterialTheme.typography.bodyMedium,
+                colors = TextFieldDefaults.colors(
+                    focusedContainerColor = Color.Transparent,
+                    unfocusedContainerColor = Color.Transparent,
+                    disabledContainerColor = Color.Transparent,
+                    focusedIndicatorColor = Color.Transparent,
+                    unfocusedIndicatorColor = Color.Transparent,
+                    disabledIndicatorColor = Color.Transparent
+                )
+            )
+            FilledIconButton(
+                onClick = if (generating) onStop else onSend,
+                enabled = generating || (canSend && value.isNotBlank()),
+                modifier = Modifier.size(40.dp)
+            ) {
+                if (generating) {
+                    Icon(Icons.Filled.Stop, stringResource(R.string.ai_chat_stop))
+                } else {
+                    Icon(Icons.AutoMirrored.Filled.Send, stringResource(R.string.ai_chat_send))
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 空态：欢迎语；无供应商 / 无模型（[hasSelection] = false 且已回流完成）时
+ * 替换为配置引导（直达供应商管理页）。
+ */
+@Composable
+internal fun EmptyState(
+    loaded: Boolean,
+    hasSelection: Boolean,
+    onOpenProviders: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(32.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        if (loaded && !hasSelection) {
+            Text(
+                text = stringResource(R.string.ai_chat_no_provider),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center
+            )
+            Spacer(Modifier.height(16.dp))
+            Button(onClick = onOpenProviders) {
+                Text(stringResource(R.string.ai_chat_go_provider))
+            }
+        } else {
+            Text(
+                text = stringResource(R.string.ai_chat_welcome_title),
+                style = MaterialTheme.typography.titleMedium
+            )
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = stringResource(R.string.ai_chat_welcome_hint),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center
+            )
+        }
+    }
+}

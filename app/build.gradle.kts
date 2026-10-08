@@ -53,6 +53,10 @@ android {
         // 构建 commit（短哈希）：排障时与 Actions 运行号核对「装的是哪版包」
         buildConfigField("String", "BUILD_COMMIT", "\"$buildCommit\"")
 
+        // 应用显示名（launcher / 最近任务）：默认引用 strings 资源；
+        // debug 覆写为带 Debug 后缀（见 buildTypes.debug），与正式版共存时便于区分
+        manifestPlaceholders["appLabel"] = "@string/app_name"
+
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -62,6 +66,8 @@ android {
             // 独立包名 .debug + 内置调试密钥签名：与正式版共存安装、互不覆盖
             applicationIdSuffix = ".debug"
             versionNameSuffix = "-debug"
+            // 应用名加 Debug 后缀：桌面图标 / 最近任务与正式版一眼区分
+            manifestPlaceholders["appLabel"] = "Az Notes Debug"
         }
         release {
             // 先不混淆，避免反射/序列化被裁剪（后续评估 R8）；

@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.RestoreFromTrash
 import androidx.compose.material.icons.outlined.Settings
@@ -32,6 +33,7 @@ internal fun DrawerContent(
     vaultPath: String?,
     /** 回收站开关：关闭时隐藏入口（删除即物理删除） */
     trashEnabled: Boolean,
+    onOpenAiChat: () -> Unit,
     onFavorites: () -> Unit,
     onGallery: () -> Unit,
     onTrash: () -> Unit,
@@ -66,6 +68,13 @@ internal fun DrawerContent(
         Spacer(Modifier.height(8.dp))
         HorizontalDivider()
         Spacer(Modifier.height(8.dp))
+        NavigationDrawerItem(
+            label = { Text(stringResource(R.string.ai_chat_title)) },
+            icon = { Icon(Icons.Outlined.ChatBubbleOutline, null) },
+            selected = false,
+            onClick = onOpenAiChat,
+            modifier = Modifier.padding(horizontal = 12.dp)
+        )
         NavigationDrawerItem(
             label = { Text(stringResource(R.string.fav_title)) },
             icon = { Icon(Icons.Outlined.Star, null) },

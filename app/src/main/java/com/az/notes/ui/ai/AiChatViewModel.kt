@@ -1,0 +1,351 @@
+package com.az.notes.ui.ai
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.az.notes.R
+import com.az.notes.data.ai.AiChatSession
+import com.az.notes.data.ai.AiProviderRepository
+import com.az.notes.data.ai.ChatEngine
+import com.az.notes.domain.ai.AiError
+import com.az.notes.domain.ai.AiModel
+import com.az.notes.domain.ai.AiProvider
+import com.az.notes.domain.ai.ChatMessage
+import com.az.notes.domain.ai.ChatPart
+import com.az.notes.domain.ai.ChatRole
+import com.az.notes.domain.ai.MessageStatus
+import com.az.notes.domain.ai.StreamEvent
+import com.az.notes.ui.common.UiText
+import dagger.hilt.android.lifecycle.HiltViewModel
+import java.util.UUID
+import javax.inject.Inject
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+
+/** 当前选择的「供应商 + 模型」（id 引用；显示与请求时按 providers 列表解析）。 */
+data class ChatSelection(val providerId: String, val modelId: String)
+
+/** 错误条状态：关联消息 id + 本地化文案 + 是否附「去设置」（401/404 配置类错误）。 */
+data class ChatErrorState(val messageId: String, val text: UiText, val showSettings: Boolean)
+
+/**
+ * 对话页 ViewModel（B2 单轮流式）：
+ * - 会话消息由 [AiChatSession]（@Singleton 内存态）透出：退出页面重进保留，杀进程即丢
+ * - 发送管线：追加 USER + ASSISTANT(STREAMING) → ChatEngine.stream → TextDelta 50ms 节流合并
+ *   → MessageStop → COMPLETE；Failure → ERROR（错误条）；stop → CANCELED（空内容移除）
+ * - 历史组装由 ChatEngine 完成（仅 COMPLETE / CANCELED 参与，ERROR 排除）
+ * - 模型选择：默认按供应商 lastModelId 恢复；切换即写回记忆（repository.update）
+ */
+@HiltViewModel
+class AiChatViewModel @Inject constructor(
+    private val repository: AiProviderRepository,
+    private val session: AiChatSession,
+    private val engine: ChatEngine
+) : ViewModel() {
+
+    /** 会话消息（内存态；退出页面重进保留）。 */
+    val messages: StateFlow<List<ChatMessage>> = session.messages
+
+    /** 供应商列表（模型选择菜单数据源）。 */
+    val providers: StateFlow<List<AiProvider>> = repository.providers
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** 首次回流完成（避免「无供应商」引导在数据到达前一闪而过）。 */
+    private val _loaded = MutableStateFlow(false)
+    val loaded: StateFlow<Boolean> = _loaded.asStateFlow()
+
+    /** 输入框文本（编辑重发需回填，故由 VM 持有）。 */
+    private val _input = MutableStateFlow("")
+    val input: StateFlow<String> = _input.asStateFlow()
+
+    /** 生成中（发送按钮变停止）。 */
+    private val _generating = MutableStateFlow(false)
+    val generating: StateFlow<Boolean> = _generating.asStateFlow()
+
+    /** 当前选择（null = 无可用供应商 / 模型 → 空态显示配置引导）。 */
+    private val _selection = MutableStateFlow<ChatSelection?>(null)
+    val selection: StateFlow<ChatSelection?> = _selection.asStateFlow()
+
+    /** 当前错误条（null = 无；生成失败时指向对应 AI 消息）。 */
+    private val _error = MutableStateFlow<ChatErrorState?>(null)
+    val error: StateFlow<ChatErrorState?> = _error.asStateFlow()
+
+    /** 新会话二次确认（有消息时点 ⊕ 弹出）。 */
+    private val _showNewSessionConfirm = MutableStateFlow(false)
+    val showNewSessionConfirm: StateFlow<Boolean> = _showNewSessionConfirm.asStateFlow()
+
+    private var streamJob: Job? = null
+
+    /** 流式中的 AI 消息 id（onCleared 兜底收尾用）。 */
+    private var streamingMessageId: String? = null
+
+    init {
+        viewModelScope.launch {
+            val list = repository.providers.first()
+            _selection.value = defaultSelection(list)
+            _loaded.value = true
+            // 重进恢复：末尾为 ERROR 消息时用通用文案恢复错误条（保留重试能力）
+            val last = session.messages.value.lastOrNull()
+            if (last != null && last.status == MessageStatus.ERROR) {
+                _error.value = ChatErrorState(
+                    messageId = last.id,
+                    text = UiText.of(R.string.ai_chat_error_unknown),
+                    showSettings = false
+                )
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------- 输入与发送
+
+    fun setInput(value: String) {
+        _input.value = value
+    }
+
+    /** 发送：追加用户消息 → 开启一条新的 AI 流式消息。 */
+    fun send() {
+        if (_generating.value) return
+        val text = _input.value.trim()
+        if (text.isEmpty()) return
+        val provider = currentProvider() ?: return
+        val model = currentModel(provider) ?: return
+        _input.value = ""
+        _error.value = null
+        session.append(
+            ChatMessage(
+                id = UUID.randomUUID().toString(),
+                role = ChatRole.USER,
+                parts = listOf(ChatPart.Text(text)),
+                status = MessageStatus.COMPLETE,
+                timestamp = System.currentTimeMillis()
+            )
+        )
+        launchStream(provider, model)
+    }
+
+    /** 停止生成：取消流协程；收尾（flush / 置 CANCELED / 空内容移除）在协程取消路径完成。 */
+    fun stop() {
+        if (!_generating.value) return
+        streamJob?.cancel()
+    }
+
+    /** 重新生成（错误条「重试」与操作行「重新生成」共用）：截断该 AI 条及之后重发。 */
+    fun regenerate(messageId: String) {
+        if (_generating.value) return
+        val message = session.messages.value.firstOrNull { it.id == messageId } ?: return
+        if (message.role != ChatRole.ASSISTANT) return
+        val provider = currentProvider() ?: return
+        val model = currentModel(provider) ?: return
+        session.truncateFrom(messageId)
+        _error.value = null
+        launchStream(provider, model)
+    }
+
+    /** 编辑重发：回填输入框并截断该用户条及之后（用户改完自行发送）。 */
+    fun editResend(messageId: String) {
+        if (_generating.value) return
+        val message = session.messages.value.firstOrNull { it.id == messageId } ?: return
+        if (message.role != ChatRole.USER) return
+        _input.value = message.text
+        session.truncateFrom(messageId)
+        _error.value = null
+    }
+
+    // ---------------------------------------------------------------- 会话与模型
+
+    /** ⊕ 新会话：有消息时弹二次确认（空会话无需确认）。 */
+    fun requestNewSession() {
+        if (session.messages.value.isEmpty()) return
+        _showNewSessionConfirm.value = true
+    }
+
+    fun confirmNewSession() {
+        _showNewSessionConfirm.value = false
+        stop()
+        session.clear()
+        _error.value = null
+    }
+
+    fun dismissNewSession() {
+        _showNewSessionConfirm.value = false
+    }
+
+    /** 切换模型：更新选择并写回供应商 lastModelId（下次进入恢复）。 */
+    fun switchModel(providerId: String, modelId: String) {
+        val provider = providers.value.firstOrNull { it.id == providerId } ?: return
+        if (provider.models.none { it.id == modelId }) return
+        _selection.value = ChatSelection(providerId, modelId)
+        viewModelScope.launch {
+            repository.update(providerId) { it.copy(lastModelId = modelId) }
+        }
+    }
+
+    // ---------------------------------------------------------------- 流式管线
+
+    /** 追加 AI 流式消息并启动生成。 */
+    private fun launchStream(provider: AiProvider, model: AiModel) {
+        val assistantId = UUID.randomUUID().toString()
+        session.append(
+            ChatMessage(
+                id = assistantId,
+                role = ChatRole.ASSISTANT,
+                parts = emptyList(),
+                status = MessageStatus.STREAMING,
+                timestamp = System.currentTimeMillis(),
+                modelLabel = "${provider.name} · ${model.label}"
+            )
+        )
+        streamingMessageId = assistantId
+        _generating.value = true
+        streamJob = viewModelScope.launch { runStream(provider, model, assistantId) }
+    }
+
+    /**
+     * 流式收集：TextDelta / ReasoningDelta 写入缓冲，由 50ms ticker 合并更新
+     * （§9.3 流式渲染节流）；流结束 / 取消 / 失败前强制 flush。
+     */
+    private suspend fun runStream(provider: AiProvider, model: AiModel, assistantId: String) =
+        coroutineScope {
+            val textBuffer = StringBuilder()
+            val reasoningBuffer = StringBuilder()
+            var textDirty = false
+            var reasoningDirty = false
+            var failure: AiError? = null
+
+            fun flush() {
+                if (!textDirty && !reasoningDirty) return
+                textDirty = false
+                reasoningDirty = false
+                val text = textBuffer.toString()
+                val reasoning = reasoningBuffer.toString().ifEmpty { null }
+                session.updateMessage(assistantId) {
+                    it.copy(parts = listOf(ChatPart.Text(text)), reasoning = reasoning)
+                }
+            }
+
+            val ticker = launch {
+                while (isActive) {
+                    delay(STREAM_FLUSH_INTERVAL_MS)
+                    flush()
+                }
+            }
+            try {
+                engine.stream(provider, model, session.messages.value).collect { event ->
+                    when (event) {
+                        is StreamEvent.TextDelta -> {
+                            textBuffer.append(event.text)
+                            textDirty = true
+                        }
+
+                        is StreamEvent.ReasoningDelta -> {
+                            reasoningBuffer.append(event.text)
+                            reasoningDirty = true
+                        }
+
+                        is StreamEvent.Failure -> failure = event.error
+
+                        // 终态事件：状态流转在流结束后统一处理
+                        StreamEvent.MessageStop -> Unit
+
+                        // B3 工具循环接入；本批不产生
+                        is StreamEvent.ToolCallRequested -> Unit
+                    }
+                }
+                flush()
+                val error = failure
+                if (error == null) {
+                    session.updateMessage(assistantId) { it.copy(status = MessageStatus.COMPLETE) }
+                } else {
+                    session.updateMessage(assistantId) { it.copy(status = MessageStatus.ERROR) }
+                    val (text, showSettings) = errorDisplay(error)
+                    _error.value = ChatErrorState(assistantId, text, showSettings)
+                }
+            } catch (e: CancellationException) {
+                flush()
+                finalizeCanceled(assistantId)
+                throw e
+            } catch (e: Exception) {
+                flush()
+                session.updateMessage(assistantId) { it.copy(status = MessageStatus.ERROR) }
+                _error.value = ChatErrorState(
+                    messageId = assistantId,
+                    text = UiText.of(R.string.ai_chat_error_unknown),
+                    showSettings = false
+                )
+            } finally {
+                ticker.cancel()
+                _generating.value = false
+                streamingMessageId = null
+            }
+        }
+
+    /** 取消收尾：有内容 → CANCELED；完全为空（正文与思考都无）→ 移除气泡。 */
+    private fun finalizeCanceled(messageId: String) {
+        val message = session.messages.value.firstOrNull { it.id == messageId } ?: return
+        if (message.text.isEmpty() && message.reasoning.isNullOrEmpty()) {
+            session.removeMessage(messageId)
+        } else {
+            session.updateMessage(messageId) { it.copy(status = MessageStatus.CANCELED) }
+        }
+    }
+
+    override fun onCleared() {
+        // 生成中退出：viewModelScope 取消 → runStream 取消路径完成收尾；
+        // 此处兜底（协程未及收尾时），按当前内容置 CANCELED / 移除空消息。
+        val id = streamingMessageId
+        if (id != null &&
+            session.messages.value.any { it.id == id && it.status == MessageStatus.STREAMING }
+        ) {
+            finalizeCanceled(id)
+        }
+    }
+
+    // ---------------------------------------------------------------- 内部
+
+    /** 默认选择：首个有模型的供应商；模型优先该供应商的 lastModelId，否则第一个。 */
+    private fun defaultSelection(list: List<AiProvider>): ChatSelection? {
+        val provider = list.firstOrNull { it.models.isNotEmpty() } ?: return null
+        val model = provider.models.firstOrNull { it.id == provider.lastModelId }
+            ?: provider.models.first()
+        return ChatSelection(provider.id, model.id)
+    }
+
+    private fun currentProvider(): AiProvider? {
+        val ref = _selection.value ?: return null
+        return providers.value.firstOrNull { it.id == ref.providerId }
+    }
+
+    private fun currentModel(provider: AiProvider): AiModel? {
+        val ref = _selection.value ?: return null
+        return provider.models.firstOrNull { it.id == ref.modelId }
+    }
+
+    companion object {
+        /** 流式渲染节流窗口（§9.3：50ms 缓冲合并后再更新 StateFlow）。 */
+        private const val STREAM_FLUSH_INTERVAL_MS = 50L
+
+        /** AiError → 错误条文案 + 是否附「去设置」（§4.4 / §9.3：401/404 为配置类错误）。 */
+        fun errorDisplay(error: AiError): Pair<UiText, Boolean> = when (error) {
+            AiError.Unauthorized -> UiText.of(R.string.ai_chat_error_unauthorized) to true
+            AiError.NotFound -> UiText.of(R.string.ai_chat_error_not_found) to true
+            AiError.InsufficientBalance ->
+                UiText.of(R.string.ai_chat_error_insufficient_balance) to false
+
+            AiError.RateLimited -> UiText.of(R.string.ai_chat_error_rate_limited) to false
+            AiError.Server -> UiText.of(R.string.ai_chat_error_server) to false
+            AiError.ContextOverflow -> UiText.of(R.string.ai_chat_error_context_overflow) to false
+            AiError.Network -> UiText.of(R.string.ai_chat_error_network) to false
+            is AiError.Api -> UiText.of(R.string.ai_chat_error_api, error.message) to false
+            AiError.Unknown -> UiText.of(R.string.ai_chat_error_unknown) to false
+        }
+    }
+}

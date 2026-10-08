@@ -4,8 +4,10 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -63,6 +65,8 @@ fun AiProviderScreen(
     val draft by viewModel.draft.collectAsStateWithLifecycle()
     val testing by viewModel.testing.collectAsStateWithLifecycle()
     val testResult by viewModel.testResult.collectAsStateWithLifecycle()
+    val fetchingModels by viewModel.fetchingModels.collectAsStateWithLifecycle()
+    val modelOptions by viewModel.modelOptions.collectAsStateWithLifecycle()
     val saving by viewModel.saving.collectAsStateWithLifecycle()
     val message by viewModel.message.collectAsStateWithLifecycle()
 
@@ -120,6 +124,7 @@ fun AiProviderScreen(
                 draft = currentDraft,
                 testing = testing,
                 testResult = testResult,
+                fetchingModels = fetchingModels,
                 saving = saving,
                 contentPadding = inner
             )
@@ -140,6 +145,16 @@ fun AiProviderScreen(
                 contentPadding = inner
             )
         }
+    }
+
+    // 获取模型候选列表（B1 补丁）：点击即添加；关闭时清空
+    modelOptions?.let { options ->
+        FetchModelsDialog(
+            models = options,
+            addedIds = currentDraft?.models?.map { it.id.trim() }?.toSet().orEmpty(),
+            onAdd = viewModel::addFetchedModel,
+            onDismiss = viewModel::dismissModelOptions
+        )
     }
 
     // 删除确认：Key 一并删除，需二次确认
@@ -214,6 +229,7 @@ private fun ProviderForm(
     draft: ProviderDraft,
     testing: Boolean,
     testResult: AiTestResult?,
+    fetchingModels: Boolean,
     saving: Boolean,
     contentPadding: PaddingValues
 ) {
@@ -221,7 +237,12 @@ private fun ProviderForm(
     var keyVisible by remember { mutableStateOf(false) }
 
     LazyColumn(
-        modifier = Modifier.fillMaxSize().padding(contentPadding).padding(horizontal = 16.dp),
+        // imePadding：键盘弹出时收缩列表视口（对齐编辑页先例）；配合 imeReveal 校正聚焦字段
+        modifier = Modifier
+            .fillMaxSize()
+            .imePadding()
+            .padding(contentPadding)
+            .padding(horizontal = 16.dp),
         contentPadding = PaddingValues(bottom = 32.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
@@ -231,7 +252,7 @@ private fun ProviderForm(
                 onValueChange = viewModel::setDraftName,
                 label = { Text(stringResource(R.string.ai_provider_name)) },
                 singleLine = true,
-                modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
+                modifier = Modifier.fillMaxWidth().padding(top = 4.dp).imeReveal()
             )
         }
         item {
@@ -243,7 +264,7 @@ private fun ProviderForm(
                 onValueChange = viewModel::setDraftBaseUrl,
                 label = { Text(stringResource(R.string.ai_provider_base_url)) },
                 singleLine = true,
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth().imeReveal()
             )
         }
         // 明文传输提醒（本地 Ollama 等场景可接受，仅提示不阻断）
@@ -280,18 +301,24 @@ private fun ProviderForm(
                 supportingText = if (draft.keyPresent) {
                     { Text(stringResource(R.string.ai_provider_key_saved_hint)) }
                 } else null,
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth().imeReveal()
             )
         }
         item {
             ConnectionTestRow(testing = testing, result = testResult, onTest = viewModel::testDraft)
         }
         item {
-            Text(
-                text = stringResource(R.string.ai_provider_models),
-                style = MaterialTheme.typography.titleSmall,
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.padding(top = 8.dp)
-            )
+            ) {
+                Text(
+                    text = stringResource(R.string.ai_provider_models),
+                    style = MaterialTheme.typography.titleSmall,
+                    modifier = Modifier.weight(1f)
+                )
+                FetchModelsButton(fetching = fetchingModels, onClick = viewModel::fetchDraftModels)
+            }
         }
         items(draft.models, key = { it.uid }) { model ->
             ModelEditRow(
