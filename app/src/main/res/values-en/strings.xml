@@ -42,8 +42,8 @@
     <string name="rename_hint">Name</string>
     <string name="delete_note_message">\"%1$s\" will be moved to Trash and can be restored anytime.</string>
     <string name="delete_folder_message">Folder "%1$s" and its contents will be moved to Trash and can be restored anytime.</string>
-    <string name="delete_note_attachments">This note references %1$d attachment(s), %2$d of which are referenced only by this note.</string>
-    <string name="delete_note_trash_attachments">Also move attachments referenced only by this note to Trash</string>
+    <string name="delete_note_attachments">This note references %1$d image(s), %2$d of which are referenced only by this note.</string>
+    <string name="delete_note_trash_attachments">Also move images referenced only by this note to Trash</string>
     <string name="sort_by">Sort by</string>
     <string name="sort_modified_desc">Last modified (new → old)</string>
     <string name="sort_modified_asc">Last modified (old → new)</string>
@@ -130,8 +130,8 @@
     <string name="editor_move">Move to folder</string>
     <string name="editor_moved_to">Moved to "%1$s"</string>
     <string name="editor_moved_to_root">Moved to vault root</string>
-    <string name="editor_move_attachments_failed">Note moved, but some attachments could not be copied to the target vault</string>
-    <string name="editor_move_attachments_not_followed">Note moved; adjacent attachments did not follow. To move them too, move the entire folder.</string>
+    <string name="editor_move_attachments_failed">Note moved, but some images could not be copied to the target vault</string>
+    <string name="editor_move_attachments_not_followed">Note moved; adjacent images did not follow. To move them too, move the entire folder.</string>
     <string name="editor_tool_undo">Undo</string>
     <string name="editor_tool_redo">Redo</string>
     <string name="editor_tool_bold">Bold</string>
@@ -218,12 +218,12 @@
     <string name="settings_about_version">Version %1$s · Tap for debug logs</string>
     <string name="settings_about_github">GitHub repository</string>
 
-    <!-- Images (import compression / attachment prompt / network image guard) -->
+    <!-- Images (import compression / reference stats / network image guard) -->
     <string name="settings_image_section">Images</string>
     <string name="settings_image_compress">Compress imported images</string>
     <string name="settings_image_compress_subtitle">Fixed: longest edge 1568 · JPEG quality 80</string>
-    <string name="settings_image_attachment_prompt">Prompt about attachments on delete/move</string>
-    <string name="settings_image_attachment_prompt_subtitle">Count referenced attachments when deleting or moving a note</string>
+    <string name="settings_image_attachment_prompt">Prompt about images on delete/move</string>
+    <string name="settings_image_attachment_prompt_subtitle">Count referenced images when deleting or moving a note</string>
     <string name="settings_image_remote_max">Remote image size limit (MB)</string>
     <string name="settings_image_remote_max_zero">Disabled (network images not loaded)</string>
     <string name="settings_image_remote_max_value">%1$d MB</string>

@@ -36,8 +36,8 @@ internal fun DeleteDialog(
     onDismiss: () -> Unit,
     onConfirm: (alsoTrashAttachments: Boolean) -> Unit
 ) {
-    // 仅当存在「只被本文引用」的附件时才允许勾选联动清理
-    var trashAttachments by remember { mutableStateOf(false) }
+    // 仅当存在「只被本文引用」的图片时才允许勾选联动清理；默认勾选，删除笔记时一并清理独占图片
+    var trashAttachments by remember { mutableStateOf(true) }
     val hasExclusive = referenced?.hasExclusive == true
     AlertDialog(
         onDismissRequest = onDismiss,

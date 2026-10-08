@@ -42,8 +42,8 @@
     <string name="rename_hint">名称</string>
     <string name="delete_note_message">将把「%1$s」移入回收站，可随时恢复。</string>
     <string name="delete_folder_message">将把文件夹「%1$s」及其内容移入回收站，可随时恢复。</string>
-    <string name="delete_note_attachments">本文引用 %1$d 张附件，其中 %2$d 张仅被本文引用。</string>
-    <string name="delete_note_trash_attachments">同时把仅本文引用的附件移入回收站</string>
+    <string name="delete_note_attachments">本文引用 %1$d 张图片，其中 %2$d 张仅被本文引用。</string>
+    <string name="delete_note_trash_attachments">同时把仅本文引用的图片移入回收站</string>
     <string name="sort_by">排序方式</string>
     <string name="sort_modified_desc">修改时间（新 → 旧）</string>
     <string name="sort_modified_asc">修改时间（旧 → 新）</string>
@@ -130,8 +130,8 @@
     <string name="editor_move">移动到文件夹</string>
     <string name="editor_moved_to">已移动到「%1$s」</string>
     <string name="editor_moved_to_root">已移动到根目录</string>
-    <string name="editor_move_attachments_failed">笔记已移动，但部分附件未能跟随复制到目标仓库</string>
-    <string name="editor_move_attachments_not_followed">笔记已移动；相邻的附件未跟随，如需一并移动请移动整个目录</string>
+    <string name="editor_move_attachments_failed">笔记已移动，但部分图片未能跟随复制到目标仓库</string>
+    <string name="editor_move_attachments_not_followed">笔记已移动；相邻的图片未跟随，如需一并移动请移动整个目录</string>
     <string name="editor_tool_undo">撤销</string>
     <string name="editor_tool_redo">重做</string>
     <string name="editor_tool_bold">粗体</string>
@@ -218,12 +218,12 @@
     <string name="settings_about_version">当前版本 %1$s · 点按进入调试日志</string>
     <string name="settings_about_github">GitHub 仓库</string>
 
-    <!-- 图片（导入压缩 / 附件引用 / 网络图片护栏 / 孤儿图片） -->
+    <!-- 图片（导入压缩 / 引用统计 / 网络图片护栏 / 孤儿图片） -->
     <string name="settings_image_section">图片</string>
     <string name="settings_image_compress">图片压缩导入</string>
     <string name="settings_image_compress_subtitle">固定参数：长边 1568 · JPEG 质量 80</string>
-    <string name="settings_image_attachment_prompt">删除/移动时提示附件</string>
-    <string name="settings_image_attachment_prompt_subtitle">删除或移动笔记时统计其引用的附件</string>
+    <string name="settings_image_attachment_prompt">删除/移动时提示图片</string>
+    <string name="settings_image_attachment_prompt_subtitle">删除或移动笔记时统计其引用的图片</string>
     <string name="settings_image_remote_max">远端图片大小上限（MB）</string>
     <string name="settings_image_remote_max_zero">已关闭（不加载网络图片）</string>
     <string name="settings_image_remote_max_value">%1$d MB</string>

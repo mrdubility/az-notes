@@ -46,9 +46,10 @@ android {
         applicationId = "com.az.notes"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
-        // versionCode 跟随 CI 运行号单调递增（保证覆盖安装成功；本地构建回退 2）
-        versionCode = buildRunNumber ?: 2
-        versionName = "1.1.0"
+        // versionCode 跟随 CI 运行号单调递增（保证覆盖安装成功；
+        // release.yml 不注入运行号，发布构建回退到 3，发版时需手动 +1）
+        versionCode = buildRunNumber ?: 3
+        versionName = "1.2.0"
         // 构建 commit（短哈希）：排障时与 Actions 运行号核对「装的是哪版包」
         buildConfigField("String", "BUILD_COMMIT", "\"$buildCommit\"")
 
