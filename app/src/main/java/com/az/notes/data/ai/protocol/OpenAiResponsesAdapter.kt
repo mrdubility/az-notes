@@ -64,8 +64,8 @@ class OpenAiResponsesAdapter @Inject constructor(
         val root = runCatching { json.parseToJsonElement(payload) as? JsonObject }.getOrNull()
             ?: return emptyList()
         return when ((root["type"] as? JsonPrimitive)?.contentOrNull) {
-            "response.output_text.delta" -> deltaEvent(root, ::StreamEvent.TextDelta)
-            "response.reasoning_summary_text.delta" -> deltaEvent(root, ::StreamEvent.ReasoningDelta)
+            "response.output_text.delta" -> deltaEvent(root) { StreamEvent.TextDelta(it) }
+            "response.reasoning_summary_text.delta" -> deltaEvent(root) { StreamEvent.ReasoningDelta(it) }
             "response.completed" -> listOf(StreamEvent.MessageStop)
             "response.failed" -> listOf(StreamEvent.Failure(AiError.Api(failedMessage(root))))
             "error" -> listOf(StreamEvent.Failure(AiError.Api(errorMessage(root))))

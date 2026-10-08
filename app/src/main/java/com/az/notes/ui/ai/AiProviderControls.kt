@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -482,6 +483,7 @@ internal fun FetchModelsDialog(
  * 字段聚焦期间随 IME 弹出 / 高度变化主动 bringIntoView（由外层 LazyColumn 滚动响应）；
  * 键盘未弹出或未聚焦时不介入，不干扰正常滚动浏览。
  */
+@OptIn(ExperimentalLayoutApi::class)
 internal fun Modifier.imeReveal(): Modifier = composed {
     val requester = remember { BringIntoViewRequester() }
     var focused by remember { mutableStateOf(false) }
