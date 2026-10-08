@@ -50,9 +50,15 @@ class MainActivity : ComponentActivity() {
         }
         super.onCreate(savedInstanceState)
 
-        // 仅在全新启动时处理分享 intent：配置变化 / 进程重建时 savedInstanceState 非空，
-        // 跳过可避免分享内容重放（重复建笔记并跳进编辑页）
-        if (savedInstanceState == null) handleShareIntent(intent)
+        // 仅在「真正的新启动」时处理分享 intent，避免 task 启动 intent 被重放：
+        // 1) 配置变化 / 进程重建：savedInstanceState 非空 → 跳过；
+        // 2) 从最近任务恢复：系统重放 task 的启动 intent（如原始 SEND）并附
+        //    FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY——分享新建笔记后退出、再从最近
+        //    任务进入会重复建笔记，即此路径（旧实现只查 savedInstanceState，拦不住
+        //    recents 恢复的 null savedInstanceState）→ 跳过。
+        val fromHistory =
+            (intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) != 0
+        if (savedInstanceState == null && !fromHistory) handleShareIntent(intent)
 
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.auto(

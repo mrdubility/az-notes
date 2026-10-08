@@ -62,7 +62,9 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
  * 2. 网络图片（http/https/data）：先过 [NetworkImageGuard.check]（不发起请求的纯校验），
  *    通过后由受控客户端加载（见 [com.az.notes.AzNotesApp] 的 ImageLoader），
  *    加载成功后点击全屏预览（[onRemoteImageClick]，参数为规范化 URL）。
- * 3. 缺失 / 被拒 / 加载失败：以文字占位画笔 [ReasonPainter] 给出可读原因；
+ * 3. 解码完成前：以「加载中」占位画笔 [LoadingPainter] 填充占位盒（本地图携带预读尺寸，
+ *    占位盒在加载期间即为最终尺寸；远程图尺寸未知，沿用库兜底盒）。
+ * 4. 缺失 / 被拒 / 加载失败：以文字占位画笔 [ReasonPainter] 给出可读原因；
  *    网络加载失败可点击重试（计数驱动请求重建；护栏拒绝为确定性结果，不提供重试）。
  */
 class VaultImageTransformer(
@@ -84,38 +86,6 @@ class VaultImageTransformer(
         /** 远程图解码边长上限（px）。全屏预览必须复用同一尺寸：内存缓存按请求参数做 key，
          *  同 URL + 同 size 才能命中行内已解码的位图，避免预览时二次下载/解码。 */
         const val REMOTE_DECODE_EDGE = 2048
-
-        /**
-         * 预读图片像素尺寸：BitmapFactory 只解码文件头（inJustDecodeBounds），不加载位图；
-         * 再按 EXIF 方向补偿宽高——Coil 解码 JPEG 时会应用 EXIF 摆正，其上报的
-         * intrinsicSize 为摆正后尺寸，两者必须同口径，占位初值才能与最终值一致。
-         * 压缩导入的图已在编码阶段摆正（方向 NORMAL），不涉及交换；
-         * 非位图或读取失败返回 null（调用方保持原异步收敛路径）。
-         */
-        private fun readImageSizePx(file: File): Size? {
-            val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            return runCatching {
-                BitmapFactory.decodeFile(file.absolutePath, opts)
-                var w = opts.outWidth
-                var h = opts.outHeight
-                if (w <= 0 || h <= 0) return@runCatching null
-                val orientation = ExifInterface(file.absolutePath).getAttributeInt(
-                    ExifInterface.TAG_ORIENTATION,
-                    ExifInterface.ORIENTATION_NORMAL
-                )
-                when (orientation) {
-                    ExifInterface.ORIENTATION_ROTATE_90,
-                    ExifInterface.ORIENTATION_ROTATE_270,
-                    ExifInterface.ORIENTATION_TRANSPOSE,
-                    ExifInterface.ORIENTATION_TRANSVERSE -> {
-                        val t = w
-                        w = h
-                        h = t
-                    }
-                }
-                Size(w.toFloat(), h.toFloat())
-            }.getOrNull()
-        }
     }
 
     /** 网络图片失败后的重试计数（link → 次数）：点击错误占位累加，驱动请求重建 */
@@ -128,9 +98,6 @@ class VaultImageTransformer(
      * 键为弱引用：item 回收后 painter 可正常被 GC，条目随 WeakHashMap 自行清退。
      */
     private val preSizes = WeakHashMap<Painter, Size>()
-
-    /** 预读尺寸缓存（绝对路径 → 尺寸）：滑动中 item 来回重建时免去重复读文件头。 */
-    private val preSizeCache = mutableMapOf<String, Size>()
 
     @Composable
     override fun transform(link: String): ImageData? {
@@ -263,7 +230,8 @@ class VaultImageTransformer(
                 }
 
                 else -> ImageData(
-                    painter = painter,
+                    // 加载中 / 未开始：显示「加载中」占位（远程图尺寸未知，占位盒沿用库兜底）
+                    painter = loadingPainter(sizeHint = null),
                     contentDescription = link.substringAfterLast('/')
                 )
             }
@@ -290,20 +258,36 @@ class VaultImageTransformer(
         val painter = rememberAsyncImagePainter(model = request)
         // 占位一次到位：组合期同步预读像素尺寸（只读文件头）注册给 [intrinsicSize]；
         // 读取失败（null）时保持原异步收敛路径，仅该图退化为“加载完成后再定格”
-        val preSize = remember(file) { preSizeOf(file) }
+        val preSize = remember(file) { ImageSizePreload.sizeOf(file) }
         if (preSize != null) preSizes[painter] = preSize
-        return ImageData(
-            painter = painter,
-            contentDescription = file.name,
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable { onImageClick(file) }
-        )
-    }
+        val state by painter.state.collectAsState()
+        return when (state) {
+            is AsyncImagePainter.State.Loading,
+            is AsyncImagePainter.State.Empty -> ImageData(
+                // 解码未完成：显示「加载中」占位（尺寸提示=预读尺寸，占位盒即最终尺寸）
+                painter = loadingPainter(sizeHint = preSize),
+                contentDescription = file.name,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onImageClick(file) }
+            )
 
-    /** 预读本地图片尺寸（带缓存：同文件只读一次文件头；失败不缓存，避免掩盖后续变化）。 */
-    private fun preSizeOf(file: File): Size? = preSizeCache[file.absolutePath]
-        ?: readImageSizePx(file)?.also { preSizeCache[file.absolutePath] = it }
+            is AsyncImagePainter.State.Error -> ImageData(
+                // 文件存在但解码失败（损坏等）：文字占位说明，与缺失/网络失败风格一致
+                painter = reasonPainter(stringResource(R.string.reader_image_load_failed)),
+                contentDescription = file.name,
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            else -> ImageData(
+                painter = painter,
+                contentDescription = file.name,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onImageClick(file) }
+            )
+        }
+    }
 
     /**
      * 内联图片尺寸上报：渲染库（0.35.0）在 `createImageInlineTextContent` 中以
@@ -398,6 +382,20 @@ class VaultImageTransformer(
         val color = MaterialTheme.colorScheme.error
         return remember(text, measurer, color) { ReasonPainter(text, measurer, color) }
     }
+
+    /** 加载中占位画笔：浅色底 + 居中「图片加载中…」。本地图携带预读尺寸（占位盒在加载
+     *  期间即为最终尺寸，解码完成切换为真实图片时零布局变化）；远程图传 null（尺寸未知，
+     *  沿用库兜底盒）。 */
+    @Composable
+    private fun loadingPainter(sizeHint: Size?): Painter {
+        val measurer = rememberTextMeasurer()
+        val text = stringResource(R.string.reader_image_loading)
+        val textColor = MaterialTheme.colorScheme.onSurfaceVariant
+        val background = MaterialTheme.colorScheme.surfaceVariant
+        return remember(text, measurer, textColor, background, sizeHint) {
+            LoadingPainter(text, measurer, textColor, background, sizeHint ?: Size.Unspecified)
+        }
+    }
 }
 
 /** 居中的单色文字画笔：仅用于图片加载失败 / 被拒 / 缺失时的原因占位。 */
@@ -425,5 +423,74 @@ private class ReasonPainter(
             y = ((size.height - layout.size.height) / 2f).coerceAtLeast(0f)
         )
         drawText(textLayoutResult = layout, topLeft = topLeft)
+    }
+}
+
+/** 加载中占位画笔：浅色底 + 居中「图片加载中…」文字；[intrinsicSize] 为尺寸提示
+ *  （本地图=预读尺寸，库的占位盒在解码完成前即为最终尺寸；未知时为 Unspecified）。 */
+private class LoadingPainter(
+    private val text: String,
+    private val textMeasurer: TextMeasurer,
+    private val textColor: Color,
+    private val background: Color,
+    override val intrinsicSize: Size
+) : Painter() {
+
+    override fun DrawScope.onDraw() {
+        drawRect(color = background)
+        val layout = textMeasurer.measure(
+            text = AnnotatedString(text),
+            style = TextStyle(fontSize = 12.sp, color = textColor)
+        )
+        val topLeft = Offset(
+            x = ((size.width - layout.size.width) / 2f).coerceAtLeast(0f),
+            y = ((size.height - layout.size.height) / 2f).coerceAtLeast(0f)
+        )
+        drawText(textLayoutResult = layout, topLeft = topLeft)
+    }
+}
+
+/**
+ * 本地图片尺寸预读（进程内共享）：BitmapFactory 只解码文件头（inJustDecodeBounds）拿像素
+ * 尺寸，不加载位图；再按 EXIF 方向补偿宽高——Coil 解码 JPEG 时会应用 EXIF 摆正，其上报的
+ * intrinsicSize 为摆正后尺寸，两者必须同口径，占位初值才能与最终值一致。
+ * 压缩导入的图已在编码阶段摆正（方向 NORMAL），不涉及交换；非位图或读取失败返回 null
+ * （调用方保持原异步收敛路径）。
+ *
+ * 缓存按绝对路径（同文件只读一次文件头；失败不缓存，避免掩盖后续变化），
+ * 供 [VaultImageTransformer]（段落内图片占位收敛）与 [AzImageBlock]
+ * （独立图片块首帧即最终尺寸）共用。
+ */
+internal object ImageSizePreload {
+
+    private val cache = mutableMapOf<String, Size>()
+
+    /** 预读图片像素尺寸（带缓存）；读取失败返回 null。 */
+    fun sizeOf(file: File): Size? = cache[file.absolutePath]
+        ?: readImageSizePx(file)?.also { cache[file.absolutePath] = it }
+
+    private fun readImageSizePx(file: File): Size? {
+        val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        return runCatching {
+            BitmapFactory.decodeFile(file.absolutePath, opts)
+            var w = opts.outWidth
+            var h = opts.outHeight
+            if (w <= 0 || h <= 0) return@runCatching null
+            val orientation = ExifInterface(file.absolutePath).getAttributeInt(
+                ExifInterface.TAG_ORIENTATION,
+                ExifInterface.ORIENTATION_NORMAL
+            )
+            when (orientation) {
+                ExifInterface.ORIENTATION_ROTATE_90,
+                ExifInterface.ORIENTATION_ROTATE_270,
+                ExifInterface.ORIENTATION_TRANSPOSE,
+                ExifInterface.ORIENTATION_TRANSVERSE -> {
+                    val t = w
+                    w = h
+                    h = t
+                }
+            }
+            Size(w.toFloat(), h.toFloat())
+        }.getOrNull()
     }
 }

@@ -62,9 +62,10 @@ import kotlinx.coroutines.launch
  *
  * 渲染走 mikepenz `Markdown` 的 success 插槽 + 自建 LazyColumn：块级虚拟化，
  * 块下标与 AST 顶层块一一对应（[com.az.notes.domain.markdown.HeadingExtractor] 同解析链），
- * 大纲跳转/高亮均为真实索引而非像素估算。图片经 [VaultImageTransformer]
- * 从 Vault 本地加载（网络链接走受控护栏），点击全屏查看（支持捏合缩放）。
- * 双击正文快捷进入编辑。
+ * 大纲跳转/高亮均为真实索引而非像素估算。独立图片段落（[com.az.notes.domain.markdown.MarkdownImageLifter]
+ * 产物）由 [AzImageBlock] 自渲染（首帧即按预读尺寸定盒，避免滚动中占位重排），
+ * 其余图片经 [VaultImageTransformer] 从 Vault 本地加载（网络链接走受控护栏），
+ * 点击全屏查看（支持捏合缩放）。双击正文快捷进入编辑。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -270,12 +271,31 @@ fun ReaderScreen(
                                     items = success.node.children,
                                     key = { node -> node.startOffset }
                                 ) { node ->
-                                    MarkdownElement(
-                                        node = node,
-                                        components = components,
-                                        content = success.content,
-                                        skipLinkDefinition = success.linksLookedUp
-                                    )
+                                    // 独立图片段落（lift 产物 `![](link)` 独占一段）自渲染：
+                                    // 首帧即按预读尺寸定盒，消除库占位两帧链（兜底 180sp →
+                                    // 真实尺寸）在向上回滚时引起的滚动锚点位移；其余块（含
+                                    // 图文混排 / 列表 / 引用内图片、远程图）仍走渲染库路径
+                                    val imageLink = remember(node, success.content) {
+                                        standaloneImageLink(success.content, node)
+                                    }
+                                    if (imageLink != null &&
+                                        !vaultRoot.isNullOrBlank() &&
+                                        noteDir != null
+                                    ) {
+                                        AzImageBlock(
+                                            link = imageLink,
+                                            vaultRoot = vaultRoot,
+                                            baseDir = noteDir,
+                                            onImageClick = { file -> previewImage = file }
+                                        )
+                                    } else {
+                                        MarkdownElement(
+                                            node = node,
+                                            components = components,
+                                            content = success.content,
+                                            skipLinkDefinition = success.linksLookedUp
+                                        )
+                                    }
                                 }
                             }
                         }

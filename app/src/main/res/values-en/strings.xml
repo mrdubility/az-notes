@@ -385,6 +385,8 @@
     <!-- Images (import / reader / network guard) -->
     <string name="image_default_base_name">image</string>
     <string name="image_missing_placeholder">Image not found</string>
+    <string name="reader_image_loading">Loading image…</string>
+    <string name="reader_image_load_failed">Failed to load image</string>
     <string name="remote_image_disabled">Remote image loading is turned off</string>
     <string name="remote_image_private">Refused to load an image from a private address</string>
     <string name="remote_image_redirect">Image was redirected; loading blocked</string>
