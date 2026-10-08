@@ -11,6 +11,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.Sort
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Backup
 import androidx.compose.material.icons.outlined.Build
 import androidx.compose.material.icons.outlined.Cloud
@@ -77,6 +78,7 @@ fun SettingsScreen(
     onSync: () -> Unit,
     onOpenVaults: () -> Unit,
     onOpenToolbarSettings: () -> Unit,
+    onOpenAiProviders: () -> Unit,
     onOpenBackup: () -> Unit,
     onOpenDebugLogs: () -> Unit
 ) {
@@ -349,6 +351,17 @@ fun SettingsScreen(
                     title = stringResource(R.string.settings_image_timeout),
                     subtitle = stringResource(R.string.settings_image_timeout_value, settings.remoteImageTimeoutSeconds),
                     onClick = { imageTimeoutDialog = true }
+                )
+            }
+
+            // —— AI（供应商 / 密钥 / 连接测试） ——
+            item { SectionHeader(stringResource(R.string.ai_provider_section)) }
+            item {
+                SettingsRow(
+                    icon = Icons.Outlined.AutoAwesome,
+                    title = stringResource(R.string.ai_provider_title),
+                    subtitle = stringResource(R.string.ai_provider_subtitle),
+                    onClick = onOpenAiProviders
                 )
             }
 

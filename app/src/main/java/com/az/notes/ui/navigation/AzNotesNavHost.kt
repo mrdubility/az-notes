@@ -22,6 +22,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.az.notes.ui.MainViewModel
+import com.az.notes.ui.ai.AiProviderScreen
 import com.az.notes.ui.debug.DebugLogScreen
 import com.az.notes.ui.editor.EditorScreen
 import com.az.notes.ui.favorites.FavoritesScreen
@@ -149,6 +150,7 @@ fun AzNotesNavHost(
                 onSync = { navController.navigate(Routes.SYNC) },
                 onOpenVaults = { navController.navigate(Routes.VAULTS) },
                 onOpenToolbarSettings = { navController.navigate(Routes.TOOLBAR_SETTINGS) },
+                onOpenAiProviders = { navController.navigate(Routes.AI_PROVIDERS) },
                 onOpenBackup = { navController.navigate(Routes.BACKUP) },
                 onOpenDebugLogs = { navController.navigate(Routes.DEBUG_LOGS) }
             )
@@ -158,6 +160,13 @@ fun AzNotesNavHost(
             BackupScreen(
                 onBack = { navController.popBackStackSafely(entry) },
                 viewModel = hiltViewModel()
+            )
+        }
+
+        composable(Routes.AI_PROVIDERS) { entry ->
+            AiProviderScreen(
+                viewModel = hiltViewModel(),
+                onBack = { navController.popBackStackSafely(entry) }
             )
         }
 

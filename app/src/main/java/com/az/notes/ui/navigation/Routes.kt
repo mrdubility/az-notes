@@ -25,6 +25,9 @@ object Routes {
     /** 备份与恢复页：导出 / 导入全部配置；从设置 → 备份进入。 */
     const val BACKUP = "backup"
 
+    /** AI 供应商配置页（B1）：供应商增删改 + 连接测试；从设置 → AI 进入。 */
+    const val AI_PROVIDERS = "ai_providers"
+
     /** 回收站：同步时被远端删除波及的本地文件（保留天数可配置）；从抽屉进入。 */
     const val TRASH = "trash"
 
