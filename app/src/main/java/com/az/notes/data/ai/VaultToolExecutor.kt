@@ -49,6 +49,14 @@ class VaultToolExecutor @Inject constructor(
         )
     }
 
+    /** 执行前预览轨迹（[ToolCallRecord.argsSummary] 已提取、resultSummary 空串占位）：
+     *  ChatEngine 在执行开始前即发出状态行（UI「正在读取…」），避免执行完成后才可见。 */
+    internal fun preview(call: RawToolCall): ToolCallRecord = ToolCallRecord(
+        tool = call.name,
+        argsSummary = argsSummary(call.name, parseArgs(call.argumentsJson)),
+        resultSummary = ""
+    )
+
     /**
      * 仓库相对路径 → 绝对 File 护栏：normalize 后必须仍在仓库根内（对齐 ImageReference.within），
      * `..` 段直接拒绝；越界 / 根不存在返回 null。

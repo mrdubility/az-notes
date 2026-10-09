@@ -231,6 +231,29 @@ class VaultToolExecutorTest {
         assertTrue(miss.resultText.startsWith("未找到"))
     }
 
+    // ---------- preview（执行前轨迹预览，状态行先行） ----------
+
+    @Test
+    fun `preview exposes args summary with blank result summary before execution`() {
+        val read = executor.preview(
+            call(ToolSpecs.READ_NOTE, args("path" to JsonPrimitive("folder/note.md")))
+        )
+        assertEquals(ToolSpecs.READ_NOTE, read.tool)
+        assertEquals("folder/note.md", read.argsSummary)
+        assertEquals("", read.resultSummary)
+
+        val list = executor.preview(
+            call(ToolSpecs.LIST_NOTES, args("dir" to JsonPrimitive("sub")))
+        )
+        assertEquals("sub", list.argsSummary)
+        assertEquals("", list.resultSummary)
+
+        val search = executor.preview(
+            call(ToolSpecs.SEARCH_NOTES, args("query" to JsonPrimitive("协程")))
+        )
+        assertEquals("协程", search.argsSummary)
+    }
+
     // ---------- 容错 ----------
 
     @Test

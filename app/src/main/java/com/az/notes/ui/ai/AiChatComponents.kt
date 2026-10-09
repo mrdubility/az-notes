@@ -302,12 +302,12 @@ private fun ToolStatusRow(running: Boolean, text: String) {
     }
 }
 
-/** 完成态摘要：优先列出读取过的文件名（去重，超 [READ_SUMMARY_MAX] 篇附「等 N 篇」）。 */
+/** 完成态摘要：优先列出读取过的文件名（路径归一后去重，超 [READ_SUMMARY_MAX] 篇附「等 N 篇」）。 */
 @Composable
 private fun completedLine(records: List<ToolCallRecord>): String {
     val readTargets = records
         .filter { it.tool == ToolSpecs.READ_NOTE && it.argsSummary.isNotBlank() }
-        .map { it.argsSummary }
+        .map { normalizeToolPath(it.argsSummary) }
         .distinct()
     if (readTargets.isEmpty()) {
         return stringResource(R.string.ai_chat_tool_executed, records.size)
@@ -709,3 +709,14 @@ private val REASONING_LIVE_HEIGHT = 96.dp
 
 /** 完成态「已读取」摘要最多列出的文件名数（超出附「等 N 篇」）。 */
 private const val READ_SUMMARY_MAX = 5
+
+/**
+ * 工具路径归一（read_note argsSummary 去重与展示用）：统一分隔符、剥前导斜杠与
+ * `.` 段（`./a.md` 与 `a.md`、`/folder/a.md` 与 `folder/a.md` 视为同一文档）。
+ */
+internal fun normalizeToolPath(path: String): String =
+    path.trim()
+        .replace('\\', '/')
+        .split('/')
+        .filter { it.isNotEmpty() && it != "." }
+        .joinToString("/")

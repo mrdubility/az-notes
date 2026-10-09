@@ -24,6 +24,7 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.FlowCollector
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.transformWhile
@@ -34,8 +35,9 @@ import kotlinx.coroutines.withContext
  * 模型请求工具时本地执行（[VaultToolExecutor]，IO 线程）→ 回填传输态 → 下一轮，直至无工具调用。
  * - 历史组装：仅终态消息（COMPLETE / CANCELED）参与；USER 经 [ContextAssembler] 渲染（含附件文档）；
  *   ASSISTANT 按 toolExchanges 展开工具往返（assistant(tool_calls) → tool 结果）后再接正文
- * - 安全阀：轮数超过 [MAX_TOOL_ROUNDS] 或工具累计超过 [MAX_TOOL_CALLS] 时附「请基于已获取的
- *   信息作答」提示并以 tools=null 收尾请求一次；若收尾轮仍请求工具则直接结束
+ * - 安全阀：轮数超过 [MAX_TOOL_ROUNDS] 或工具累计超过 [MAX_TOOL_CALLS] 时，执行额度内调用并
+ *   附「请基于已获取的信息作答」提示以 tools=null 收尾；收尾轮仍请求工具时丢弃调用并再
+ *   强制作答一次，仍不收敛才结束——零正文时转 Failure，绝不静默空收尾
  * - 对外契约：仅透传 Text / Reasoning / Started / Completed / Stop / Failure
  *   （ToolCallRequested 为内部消化信号）
  * - 不发送采样参数（用户已确认用服务端默认）；压缩检查（B4）将在此扩展
@@ -71,6 +73,57 @@ class ChatEngine @Inject constructor(
             var rounds = 0
             var toolCallCount = 0
             var toolsEnabled = true
+            // 收尾轮（tools=null）强制作答尝试次数
+            var forceAttempts = 0
+            // 全程是否产出过正文文本（「零正文结束」一律视为异常）
+            var producedAnyText = false
+
+            /** 执行一批工具调用并回填传输态：状态行先行（preview），执行后发 Completed。 */
+            suspend fun runTools(
+                out: FlowCollector<StreamEvent>,
+                callsToRun: List<RawToolCall>,
+                text: String
+            ) {
+                // 状态行先出：执行开始即展示「正在读取…」（argsSummary 预览，resultSummary 空串占位）
+                out.emit(StreamEvent.ToolCallStarted(callsToRun.map { toolExecutor.preview(it) }))
+                val executions = withContext(Dispatchers.IO) {
+                    val vaultRoot = runCatching {
+                        settingsRepository.settings.first().vaultPath
+                    }.getOrNull()
+                    callsToRun.map { call ->
+                        if (vaultRoot.isNullOrBlank()) {
+                            ToolExecutionResult(
+                                resultText = "错误：未找到当前仓库",
+                                record = ToolCallRecord(call.name, "", "错误：未找到当前仓库")
+                            )
+                        } else {
+                            toolExecutor.execute(vaultRoot, call)
+                        }
+                    }
+                }
+                val records = executions.map { it.record }
+                // 传输态回填：本轮 assistant(tool_calls) + 每个调用一条 tool 结果（id 配对）
+                transport += TransportMessage(
+                    role = ChatRole.ASSISTANT,
+                    text = text,
+                    toolCalls = callsToRun
+                )
+                callsToRun.forEachIndexed { index, call ->
+                    transport += TransportMessage(
+                        role = ChatRole.TOOL,
+                        text = executions[index].resultText,
+                        toolCallId = call.id
+                    )
+                }
+                out.emit(
+                    StreamEvent.ToolCallCompleted(
+                        records,
+                        ToolExchange(callsToRun, executions.map { it.resultText })
+                    )
+                )
+                toolCallCount += callsToRun.size
+            }
+
             while (true) {
                 rounds++
                 val request = ChatRequest(
@@ -89,6 +142,7 @@ class ChatEngine @Inject constructor(
                         when (event) {
                             is StreamEvent.TextDelta -> {
                                 turnText.append(event.text)
+                                producedAnyText = true
                                 emit(event)
                                 true
                             }
@@ -115,53 +169,48 @@ class ChatEngine @Inject constructor(
                 if (failed) return@flow
                 val calls = requestedCalls
                 if (calls.isNullOrEmpty()) {
-                    emit(StreamEvent.MessageStop)
+                    // 无工具请求：本轮正常结束。全程零正文 = 流被提前掐断 / 工具分片被剥离 /
+                    // 模型空响应的典型形态（工具结果已展示但回答缺失），转 Failure 让用户可重试，
+                    // 绝不静默空收尾
+                    if (turnText.isBlank() && !producedAnyText) {
+                        emit(StreamEvent.Failure(AiError.Unknown))
+                    } else {
+                        emit(StreamEvent.MessageStop)
+                    }
                     return@flow
                 }
                 if (!toolsEnabled) {
-                    // 收尾轮仍请求工具（异常流）：直接结束，防止再次触顶
-                    emit(StreamEvent.MessageStop)
+                    // 收尾轮（tools=null）模型仍请求工具：丢弃调用并回填本轮文本，
+                    // 最多再追加一次强制作答提示；仍请求工具 → 有文本则收尾、零正文转 Failure
+                    if (turnText.isNotBlank()) {
+                        transport += TransportMessage(role = ChatRole.ASSISTANT, text = turnText.toString())
+                    }
+                    if (forceAttempts == 0) {
+                        forceAttempts = 1
+                        transport += TransportMessage(role = ChatRole.USER, text = FORCE_ANSWER_PROMPT_STRICT)
+                        continue
+                    }
+                    emit(
+                        if (producedAnyText) StreamEvent.MessageStop
+                        else StreamEvent.Failure(AiError.Unknown)
+                    )
                     return@flow
                 }
                 if (rounds > MAX_TOOL_ROUNDS || toolCallCount + calls.size > MAX_TOOL_CALLS) {
-                    // 安全阀触顶：丢弃本次调用，附提示以 tools=null 收尾请求一次
+                    // 安全阀触顶：保留本轮已产出文本；仍有额度则执行额度内调用（尽量回填信息），
+                    // 随后附提示以 tools=null 收尾请求
+                    if (turnText.isNotBlank()) {
+                        transport += TransportMessage(role = ChatRole.ASSISTANT, text = turnText.toString())
+                    }
+                    val remaining = MAX_TOOL_CALLS - toolCallCount
+                    if (rounds <= MAX_TOOL_ROUNDS && remaining > 0) {
+                        runTools(this, calls.take(remaining), "")
+                    }
                     transport += TransportMessage(role = ChatRole.USER, text = FORCE_ANSWER_PROMPT)
                     toolsEnabled = false
                     continue
                 }
-                val executions = withContext(Dispatchers.IO) {
-                    val vaultRoot = runCatching {
-                        settingsRepository.settings.first().vaultPath
-                    }.getOrNull()
-                    calls.map { call ->
-                        if (vaultRoot.isNullOrBlank()) {
-                            ToolExecutionResult(
-                                resultText = "错误：未找到当前仓库",
-                                record = ToolCallRecord(call.name, "", "错误：未找到当前仓库")
-                            )
-                        } else {
-                            toolExecutor.execute(vaultRoot, call)
-                        }
-                    }
-                }
-                val records = executions.map { it.record }
-                // 状态行先出：resultSummary 空串占位（执行已发生，UI 显示"正在读取…"类文案）
-                emit(StreamEvent.ToolCallStarted(records.map { it.copy(resultSummary = "") }))
-                // 传输态回填：本轮 assistant(tool_calls) + 每个调用一条 tool 结果（id 配对）
-                transport += TransportMessage(
-                    role = ChatRole.ASSISTANT,
-                    text = turnText.toString(),
-                    toolCalls = calls
-                )
-                calls.forEachIndexed { index, call ->
-                    transport += TransportMessage(
-                        role = ChatRole.TOOL,
-                        text = executions[index].resultText,
-                        toolCallId = call.id
-                    )
-                }
-                emit(StreamEvent.ToolCallCompleted(records, ToolExchange(calls, executions.map { it.resultText })))
-                toolCallCount += calls.size
+                runTools(this, calls, turnText.toString())
             }
         }
 
@@ -225,5 +274,9 @@ class ChatEngine @Inject constructor(
 
         /** 安全阀触顶收尾提示（作为用户消息追加）。 */
         const val FORCE_ANSWER_PROMPT = "请基于已获取的信息直接作答，不要再调用工具。"
+
+        /** 收尾轮仍请求工具时的强制作答提示（最后一次机会）。 */
+        const val FORCE_ANSWER_PROMPT_STRICT =
+            "工具调用已被忽略。现在必须基于已有对话内容直接输出最终回答正文，不得再调用任何工具。"
     }
 }
