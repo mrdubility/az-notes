@@ -166,6 +166,17 @@ class ChatEngine @Inject constructor(
                         }
                     }
                     .collect { }
+                // 线路诊断：每轮事件统计（正文长度 / 工具调用数 / 是否失败）
+                AiDiag.emit(
+                    "ai_round",
+                    mapOf(
+                        "round" to rounds,
+                        "tools" to toolsEnabled,
+                        "textChars" to turnText.length,
+                        "calls" to (requestedCalls?.size ?: 0),
+                        "failed" to failed
+                    )
+                )
                 if (failed) return@flow
                 val calls = requestedCalls
                 if (calls.isNullOrEmpty()) {
@@ -173,8 +184,10 @@ class ChatEngine @Inject constructor(
                     // 模型空响应的典型形态（工具结果已展示但回答缺失），转 Failure 让用户可重试，
                     // 绝不静默空收尾
                     if (turnText.isBlank() && !producedAnyText) {
+                        AiDiag.emit("ai_end", mapOf("reason" to "empty_as_failure"))
                         emit(StreamEvent.Failure(AiError.Unknown))
                     } else {
+                        AiDiag.emit("ai_end", mapOf("reason" to "stop"))
                         emit(StreamEvent.MessageStop)
                     }
                     return@flow
@@ -194,6 +207,10 @@ class ChatEngine @Inject constructor(
                         if (producedAnyText) StreamEvent.MessageStop
                         else StreamEvent.Failure(AiError.Unknown)
                     )
+                    AiDiag.emit(
+                        "ai_end",
+                        mapOf("reason" to "force_exhausted", "producedText" to producedAnyText)
+                    )
                     return@flow
                 }
                 if (rounds > MAX_TOOL_ROUNDS || toolCallCount + calls.size > MAX_TOOL_CALLS) {
@@ -203,6 +220,10 @@ class ChatEngine @Inject constructor(
                         transport += TransportMessage(role = ChatRole.ASSISTANT, text = turnText.toString())
                     }
                     val remaining = MAX_TOOL_CALLS - toolCallCount
+                    AiDiag.emit(
+                        "ai_safety_valve",
+                        mapOf("round" to rounds, "calls" to calls.size, "remaining" to remaining)
+                    )
                     if (rounds <= MAX_TOOL_ROUNDS && remaining > 0) {
                         runTools(this, calls.take(remaining), "")
                     }

@@ -48,7 +48,10 @@ enum class DebugLogType {
     IMAGE,
 
     /** 应用生命周期与未捕获崩溃。 */
-    APP
+    APP,
+
+    /** AI 对话：SSE 线路级诊断（包数 / 首包摘录 / 每轮事件与终止原因）。 */
+    AI
 }
 
 /** 日志配置快照。 */

@@ -339,6 +339,7 @@
     <string name="ai_chat_error_network">Network unavailable or connection failed. Check your network and retry.</string>
     <string name="ai_chat_error_api">Provider error: %1$s</string>
     <string name="ai_chat_error_unknown">Generation failed. Please retry.</string>
+    <string name="ai_chat_error_empty">The model returned no content. Retry or switch model.</string>
 
     <!-- Backup &amp; restore (Settings → Backup; export / import all config) -->
     <string name="settings_backup_section">Backup</string>
@@ -554,6 +555,7 @@
     <string name="debug_logs_type_file">File</string>
     <string name="debug_logs_type_image">Image</string>
     <string name="debug_logs_type_app">App</string>
+    <string name="debug_logs_type_ai">AI chat</string>
     <string name="debug_logs_storage">Storage</string>
     <string name="debug_logs_storage_value">%1$d segments · %2$s</string>
     <string name="debug_logs_storage_path">Directory: %1$s</string>

@@ -45,22 +45,42 @@ class SseReader @Inject constructor(
         currentCoroutineContext().job.invokeOnCompletion { call.cancel() }
         val response = call.await()
         response.use { resp ->
+            // 线路诊断：响应码与内容类型（中转站「200 但非 SSE」等异常的第一证据）
+            AiDiag.emit(
+                "sse_http",
+                mapOf("code" to resp.code, "ctype" to resp.header("Content-Type").orEmpty())
+            )
             if (!resp.isSuccessful) {
                 throw SseHttpException(resp.code, resp.body?.string().orEmpty())
             }
             val source = resp.body?.source() ?: throw IOException("empty SSE body")
+            var payloads = 0
+            var rawLines = 0
+            var rawFirst = ""
             try {
                 while (true) {
                     val line = source.readUtf8Line() ?: break
+                    // 首行原文摘录：非 SSE 响应体（整包 JSON 等）时 payloads=0 而 rawFirst 有值
+                    if (rawLines == 0) rawFirst = line.take(160)
+                    rawLines++
                     val payload = extractPayload(line) ?: continue
                     if (payload == DONE_MARKER) break
+                    payloads++
                     emit(payload)
                 }
             } catch (e: IOException) {
+                AiDiag.emit(
+                    "sse_io_error",
+                    mapOf("canceled" to call.isCanceled(), "msg" to e.message.orEmpty())
+                )
                 // 取消场景（call.cancel() 中断阻塞读）：转为取消异常，避免被上层误报网络错误
                 if (call.isCanceled()) throw CancellationException("SSE request canceled")
                 throw e
             }
+            AiDiag.emit(
+                "sse_end",
+                mapOf("payloads" to payloads, "rawLines" to rawLines, "rawFirst" to rawFirst)
+            )
         }
     }.flowOn(Dispatchers.IO)
 

@@ -6,6 +6,7 @@ import coil3.PlatformContext
 import coil3.SingletonImageLoader
 import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import coil3.request.CachePolicy
+import com.az.notes.data.ai.AiDiag
 import com.az.notes.data.debug.DebugLogLevel
 import com.az.notes.data.debug.DebugLogRepository
 import com.az.notes.data.debug.DebugLogType
@@ -40,6 +41,10 @@ class AzNotesApp : Application(), SingletonImageLoader.Factory {
     override fun onCreate() {
         super.onCreate()
         installCrashLogger()
+        // AI 线路诊断挂接：开启调试日志收集后 type=AI 记录 SSE 包数 / 首包摘录 / 每轮事件
+        AiDiag.sink = { msg, extra ->
+            debugLogRepository.log(DebugLogLevel.INFO, DebugLogType.AI, msg, extra)
+        }
         appScope.launch {
             coilHolder.bootstrap()
             logBuildFingerprint()

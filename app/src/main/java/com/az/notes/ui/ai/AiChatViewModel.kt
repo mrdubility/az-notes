@@ -290,6 +290,8 @@ class AiChatViewModel @Inject constructor(
             var textDirty = false
             var reasoningDirty = false
             var failure: AiError? = null
+            // 是否执行过工具（零内容兜底判定用：有轨迹不算「空」）
+            var toolCompleted = false
 
             fun flush() {
                 if (!textDirty && !reasoningDirty) return
@@ -330,6 +332,7 @@ class AiChatViewModel @Inject constructor(
                         is StreamEvent.ToolCallStarted -> _toolStatus.value = event.records
 
                         is StreamEvent.ToolCallCompleted -> {
+                            toolCompleted = true
                             _toolStatus.value = null
                             session.updateMessage(assistantId) { message ->
                                 message.copy(
@@ -344,17 +347,31 @@ class AiChatViewModel @Inject constructor(
                 }
                 flush()
                 val error = failure
-                if (error == null) {
+                // 零内容兜底：无正文 / 无思考 / 无工具轨迹 = 中转站静默空响应（渲染为零高
+                // 不可见气泡），统一收敛为错误条保留重试能力，绝不留静默空泡
+                val empty = textBuffer.isEmpty() && reasoningBuffer.isEmpty() && !toolCompleted
+                if (error == null && !empty) {
                     session.updateMessage(assistantId) { it.copy(status = MessageStatus.COMPLETE) }
                 } else {
                     session.updateMessage(assistantId) { it.copy(status = MessageStatus.ERROR) }
-                    val (text, showSettings) = errorDisplay(error)
+                    val (text, showSettings) = error?.let { errorDisplay(it) }
+                        ?: (UiText.of(R.string.ai_chat_error_empty) to false)
                     _error.value = ChatErrorState(assistantId, text, showSettings)
                 }
             } catch (e: CancellationException) {
                 flush()
-                finalizeCanceled(assistantId)
-                throw e
+                // 真实取消（用户停止 / 退页）：CANCELED 收尾、空泡移除；伪取消（内部中止
+                // 异常泄漏等、自身 Job 仍活跃）：按失败收敛，绝不静默删泡
+                if (coroutineContext[Job]?.isCancelled == true) {
+                    finalizeCanceled(assistantId)
+                    throw e
+                }
+                session.updateMessage(assistantId) { it.copy(status = MessageStatus.ERROR) }
+                _error.value = ChatErrorState(
+                    messageId = assistantId,
+                    text = UiText.of(R.string.ai_chat_error_unknown),
+                    showSettings = false
+                )
             } catch (e: Exception) {
                 flush()
                 session.updateMessage(assistantId) { it.copy(status = MessageStatus.ERROR) }

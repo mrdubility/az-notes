@@ -1,5 +1,6 @@
 package com.az.notes.data.ai.protocol
 
+import com.az.notes.data.ai.AiDiag
 import com.az.notes.data.ai.SseHttpException
 import com.az.notes.data.ai.SseReader
 import com.az.notes.domain.ai.AiError
@@ -75,9 +76,11 @@ internal fun sseEventFlow(
     } catch (e: CancellationException) {
         throw e
     } catch (e: SseHttpException) {
+        AiDiag.emit("flow_http_error", mapOf("code" to e.code, "terminal" to terminal))
         if (!terminal) emit(StreamEvent.Failure(AdapterErrors.mapHttp(e)))
         return@flow
     } catch (e: IOException) {
+        AiDiag.emit("flow_io_error", mapOf("terminal" to terminal, "msg" to e.message.orEmpty()))
         if (!terminal) emit(StreamEvent.Failure(AiError.Network))
         return@flow
     } catch (e: Exception) {
@@ -86,12 +89,14 @@ internal fun sseEventFlow(
     }
     if (!terminal) {
         val flushed = flush()
+        if (flushed.isNotEmpty()) AiDiag.emit("flow_flush", mapOf("flushed" to flushed.size))
         flushed.forEach {
             terminal = true
             emit(it)
         }
     }
     if (!terminal) emit(StreamEvent.MessageStop)
+    AiDiag.emit("flow_end", mapOf("terminal" to terminal))
 }
 
 /** 终态判定：停止 / 失败 / 工具调用（工具调用后由上层进入下一轮，不再期待同流内文本）。 */

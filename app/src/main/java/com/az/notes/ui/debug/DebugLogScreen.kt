@@ -577,6 +577,7 @@ private fun DebugLogType.label(): String = stringResource(
         DebugLogType.FILE -> R.string.debug_logs_type_file
         DebugLogType.IMAGE -> R.string.debug_logs_type_image
         DebugLogType.APP -> R.string.debug_logs_type_app
+        DebugLogType.AI -> R.string.debug_logs_type_ai
     }
 )
 
