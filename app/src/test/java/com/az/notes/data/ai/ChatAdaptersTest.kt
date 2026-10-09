@@ -1,9 +1,12 @@
 package com.az.notes.data.ai
 
 import com.az.notes.data.ai.protocol.AnthropicAdapter
+import com.az.notes.data.ai.protocol.AnthropicToolAccumulator
 import com.az.notes.data.ai.protocol.ChatRequest
 import com.az.notes.data.ai.protocol.OpenAiChatAdapter
 import com.az.notes.data.ai.protocol.OpenAiResponsesAdapter
+import com.az.notes.data.ai.protocol.OpenAiToolAccumulator
+import com.az.notes.data.ai.protocol.ResponsesToolAccumulator
 import com.az.notes.data.ai.protocol.TransportMessage
 import com.az.notes.domain.ai.AiError
 import com.az.notes.domain.ai.AiModel
