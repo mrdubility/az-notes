@@ -47,19 +47,22 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.az.notes.R
 import com.az.notes.domain.ai.ChatRole
-import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 
 /**
  * 对话页（§9，B2 骨架版）：
  * - TopAppBar：返回 / 标题 + 副标题（供应商 · 模型，点击弹模型菜单）/ ⊕ 新会话
- * - 消息列表：自动滚底（距底 < 100dp 跟随；用户上滑暂停并显示「回到底部」）
- * - 输入卡片：imePadding 随键盘上浮；多行自增；生成中发送变停止
+ * - 消息列表：自动滚底（距底 < 100dp 跟随；用户上滑暂停并显示「回到底部」；
+ *   滚动由消息指纹驱动、程序化滚动期间抑制跟随判定，防流式抖动与误锁）
+ * - 输入卡片：imePadding 随键盘上浮；多行自增；生成中发送变停止；发送后收起输入法
  * - 附件行、压缩 / 图片 / 文档取图、导出、隐私提示与空态三快捷动作随 B3 / B4 引入，本批不预留
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -69,7 +72,9 @@ fun AiChatScreen(
     onBack: () -> Unit,
     onOpenProviders: () -> Unit
 ) {
-    val messages by viewModel.messages.collectAsStateWithLifecycle()
+    // 保留 State 而非 by 解构：滚动协程内需同步读取最新消息构建指纹
+    val messagesState = viewModel.messages.collectAsStateWithLifecycle()
+    val messages = messagesState.value
     val providers by viewModel.providers.collectAsStateWithLifecycle()
     val loaded by viewModel.loaded.collectAsStateWithLifecycle()
     val input by viewModel.input.collectAsStateWithLifecycle()
@@ -82,6 +87,7 @@ fun AiChatScreen(
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
+    val keyboard = LocalSoftwareKeyboardController.current
     var modelMenuExpanded by remember { mutableStateOf(false) }
 
     // 副标题文案：供应商 · 模型（解析失败 = 无可用选择 → 空态引导）
@@ -92,20 +98,47 @@ fun AiChatScreen(
         "${provider.name} · ${model.label}"
     }
 
-    // —— 自动滚底：距底 < 100dp 跟随；用户上滑暂停跟随（滚动停止时按距离判定）；
-    // 程序化滚动同样经过该判定，结果等价幂等 ——
+    // —— 自动滚底：距底 < 100dp 跟随；用户上滑（位置离开底部）暂停并显示「回到底部」——
     val thresholdPx = with(LocalDensity.current) { FOLLOW_THRESHOLD_DP.dp.toPx() }
     var following by remember { mutableStateOf(true) }
-    val lastMessage = messages.lastOrNull()
-    LaunchedEffect(messages.size, lastMessage?.text, lastMessage?.reasoning, lastMessage?.status) {
-        if (following && messages.isNotEmpty()) {
-            listState.scrollToBottom(messages.size - 1)
+    // 程序化滚动守卫：滚底分两步（对齐末项 + 补滚溢出），中间态「末项顶部对齐」看似
+    // 离开底部，必须抑制判定，否则流式高频触发下会把 following 永久锁死
+    var programmaticScroll by remember { mutableStateOf(false) }
+
+    // 滚动驱动：单一协程监听消息指纹（条数 / 末条文本与思考长度 / 状态），snapshotFlow
+    // 自带背压合并；不再以内容为 LaunchedEffect key 重启滚动——流式每 50ms 取消进行中的
+    // 滚动造成抽搐与不跟随（旧实现的根因）
+    LaunchedEffect(listState) {
+        snapshotFlow {
+            val last = messagesState.value.lastOrNull()
+            listOf(
+                messagesState.value.size,
+                last?.text?.length ?: 0,
+                last?.reasoning?.length ?: 0,
+                last?.status?.ordinal ?: -1
+            )
         }
+            .distinctUntilChanged()
+            .collect {
+                val current = messagesState.value
+                if (following && current.isNotEmpty()) {
+                    programmaticScroll = true
+                    try {
+                        listState.scrollToBottom(current.size - 1)
+                    } catch (_: CancellationException) {
+                        // 用户手势抢占程序滚动：本次跟随作废，following 交还位置判定接管
+                    } finally {
+                        programmaticScroll = false
+                    }
+                }
+            }
     }
+    // 跟随判定：滚动位置一变化即评估（不再监听 isScrollInProgress 停止边沿——程序滚动
+    // 两步之间的瞬时「已停止」会被误判为离开底部，导致 following 永久失效）
     LaunchedEffect(listState, thresholdPx) {
-        snapshotFlow { listState.isScrollInProgress }
-            .filter { !it }
-            .collect { following = listState.isNearBottom(thresholdPx) }
+        snapshotFlow { listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset }
+            .distinctUntilChanged()
+            .collect { if (!programmaticScroll) following = listState.isNearBottom(thresholdPx) }
     }
 
     val copyToClipboard: (String) -> Unit = { text ->
@@ -210,7 +243,11 @@ fun AiChatScreen(
                                     message = message,
                                     busy = generating,
                                     onCopy = { copyToClipboard(message.text) },
-                                    onEditResend = { viewModel.editResend(message.id) }
+                                    onEditResend = {
+                                        // 主动重发路径同样强制跟随
+                                        following = true
+                                        viewModel.editResend(message.id)
+                                    }
                                 )
                             } else {
                                 AssistantBlock(
@@ -218,8 +255,15 @@ fun AiChatScreen(
                                     error = error,
                                     busy = generating,
                                     onCopy = { copyToClipboard(message.text) },
-                                    onRegenerate = { viewModel.regenerate(message.id) },
-                                    onRetry = { viewModel.regenerate(message.id) },
+                                    onRegenerate = {
+                                        // 主动重新生成路径同样强制跟随
+                                        following = true
+                                        viewModel.regenerate(message.id)
+                                    },
+                                    onRetry = {
+                                        following = true
+                                        viewModel.regenerate(message.id)
+                                    },
                                     onOpenSettings = onOpenProviders
                                 )
                             }
@@ -251,8 +295,9 @@ fun AiChatScreen(
                 generating = generating,
                 canSend = selectionLabel != null,
                 onSend = {
-                    // 自己发送时强制回到底部跟随
+                    // 自己发送时强制回到底部跟随；发送后收起输入法
                     following = true
+                    keyboard?.hide()
                     viewModel.send()
                 },
                 onStop = viewModel::stop,

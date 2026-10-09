@@ -306,7 +306,8 @@
     <string name="ai_chat_copied">已复制</string>
     <string name="ai_chat_edit_resend">编辑重发</string>
     <string name="ai_chat_regenerate">重新生成</string>
-    <string name="ai_chat_reasoning">思考过程</string>
+    <string name="ai_chat_reasoning_thinking">思考中</string>
+    <string name="ai_chat_reasoning_done">已思考</string>
     <string name="ai_chat_generating">正在生成…</string>
     <string name="ai_chat_retry">重试</string>
     <string name="ai_chat_go_settings">去设置</string>

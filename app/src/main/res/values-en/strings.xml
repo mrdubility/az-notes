@@ -306,7 +306,8 @@
     <string name="ai_chat_copied">Copied</string>
     <string name="ai_chat_edit_resend">Edit &amp; resend</string>
     <string name="ai_chat_regenerate">Regenerate</string>
-    <string name="ai_chat_reasoning">Thinking process</string>
+    <string name="ai_chat_reasoning_thinking">Thinking</string>
+    <string name="ai_chat_reasoning_done">Thought</string>
     <string name="ai_chat_generating">Generating…</string>
     <string name="ai_chat_retry">Retry</string>
     <string name="ai_chat_go_settings">Settings</string>

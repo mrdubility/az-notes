@@ -14,12 +14,18 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.ExpandLess
 import androidx.compose.material.icons.outlined.ExpandMore
+import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledIconButton
@@ -31,14 +37,17 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -57,7 +66,7 @@ import org.intellij.markdown.parser.MarkdownParser
 /**
  * 对话页组件（§9.2，B2 版）：
  * - [UserBubble] 右对齐气泡（无头像）+ 操作行（复制 / 编辑重发）
- * - [AssistantBlock] 思考折叠行 + Markdown 正文 + 操作行（复制 / 重新生成）+ 错误条
+ * - [AssistantBlock] 思考折叠行（思考中直播滚动 / 结束自动折叠）+ Markdown 正文 + 操作行 + 错误条
  * - [ChatInputCard] 多行自增输入卡片（生成中发送变停止）
  * - [EmptyState] 欢迎语；无供应商 / 无模型时替换为配置引导
  * - [ErrorBar] 红条 + 重试（401/404 附「去设置」）
@@ -91,8 +100,22 @@ internal fun UserBubble(
         }
         ChatActionRow(
             actions = buildList {
-                add(stringResource(R.string.ai_chat_copy) to onCopy)
-                if (!busy) add(stringResource(R.string.ai_chat_edit_resend) to onEditResend)
+                add(
+                    ChatAction(
+                        Icons.Outlined.ContentCopy,
+                        stringResource(R.string.ai_chat_copy),
+                        onCopy
+                    )
+                )
+                if (!busy) {
+                    add(
+                        ChatAction(
+                            Icons.Outlined.Edit,
+                            stringResource(R.string.ai_chat_edit_resend),
+                            onEditResend
+                        )
+                    )
+                }
             }
         )
     }
@@ -100,8 +123,8 @@ internal fun UserBubble(
 
 /**
  * AI 消息块（无头像）：思考折叠行 + Markdown 正文 + 操作行 + 错误条。
- * 思考默认展开 =「reasoning 非空且正文为空且流式中」；首个正文 delta 到达自然折叠；
- * 用户手动 toggle 后以其选择为准（remember(message.id)）。
+ * 思考中 =「reasoning 非空且正文为空且流式中」：默认展开固定高度滚动直播框；
+ * 思考结束（首个正文 delta 到达）自动折叠；用户手动展开时显示全部内容。
  */
 @Composable
 internal fun AssistantBlock(
@@ -116,10 +139,17 @@ internal fun AssistantBlock(
     val reasoning = message.reasoning
     val streaming = message.status == MessageStatus.STREAMING
     val hasText = message.text.isNotEmpty()
+    val thinking = streaming && !hasText && !reasoning.isNullOrEmpty()
 
     var userChoice by remember(message.id) { mutableStateOf<Boolean?>(null) }
-    val reasoningExpanded = userChoice
-        ?: (streaming && !hasText && !reasoning.isNullOrEmpty())
+    val reasoningExpanded = userChoice ?: thinking
+
+    // 思考结束自动折叠（覆盖展开的直播框；之后以用户手动选择为准）
+    var wasThinking by remember(message.id) { mutableStateOf(false) }
+    LaunchedEffect(thinking) {
+        if (wasThinking && !thinking) userChoice = false
+        wasThinking = thinking
+    }
 
     Column(
         modifier = Modifier
@@ -130,6 +160,7 @@ internal fun AssistantBlock(
         if (!reasoning.isNullOrEmpty()) {
             ReasoningSection(
                 reasoning = reasoning,
+                thinking = thinking,
                 expanded = reasoningExpanded,
                 onToggle = { userChoice = !reasoningExpanded }
             )
@@ -165,8 +196,22 @@ internal fun AssistantBlock(
         if (hasText && !streaming) {
             ChatActionRow(
                 actions = buildList {
-                    add(stringResource(R.string.ai_chat_copy) to onCopy)
-                    if (!busy) add(stringResource(R.string.ai_chat_regenerate) to onRegenerate)
+                    add(
+                        ChatAction(
+                            Icons.Outlined.ContentCopy,
+                            stringResource(R.string.ai_chat_copy),
+                            onCopy
+                        )
+                    )
+                    if (!busy) {
+                        add(
+                            ChatAction(
+                                Icons.Outlined.Refresh,
+                                stringResource(R.string.ai_chat_regenerate),
+                                onRegenerate
+                            )
+                        )
+                    }
                 }
             )
         }
@@ -198,6 +243,7 @@ private fun ChatMarkdown(text: String) {
 @Composable
 private fun ReasoningSection(
     reasoning: String,
+    thinking: Boolean,
     expanded: Boolean,
     onToggle: () -> Unit
 ) {
@@ -215,7 +261,10 @@ private fun ReasoningSection(
                 .padding(horizontal = 8.dp, vertical = 6.dp)
         ) {
             Text(
-                text = stringResource(R.string.ai_chat_reasoning),
+                text = stringResource(
+                    if (thinking) R.string.ai_chat_reasoning_thinking
+                    else R.string.ai_chat_reasoning_done
+                ),
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -227,12 +276,32 @@ private fun ReasoningSection(
             )
         }
         if (expanded) {
-            Text(
-                text = reasoning,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(start = 8.dp, end = 8.dp, bottom = 8.dp)
-            )
+            if (thinking) {
+                // 思考中：固定高度滚动直播（随输出自动滚到底）
+                val scrollState = rememberScrollState()
+                LaunchedEffect(Unit) {
+                    snapshotFlow { scrollState.maxValue }
+                        .collect { scrollState.scrollTo(it) }
+                }
+                Text(
+                    text = reasoning,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(REASONING_LIVE_HEIGHT)
+                        .verticalScroll(scrollState)
+                        .padding(start = 8.dp, end = 8.dp, bottom = 8.dp)
+                )
+            } else {
+                // 思考结束：展开显示全部内容（不限制高度）
+                Text(
+                    text = reasoning,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 8.dp, end = 8.dp, bottom = 8.dp)
+                )
+            }
         }
     }
 }
@@ -281,19 +350,30 @@ internal fun ErrorBar(
     }
 }
 
-/** 紧凑操作行：小号文字按钮（复制 / 编辑重发 / 重新生成）。 */
+/** 消息操作行单项（图标 + 无障碍文案）。 */
+private data class ChatAction(
+    val icon: ImageVector,
+    val label: String,
+    val onClick: () -> Unit
+)
+
+/** 紧凑操作行：小号图标按钮（复制 / 编辑重发 / 重新生成）。 */
 @Composable
-private fun ChatActionRow(actions: List<Pair<String, () -> Unit>>) {
-    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-        actions.forEach { (label, action) ->
-            Text(
-                text = label,
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.primary,
+private fun ChatActionRow(actions: List<ChatAction>) {
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        actions.forEach { action ->
+            Icon(
+                imageVector = action.icon,
+                contentDescription = action.label,
+                tint = MaterialTheme.colorScheme.primary,
                 modifier = Modifier
-                    .clip(RoundedCornerShape(6.dp))
-                    .clickable(onClick = action)
-                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                    .clip(CircleShape)
+                    .clickable(onClick = action.onClick)
+                    .padding(4.dp)
+                    .size(16.dp)
             )
         }
     }
@@ -338,7 +418,10 @@ internal fun ChatInputCard(
             FilledIconButton(
                 onClick = if (generating) onStop else onSend,
                 enabled = generating || (canSend && value.isNotBlank()),
-                modifier = Modifier.size(40.dp)
+                // bottom padding：单行时与输入框文本行垂直居中（56dp 高）；多行增长时保持贴底
+                modifier = Modifier
+                    .padding(bottom = 8.dp)
+                    .size(40.dp)
             ) {
                 if (generating) {
                     Icon(Icons.Filled.Stop, stringResource(R.string.ai_chat_stop))
@@ -393,3 +476,6 @@ internal fun EmptyState(
         }
     }
 }
+
+/** 思考中直播框固定高度（一小块滚动区域，约 5 行 bodySmall）。 */
+private val REASONING_LIVE_HEIGHT = 96.dp
