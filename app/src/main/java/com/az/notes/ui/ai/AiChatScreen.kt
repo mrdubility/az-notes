@@ -4,7 +4,6 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -60,8 +59,9 @@ import kotlinx.coroutines.launch
 /**
  * 对话页（§9，B2 骨架版）：
  * - TopAppBar：返回 / 标题 + 副标题（供应商 · 模型，点击弹模型菜单）/ ⊕ 新会话
- * - 消息列表：自动滚底（距底 < 100dp 跟随；用户上滑暂停并显示「回到底部」；
- *   滚动由消息指纹驱动、程序化滚动期间抑制跟随判定，防流式抖动与误锁）
+ * - 消息列表：反转布局（列表原点即底部、index 0 为最新）——贴底时流式增长由布局
+ *   锚定自动保持、无需程序滚动（消除闪动）；离开底部暂停跟随并显示「回到底部」，
+ *   程序滚动统一走 animate 平滑过渡
  * - 输入卡片：imePadding 随键盘上浮；多行自增；生成中发送变停止；发送后收起输入法
  * - 附件行、压缩 / 图片 / 文档取图、导出、隐私提示与空态三快捷动作随 B3 / B4 引入，本批不预留
  */
@@ -98,16 +98,29 @@ fun AiChatScreen(
         "${provider.name} · ${model.label}"
     }
 
-    // —— 自动滚底：距底 < 100dp 跟随；用户上滑（位置离开底部）暂停并显示「回到底部」——
+    // —— 自动跟随（反转布局）：贴底时流式增长由布局锚定自动保持（无需程序滚动）；
+    // 离开底部暂停跟随并显示「回到底部」——
     val thresholdPx = with(LocalDensity.current) { FOLLOW_THRESHOLD_DP.dp.toPx() }
     var following by remember { mutableStateOf(true) }
-    // 程序化滚动守卫：滚底分两步（对齐末项 + 补滚溢出），中间态「末项顶部对齐」看似
-    // 离开底部，必须抑制判定，否则流式高频触发下会把 following 永久锁死
+    // 程序滚动守卫：平滑滚动的动画期间抑制位置观察，防动画中间态互夺跟随状态
     var programmaticScroll by remember { mutableStateOf(false) }
 
-    // 滚动驱动：单一协程监听消息指纹（条数 / 末条文本与思考长度 / 状态），snapshotFlow
-    // 自带背压合并；不再以内容为 LaunchedEffect key 重启滚动——流式每 50ms 取消进行中的
-    // 滚动造成抽搐与不跟随（旧实现的根因）
+    // 唯一滚动出口：平滑滚到最新（已贴底则跳过零成本）
+    val scrollToLatest: suspend () -> Unit = {
+        if (!listState.isAtLatest()) {
+            programmaticScroll = true
+            try {
+                listState.animateScrollToItem(0)
+            } catch (_: CancellationException) {
+                // 用户手势抢占程序滚动：本次作废，跟随状态交还位置观察接管
+            } finally {
+                programmaticScroll = false
+            }
+        }
+    }
+
+    // 内容驱动：消息指纹（条数 / 末条文本与思考长度 / 状态）变化时若处于跟随态则收口到底。
+    // 贴底流式（最常见）时位置恒为 (0, 0)，本路无操作——零程序滚动即零闪动
     LaunchedEffect(listState) {
         snapshotFlow {
             val last = messagesState.value.lastOrNull()
@@ -119,26 +132,23 @@ fun AiChatScreen(
             )
         }
             .distinctUntilChanged()
-            .collect {
-                val current = messagesState.value
-                if (following && current.isNotEmpty()) {
-                    programmaticScroll = true
-                    try {
-                        listState.scrollToBottom(current.size - 1)
-                    } catch (_: CancellationException) {
-                        // 用户手势抢占程序滚动：本次跟随作废，following 交还位置判定接管
-                    } finally {
-                        programmaticScroll = false
-                    }
+            .collect { if (following) scrollToLatest() }
+    }
+    // 位置观察：滚动中实时更新跟随意图（距底 ≤ 阈值恢复跟随）；静止时若跟随态下仍
+    // 离开底部（数据增删的自动位置修正、被取消动画的残留）→ 平滑收口回底
+    LaunchedEffect(listState, thresholdPx) {
+        snapshotFlow {
+            listState.isScrollInProgress to
+                (listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset)
+        }
+            .collect { (inProgress, pos) ->
+                if (programmaticScroll) return@collect
+                if (inProgress) {
+                    following = pos.first == 0 && pos.second <= thresholdPx
+                } else if (following && (pos.first != 0 || pos.second != 0)) {
+                    scrollToLatest()
                 }
             }
-    }
-    // 跟随判定：滚动位置一变化即评估（不再监听 isScrollInProgress 停止边沿——程序滚动
-    // 两步之间的瞬时「已停止」会被误判为离开底部，导致 following 永久失效）
-    LaunchedEffect(listState, thresholdPx) {
-        snapshotFlow { listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset }
-            .distinctUntilChanged()
-            .collect { if (!programmaticScroll) following = listState.isNearBottom(thresholdPx) }
     }
 
     val copyToClipboard: (String) -> Unit = { text ->
@@ -232,12 +242,14 @@ fun AiChatScreen(
                         onOpenProviders = onOpenProviders
                     )
                 } else {
+                    // 反转布局：列表原点即最新消息——贴底时内容增长由布局锚定自然保持
                     LazyColumn(
                         state = listState,
+                        reverseLayout = true,
                         modifier = Modifier.fillMaxSize(),
                         contentPadding = PaddingValues(vertical = 8.dp)
                     ) {
-                        items(items = messages, key = { it.id }) { message ->
+                        items(items = messages.asReversed(), key = { it.id }) { message ->
                             if (message.role == ChatRole.USER) {
                                 UserBubble(
                                     message = message,
@@ -275,7 +287,7 @@ fun AiChatScreen(
                     SmallFloatingActionButton(
                         onClick = {
                             following = true
-                            scope.launch { listState.scrollToBottom(messages.size - 1) }
+                            scope.launch { scrollToLatest() }
                         },
                         modifier = Modifier
                             .align(Alignment.BottomEnd)
@@ -317,24 +329,9 @@ fun AiChatScreen(
 
 private const val FOLLOW_THRESHOLD_DP = 100
 
-/** 距底判定：末项可见且其底边距视口底 ≤ 阈值（内容不足一屏时同样视为在底部）。 */
-private fun LazyListState.isNearBottom(thresholdPx: Float): Boolean {
-    val info = layoutInfo
-    if (info.totalItemsCount == 0) return true
-    val lastVisible = info.visibleItemsInfo.lastOrNull() ?: return true
-    if (lastVisible.index < info.totalItemsCount - 1) return false
-    return lastVisible.offset + lastVisible.size - info.viewportEndOffset <= thresholdPx
-}
-
 /**
- * 滚动到真实底部：scrollToItem 只对齐项顶——末项高于视口（长回复）时，
- * 再补滚溢出部分；scrollBy 自带边界钳制（内容不足一屏时为无操作）。
+ * 反转布局（reverseLayout）下滚动原点即列表底部、index 0 为最新消息：
+ * 贴底 = firstVisibleItemIndex 0 且滚动偏移 0（内容不足一屏时同样成立）。
  */
-private suspend fun LazyListState.scrollToBottom(lastIndex: Int) {
-    if (lastIndex < 0) return
-    scrollToItem(lastIndex)
-    val info = layoutInfo
-    val lastVisible = info.visibleItemsInfo.lastOrNull() ?: return
-    val overshoot = lastVisible.offset + lastVisible.size - info.viewportEndOffset
-    if (overshoot > 0) scrollBy(overshoot.toFloat())
-}
+private fun LazyListState.isAtLatest(): Boolean =
+    firstVisibleItemIndex == 0 && firstVisibleItemScrollOffset == 0
