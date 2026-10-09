@@ -7,6 +7,7 @@ import com.az.notes.data.ai.protocol.OpenAiChatAdapter
 import com.az.notes.data.ai.protocol.OpenAiResponsesAdapter
 import com.az.notes.data.ai.protocol.OpenAiToolAccumulator
 import com.az.notes.data.ai.protocol.ResponsesToolAccumulator
+import com.az.notes.data.ai.protocol.TransportImage
 import com.az.notes.data.ai.protocol.TransportMessage
 import com.az.notes.domain.ai.AiError
 import com.az.notes.domain.ai.AiModel
@@ -34,6 +35,7 @@ import org.junit.Test
  * - 事件映射纯函数断言：text / reasoning / 结束 / error 透传、非 JSON 安全跳过
  * - 工具（B3）：tools 定义序列化、assistant tool_calls / tool 结果消息序列化（Anthropic 角色合并）、
  *   分片累积器 → ToolCallRequested 流事件解析
+ * - 图片：三协议含图消息序列化（OpenAI content 数组 + data URI、Anthropic image 块、Responses input_image）
  */
 class ChatAdaptersTest {
 
@@ -440,5 +442,92 @@ class ChatAdaptersTest {
             ),
             openAiResponses.parseEvent("""{"type":"response.completed"}""", accumulator)
         )
+    }
+
+    // ---------- 图片：请求序列化 ----------
+
+    private val imageMessage = TransportMessage(
+        ChatRole.USER,
+        "看这张图",
+        images = listOf(TransportImage("image/jpeg", "QUJD"))
+    )
+
+    private val imageOnlyMessage = TransportMessage(
+        ChatRole.USER,
+        "",
+        images = listOf(TransportImage("image/png", "REVG"))
+    )
+
+    @Test
+    fun `openai chat serializes images as content array with data uri`() {
+        val body = openAiChat
+            .buildRequest(
+                chatRequest(AiProtocol.OPENAI_CHAT)
+                    .copy(messages = listOf(imageMessage, imageOnlyMessage)),
+                "sk"
+            )
+            .bodyJson()
+        // system + 2 条 user
+        assertEquals(3, body.sizeOf("messages"))
+        val content = body.objAt("messages", 1)["content"] as JsonArray
+        assertEquals(2, content.size)
+        assertEquals("text", (content[0] as JsonObject).str("type"))
+        assertEquals("看这张图", (content[0] as JsonObject).str("text"))
+        val imageUrl = content[1] as JsonObject
+        assertEquals("image_url", imageUrl.str("type"))
+        assertEquals("data:image/jpeg;base64,QUJD", (imageUrl["image_url"] as JsonObject).str("url"))
+
+        // 纯图无文本：content 数组仅含 image_url 块
+        val only = body.objAt("messages", 2)["content"] as JsonArray
+        assertEquals(1, only.size)
+        assertEquals("image_url", (only[0] as JsonObject).str("type"))
+    }
+
+    @Test
+    fun `anthropic serializes images as base64 blocks after text`() {
+        val body = anthropic
+            .buildRequest(
+                chatRequest(AiProtocol.ANTHROPIC_MESSAGES).copy(messages = listOf(imageMessage)),
+                "sk"
+            )
+            .bodyJson()
+        assertEquals(1, body.sizeOf("messages"))
+        val blocks = body.objAt("messages", 0)["content"] as JsonArray
+        assertEquals(2, blocks.size)
+        assertEquals("text", (blocks[0] as JsonObject).str("type"))
+        val image = blocks[1] as JsonObject
+        assertEquals("image", image.str("type"))
+        val source = image["source"] as JsonObject
+        assertEquals("base64", source.str("type"))
+        assertEquals("image/jpeg", source.str("media_type"))
+        assertEquals("QUJD", source.str("data"))
+    }
+
+    @Test
+    fun `responses serializes images as input content array`() {
+        val body = openAiResponses
+            .buildRequest(
+                chatRequest(AiProtocol.OPENAI_RESPONSES)
+                    .copy(messages = listOf(imageMessage, imageOnlyMessage)),
+                "sk"
+            )
+            .bodyJson()
+        assertEquals(2, body.sizeOf("input"))
+        val first = body.objAt("input", 0)
+        assertEquals("user", first.str("role"))
+        val content = first["content"] as JsonArray
+        assertEquals(2, content.size)
+        assertEquals("input_text", (content[0] as JsonObject).str("type"))
+        assertEquals("看这张图", (content[0] as JsonObject).str("text"))
+        val image = content[1] as JsonObject
+        assertEquals("input_image", image.str("type"))
+        assertEquals("data:image/jpeg;base64,QUJD", image.str("image_url"))
+
+        // 纯图无文本：仍成条目，content 仅含 input_image
+        val second = body.objAt("input", 1)
+        assertEquals("user", second.str("role"))
+        val only = second["content"] as JsonArray
+        assertEquals(1, only.size)
+        assertEquals("input_image", (only[0] as JsonObject).str("type"))
     }
 }

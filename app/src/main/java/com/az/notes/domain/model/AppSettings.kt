@@ -58,7 +58,9 @@ data class AppSettings(
     /** 预览页单张网络图片的体积上限（MB）；0 = 不加载网络图片。 */
     val remoteImageMaxMb: Int = DEFAULT_REMOTE_IMAGE_MAX_MB,
     /** 网络图片读取超时（秒）：超时即中止加载。 */
-    val remoteImageTimeoutSeconds: Int = DEFAULT_REMOTE_IMAGE_TIMEOUT_SECONDS
+    val remoteImageTimeoutSeconds: Int = DEFAULT_REMOTE_IMAGE_TIMEOUT_SECONDS,
+    /** AI 对话隐私告知是否已确认（§11.3；首次发送弹一次性对话框后持久化，此后不再弹）。 */
+    val aiPrivacyAcknowledged: Boolean = false
 ) {
     /**
      * 当前仓库的绝对路径（由 [vaults] 与 [currentVaultId] 派生）。

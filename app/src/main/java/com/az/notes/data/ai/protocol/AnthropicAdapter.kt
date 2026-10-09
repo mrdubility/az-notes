@@ -17,6 +17,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
+import kotlinx.serialization.json.putJsonObject
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -91,7 +92,8 @@ class AnthropicAdapter @Inject constructor(
     /**
      * Anthropic messages 构造：每条消息转 content 块后相邻同角色合并为单条。
      * TOOL 结果包 user 角色（`tool_result` 块必须紧随对应 `tool_use`）；
-     * assistant 的文本与 `tool_use` 块共存于同一消息（文本在前）。
+     * assistant 的文本与 `tool_use` 块共存于同一消息（文本在前）；
+     * 附加图片渲染为 `image` 块（置于文本块之后）。
      */
     private fun mergedMessages(messages: List<TransportMessage>): List<Pair<String, List<JsonElement>>> {
         val merged = mutableListOf<Pair<String, MutableList<JsonElement>>>()
@@ -109,6 +111,16 @@ class AnthropicAdapter @Inject constructor(
                     blocks += buildJsonObject {
                         put("type", "text")
                         put("text", message.text)
+                    }
+                }
+                message.images.forEach { image ->
+                    blocks += buildJsonObject {
+                        put("type", "image")
+                        putJsonObject("source") {
+                            put("type", "base64")
+                            put("media_type", image.mime)
+                            put("data", image.base64)
+                        }
                     }
                 }
                 message.toolCalls.forEach { call ->

@@ -180,7 +180,9 @@ fun AzNotesNavHost(
                 viewModel = hiltViewModel(),
                 onBack = { navController.popBackStackSafely(entry) },
                 // 空态 / 错误条的「去设置」：直达供应商管理页
-                onOpenProviders = { navController.navigate(Routes.AI_PROVIDERS) }
+                onOpenProviders = { navController.navigate(Routes.AI_PROVIDERS) },
+                // 导出完成 Snackbar 的「查看」：跳阅读器（接收绝对路径）
+                onOpenNote = { path -> navController.navigate(Routes.reader(path)) }
             )
         }
 

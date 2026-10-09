@@ -1,12 +1,18 @@
 package com.az.notes.domain.ai
 
-/** 消息角色：SYSTEM 用于压缩摘要 / 系统条目（B4 引入）；TOOL 为工具结果（仅传输态使用）。 */
+/** 消息角色：SYSTEM 用于压缩摘要 / 系统条目；TOOL 为工具结果（仅传输态使用）。 */
 enum class ChatRole { USER, ASSISTANT, SYSTEM, TOOL }
 
 /** 消息状态：STREAMING 生成中；CANCELED 已停止（内容保留）；ERROR 失败（不参与历史重组）。 */
 enum class MessageStatus { STREAMING, COMPLETE, CANCELED, ERROR }
 
-/** 消息内容块（Image 供 B4；Document 为加入对话的仓库文档，B3 引入）。 */
+/** 系统条目产生方式：SUMMARIZED = 摘要压缩；TRIMMED = 滑动窗口降级丢弃。 */
+enum class SystemNoteMode { SUMMARIZED, TRIMMED }
+
+/** 压缩系统条目元信息（count = 压缩 / 丢弃的消息条数；摘要模式下 parts 携带摘要正文）。 */
+data class SystemNote(val mode: SystemNoteMode, val count: Int)
+
+/** 消息内容块（Image 为手动附加的图片；Document 为加入对话的仓库文档）。 */
 sealed interface ChatPart {
     data class Text(val text: String) : ChatPart
 
@@ -28,10 +34,12 @@ data class ChatMessage(
     val timestamp: Long,
     /** 生成该条 AI 消息时的「供应商 · 模型」（导出用）。 */
     val modelLabel: String? = null,
-    /** 本轮工具调用轨迹（B3 引入；UI 展示 + 导出附注，仅摘要）。 */
+    /** 本轮工具调用轨迹（UI 展示 + 导出附注，仅摘要）。 */
     val toolTrail: List<ToolCallRecord> = emptyList(),
     /** 工具往返传输态（历史重组回填工具消息用；UI/导出仅用 toolTrail 摘要）。 */
-    val toolExchanges: List<ToolExchange> = emptyList()
+    val toolExchanges: List<ToolExchange> = emptyList(),
+    /** 压缩系统条目元信息（SYSTEM 消息专用；UI 展示「已压缩/已丢弃 N 条」并供导出附注）。 */
+    val systemNote: SystemNote? = null
 ) {
     /** 拼接全部文本块：流式展示 / 复制 / 历史重组共用。 */
     val text: String get() = parts.filterIsInstance<ChatPart.Text>().joinToString("") { it.text }

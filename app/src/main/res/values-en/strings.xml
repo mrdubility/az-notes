@@ -340,6 +340,44 @@
     <string name="ai_chat_error_api">Provider error: %1$s</string>
     <string name="ai_chat_error_unknown">Generation failed. Please retry.</string>
     <string name="ai_chat_error_empty">The model returned no content. Retry or switch model.</string>
+    <string name="ai_chat_error_request_too_large">Request too large. Reduce images or documents and retry.</string>
+
+    <!-- Chat enhancements: compression / images / export / privacy / disclaimer -->
+    <string name="ai_chat_disclaimer">AI-generated content. Please verify before use.</string>
+    <string name="ai_chat_privacy_title">Privacy notice</string>
+    <string name="ai_chat_privacy_message">When you send, your conversation, selected documents and images will be transmitted to the model provider you configured. Please confirm before continuing.</string>
+    <string name="ai_chat_privacy_confirm">Got it</string>
+    <string name="ai_chat_compress">Compress context</string>
+    <string name="ai_chat_compressing">Compressing…</string>
+    <string name="ai_chat_compressed">%1$d earlier messages compressed</string>
+    <string name="ai_chat_trimmed">%1$d earlier messages dropped</string>
+    <string name="ai_chat_auto_compressed">Context was long and has been compressed automatically</string>
+    <string name="ai_chat_add_image">Add image</string>
+    <string name="ai_chat_doc_image">From docs</string>
+    <string name="ai_chat_doc_image_title">Pick an image from documents</string>
+    <string name="ai_chat_doc_image_empty">No addable images found in the documents of this conversation</string>
+    <string name="ai_chat_doc_image_add">Add (%1$d)</string>
+    <string name="ai_chat_doc_image_source">From: %1$s</string>
+    <string name="ai_chat_image_unsupported">The current model does not support images</string>
+    <string name="ai_chat_image_unsupported_format">Unsupported image format (jpg / png / webp only)</string>
+    <string name="ai_chat_image_too_large">Image is too large and exceeds the size limit</string>
+    <string name="ai_chat_image_read_failed">Failed to read the image. Please retry.</string>
+    <string name="ai_chat_image_limit">Up to 3 images per message</string>
+    <string name="ai_chat_export">Export chat</string>
+    <string name="ai_chat_export_select">Select to export</string>
+    <string name="ai_chat_export_title">Export chat</string>
+    <string name="ai_chat_export_select_all">Select all</string>
+    <string name="ai_chat_export_invert">Invert</string>
+    <string name="ai_chat_export_include_trail">Include tool trail</string>
+    <string name="ai_chat_export_confirm">Export as Markdown (%1$d)</string>
+    <string name="ai_chat_export_summary_docs">%1$d document(s) sent</string>
+    <string name="ai_chat_export_summary_images">%1$d image(s) sent</string>
+    <string name="ai_chat_export_done">Exported to the vault root</string>
+    <string name="ai_chat_export_view">View</string>
+    <string name="ai_chat_export_failed">Export failed. Please retry.</string>
+    <string name="ai_chat_role_user">User</string>
+    <string name="ai_chat_role_ai">AI</string>
+    <string name="ai_chat_role_system">System</string>
 
     <!-- Backup &amp; restore (Settings → Backup; export / import all config) -->
     <string name="settings_backup_section">Backup</string>

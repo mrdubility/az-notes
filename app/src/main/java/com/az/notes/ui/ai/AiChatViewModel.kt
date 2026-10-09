@@ -1,11 +1,17 @@
 package com.az.notes.ui.ai
 
+import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.az.notes.R
 import com.az.notes.data.ai.AiChatSession
+import com.az.notes.data.ai.AiImagePreparer
 import com.az.notes.data.ai.AiProviderRepository
 import com.az.notes.data.ai.ChatEngine
+import com.az.notes.data.ai.ConversationCompressor
+import com.az.notes.data.ai.ConversationExporter
+import com.az.notes.data.ai.ImagePrepFailure
+import com.az.notes.data.ai.ImagePrepResult
 import com.az.notes.data.settings.SettingsRepository
 import com.az.notes.data.storage.VaultRepository
 import com.az.notes.domain.ai.AiError
@@ -16,10 +22,15 @@ import com.az.notes.domain.ai.ChatPart
 import com.az.notes.domain.ai.ChatRole
 import com.az.notes.domain.ai.MessageStatus
 import com.az.notes.domain.ai.StreamEvent
+import com.az.notes.domain.ai.SystemNoteMode
 import com.az.notes.domain.ai.ToolCallRecord
+import com.az.notes.domain.markdown.ImageReference
+import com.az.notes.domain.model.AppSettings
 import com.az.notes.domain.model.FileNode
 import com.az.notes.ui.common.UiText
+import com.az.notes.work.SyncScheduler
 import dagger.hilt.android.lifecycle.HiltViewModel
+import java.io.File
 import java.util.UUID
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
@@ -33,6 +44,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -49,14 +61,23 @@ data class ChatErrorState(val messageId: String, val text: UiText, val showSetti
 /** 文档选择器条目：节点 + 正文预览（列表页同款结构；预览分批并行读取）。 */
 data class DocPickerItem(val node: FileNode, val preview: String = "")
 
+/** 文档取图条目：来源文档（展示用名）+ 解析出的本地图片文件 + 体积。 */
+data class DocImageItem(val sourceDoc: String, val file: File, val name: String, val sizeBytes: Long)
+
+/** 导出完成数据（Snackbar「已导出到仓库根目录」+「查看」动作跳预览页）。 */
+data class ExportDone(val fileName: String, val absolutePath: String)
+
 /**
- * 对话页 ViewModel（B3 工具循环版）：
+ * 对话页 ViewModel：
  * - 会话消息由 [AiChatSession]（@Singleton 内存态）透出：退出页面重进保留，杀进程即丢
- * - 发送管线：追加 USER（文本 + 待发附件） + ASSISTANT(STREAMING) → ChatEngine.stream →
- *   TextDelta 50ms 节流合并 → MessageStop → COMPLETE；Failure → ERROR（错误条）；stop → CANCELED（空内容移除）
+ * - 发送管线：隐私一次性告知（未确认先弹框，§11.3）→ 追加 USER（文本 + 待发附件 + 待发图片）+ 
+ *   ASSISTANT(STREAMING) → 前置自动压缩（§6.1）→ ChatEngine.stream → TextDelta 50ms 节流合并 →
+ *   MessageStop → COMPLETE；Failure → ERROR（错误条）；stop → CANCELED（空内容移除）
+ * - 压缩（§6）：自动前置 + 手动按钮（防重入）+ ContextOverflow 强制压缩后重试一次
+ * - 图片（§7）：相册 / 文档取图两条来源，[AiImagePreparer] 统一预处理
+ * - 导出（§8）：[ConversationExporter] 写仓库根 + 调度保存同步 + Snackbar「查看」跳预览
  * - 工具循环：ToolCallStarted → toolStatus 状态行；ToolCallCompleted → 轨迹 / 传输态回写消息
  * - 历史组装由 ChatEngine 完成（仅 COMPLETE / CANCELED 参与，ERROR 排除）
- * - 文档附件（B3）：选择器打开时扫描仓库；待发附件随发送并入用户消息
  * - 模型选择：默认按供应商 lastModelId 恢复；切换即写回记忆（repository.update）
  */
 @HiltViewModel
@@ -64,6 +85,10 @@ class AiChatViewModel @Inject constructor(
     private val repository: AiProviderRepository,
     private val session: AiChatSession,
     private val engine: ChatEngine,
+    private val compressor: ConversationCompressor,
+    private val exporter: ConversationExporter,
+    private val imagePreparer: AiImagePreparer,
+    private val syncScheduler: SyncScheduler,
     private val vaultRepository: VaultRepository,
     private val settingsRepository: SettingsRepository
 ) : ViewModel() {
@@ -102,6 +127,9 @@ class AiChatViewModel @Inject constructor(
     /** 待发附件（会话级；发送后 / 新会话时清空）。 */
     val pendingAttachments: StateFlow<List<ChatPart.Document>> = session.pendingAttachments
 
+    /** 待发图片（会话级；发送后 / 新会话时清空；3 张上限由 VM 守卫）。 */
+    val pendingImages: StateFlow<List<ChatPart.Image>> = session.pendingImages
+
     /** 工具执行状态行（null = 无；ToolCallStarted 置入，Completed / 流结束清空）。 */
     private val _toolStatus = MutableStateFlow<List<ToolCallRecord>?>(null)
     val toolStatus: StateFlow<List<ToolCallRecord>?> = _toolStatus.asStateFlow()
@@ -121,6 +149,53 @@ class AiChatViewModel @Inject constructor(
     /** 文档选择器装载中（首次扫描 / 搜索过滤期间；空列表时区分「加载中」与「无结果」）。 */
     private val _docPickerLoading = MutableStateFlow(false)
     val docPickerLoading: StateFlow<Boolean> = _docPickerLoading.asStateFlow()
+
+    /** 应用设置（隐私确认键读取；DataStore 异步到达，默认值兜底）。 */
+    private val settings: StateFlow<AppSettings> = settingsRepository.settings
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AppSettings())
+
+    /** 当前模型是否支持图片（vision=false → 「添加图片」「文档取图」置灰 + 提示，§7.3）。 */
+    val visionEnabled: StateFlow<Boolean> = combine(selection, providers) { sel, list ->
+        if (sel == null) return@combine false
+        val provider = list.firstOrNull { it.id == sel.providerId } ?: return@combine false
+        provider.models.firstOrNull { it.id == sel.modelId }?.vision == true
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+
+    /** 压缩进行中（手动按钮防重入 + 显示「正在压缩…」）。 */
+    private val _compressing = MutableStateFlow(false)
+    val compressing: StateFlow<Boolean> = _compressing.asStateFlow()
+
+    /** 手动「压缩上下文」可用性：存在可压缩区且空闲（非生成中 / 非压缩中，§6.4）。 */
+    val canCompress: StateFlow<Boolean> =
+        combine(messages, generating, compressing) { list, busy, compressingNow ->
+            !busy && !compressingNow && compressor.compressibleCount(list) > 0
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+
+    /** 文档取图条目（null = 未打开；打开期间先置空列表再 IO 填充）。 */
+    private val _docImageItems = MutableStateFlow<List<DocImageItem>?>(null)
+    val docImageItems: StateFlow<List<DocImageItem>?> = _docImageItems.asStateFlow()
+
+    /** 文档取图装载中（空列表时区分「加载中」与「无可选图片」）。 */
+    private val _docImageLoading = MutableStateFlow(false)
+    val docImageLoading: StateFlow<Boolean> = _docImageLoading.asStateFlow()
+
+    /** 导出对话框可见 + 初始选中条目（顶栏 = null 不选；操作行 = 该条 id，§8.1）。 */
+    private val _exportVisible = MutableStateFlow(false)
+    val exportVisible: StateFlow<Boolean> = _exportVisible.asStateFlow()
+    private val _exportDefaultSelected = MutableStateFlow<String?>(null)
+    val exportDefaultSelected: StateFlow<String?> = _exportDefaultSelected.asStateFlow()
+
+    /** 隐私一次性告知对话框（§11.3；确认后持久化，不再弹）。 */
+    private val _privacyDialog = MutableStateFlow(false)
+    val privacyDialog: StateFlow<Boolean> = _privacyDialog.asStateFlow()
+
+    /** Snackbar 一次性文案（展示后经 [consumeMessage] 置空，避免重进页面重放）。 */
+    private val _message = MutableStateFlow<UiText?>(null)
+    val message: StateFlow<UiText?> = _message.asStateFlow()
+
+    /** 导出完成数据（Screen 弹「已导出到仓库根目录」+「查看」→ 预览页）。 */
+    private val _exportDone = MutableStateFlow<ExportDone?>(null)
+    val exportDone: StateFlow<ExportDone?> = _exportDone.asStateFlow()
 
     private var streamJob: Job? = null
 
@@ -160,19 +235,43 @@ class AiChatViewModel @Inject constructor(
         _input.value = value
     }
 
-    /** 发送：追加用户消息（文本 + 待发附件）→ 开启一条新的 AI 流式消息。 */
+    /** 发送：隐私一次性告知未确认时先弹框（输入与附件不消费），确认后走 [performSend]。 */
     fun send() {
+        if (_generating.value) return
+        if (!settings.value.aiPrivacyAcknowledged) {
+            _privacyDialog.value = true
+            return
+        }
+        performSend()
+    }
+
+    /** 隐私告知确认：持久化后继续本次发送（直接走 [performSend]，避开写盘异步竞态）。 */
+    fun confirmPrivacy() {
+        _privacyDialog.value = false
+        viewModelScope.launch { settingsRepository.setAiPrivacyAcknowledged() }
+        performSend()
+    }
+
+    /** 隐私告知关闭（未确认：下次发送再弹）。 */
+    fun dismissPrivacy() {
+        _privacyDialog.value = false
+    }
+
+    /** 实际发送：追加用户消息（文本 + 待发附件 + 待发图片）→ 开启一条新的 AI 流式消息。 */
+    private fun performSend() {
         if (_generating.value) return
         val provider = currentProvider() ?: return
         val model = currentModel(provider) ?: return
         val text = _input.value.trim()
         val attachments = session.consumePendingAttachments()
-        if (text.isEmpty() && attachments.isEmpty()) return
+        val images = session.consumePendingImages()
+        if (text.isEmpty() && attachments.isEmpty() && images.isEmpty()) return
         _input.value = ""
         _error.value = null
         val parts = mutableListOf<ChatPart>()
         if (text.isNotEmpty()) parts.add(ChatPart.Text(text))
         parts.addAll(attachments)
+        parts.addAll(images)
         session.append(
             ChatMessage(
                 id = UUID.randomUUID().toString(),
@@ -209,8 +308,9 @@ class AiChatViewModel @Inject constructor(
         val message = session.messages.value.firstOrNull { it.id == messageId } ?: return
         if (message.role != ChatRole.USER) return
         _input.value = message.text
-        // 文档附回待发区（沿用消息内的内容快照；去重）
+        // 文档 / 图片附回待发区（沿用消息内的内容快照；去重）
         session.restorePendingAttachments(message.parts.filterIsInstance<ChatPart.Document>())
+        session.restorePendingImages(message.parts.filterIsInstance<ChatPart.Image>())
         session.truncateFrom(messageId)
         _error.value = null
     }
@@ -356,6 +456,220 @@ class AiChatViewModel @Inject constructor(
         _docPickerLoading.value = false
     }
 
+    // ---------------------------------------------------------------- 图片附加（§7）
+
+    /** 相册选图：vision 与 3 张上限守卫 → 预处理 → 成功入待发；失败按原因提示。 */
+    fun attachImage(uri: Uri) {
+        if (!visionEnabled.value) return
+        if (session.pendingImages.value.size >= AiImagePreparer.MAX_IMAGES) {
+            _message.value = UiText.of(R.string.ai_chat_image_limit)
+            return
+        }
+        viewModelScope.launch {
+            when (val result = imagePreparer.prepareFromUri(uri)) {
+                is ImagePrepResult.Success -> session.addPendingImage(result.image)
+                is ImagePrepResult.Failure -> _message.value = imageFailureText(result.reason)
+            }
+        }
+    }
+
+    /** 移除待发图片（按本地临时路径）。 */
+    fun removePendingImage(localPath: String) {
+        session.removePendingImage(localPath)
+    }
+
+    /** 打开「文档取图」：解析会话涉及文档（待发附件 + 已发送消息）中的本地白名单图片。 */
+    fun openDocImagePicker() {
+        if (_docImageItems.value != null) return
+        _docImageItems.value = emptyList()
+        _docImageLoading.value = true
+        viewModelScope.launch {
+            val items = withContext(Dispatchers.IO) { resolveDocImages() }
+            _docImageItems.value = items
+            _docImageLoading.value = false
+        }
+    }
+
+    fun closeDocImagePicker() {
+        _docImageItems.value = null
+        _docImageLoading.value = false
+    }
+
+    /** 文档取图确认：逐张预处理（沿用同一压缩管线；3 张上限守卫）。 */
+    fun confirmDocImageSelection(paths: List<String>) {
+        if (paths.isEmpty()) {
+            closeDocImagePicker()
+            return
+        }
+        viewModelScope.launch {
+            val items = _docImageItems.value.orEmpty().associateBy { it.file.absolutePath }
+            var limitHit = false
+            var failure: ImagePrepFailure? = null
+            for (path in paths) {
+                if (session.pendingImages.value.size >= AiImagePreparer.MAX_IMAGES) {
+                    limitHit = true
+                    break
+                }
+                val item = items[path] ?: continue
+                when (val result = imagePreparer.prepareFromVaultFile(item.file, item.name)) {
+                    is ImagePrepResult.Success -> session.addPendingImage(result.image)
+                    is ImagePrepResult.Failure -> if (failure == null) failure = result.reason
+                }
+            }
+            closeDocImagePicker()
+            failure?.let { _message.value = imageFailureText(it) }
+            if (limitHit) _message.value = UiText.of(R.string.ai_chat_image_limit)
+        }
+    }
+
+    /**
+     * 解析会话涉及文档中的本地图片（IO）：待发附件 + 已发送消息 Document part（相对路径
+     * 去重）→ [ImageReference.resolveExisting]（nameIndex 空，按笔记同目录 / assets/ /
+     * 根路径启发）→ 白名单过滤 + 绝对路径去重。
+     */
+    private fun resolveDocImages(): List<DocImageItem> {
+        val vaultPath = runCatching { settingsRepository.settings.first().vaultPath }.getOrNull()
+            ?: return emptyList()
+        val root = File(vaultPath).normalize()
+        val docs = LinkedHashMap<String, ChatPart.Document>()
+        session.pendingAttachments.value.forEach { docs.putIfAbsent(it.vaultRelPath, it) }
+        session.messages.value.forEach { message ->
+            message.parts.filterIsInstance<ChatPart.Document>().forEach { doc ->
+                docs.putIfAbsent(doc.vaultRelPath, doc)
+            }
+        }
+        val seen = mutableSetOf<String>()
+        val items = mutableListOf<DocImageItem>()
+        docs.values.forEach { doc ->
+            val noteFile = File(root, doc.vaultRelPath).normalize()
+            val abs = noteFile.absolutePath
+            if (abs != root.absolutePath && !abs.startsWith(root.absolutePath + File.separator)) {
+                return@forEach
+            }
+            val noteDir = noteFile.parentFile ?: root
+            ImageReference.extract(doc.content).forEach { ref ->
+                val file = ImageReference.resolveExisting(ref, root, noteDir) ?: return@forEach
+                if (!AiImagePreparer.isSupportedExtension(file.extension)) return@forEach
+                if (!seen.add(file.absolutePath)) return@forEach
+                items += DocImageItem(
+                    sourceDoc = doc.name,
+                    file = file,
+                    name = file.name,
+                    sizeBytes = file.length()
+                )
+            }
+        }
+        return items
+    }
+
+    /** 图片预处理失败原因 → 提示文案。 */
+    private fun imageFailureText(reason: ImagePrepFailure): UiText = when (reason) {
+        ImagePrepFailure.UNSUPPORTED_FORMAT -> UiText.of(R.string.ai_chat_image_unsupported_format)
+        ImagePrepFailure.TOO_LARGE -> UiText.of(R.string.ai_chat_image_too_large)
+        ImagePrepFailure.READ_FAILED -> UiText.of(R.string.ai_chat_image_read_failed)
+    }
+
+    // ---------------------------------------------------------------- 压缩（§6）
+
+    /** 手动压缩：存在可压缩区且空闲时执行摘要压缩（失败自动降级滑动窗口，§6.4）。 */
+    fun compressContext() {
+        if (_generating.value || _compressing.value) return
+        if (compressor.compressibleCount(session.messages.value) <= 0) return
+        val provider = currentProvider() ?: return
+        val model = currentModel(provider) ?: return
+        _compressing.value = true
+        viewModelScope.launch {
+            try {
+                val outcome = compressor.compressIfNeeded(
+                    history = session.messages.value,
+                    provider = provider,
+                    model = model,
+                    force = true
+                )
+                if (outcome != null) {
+                    session.replaceMessages(outcome.messages)
+                    _message.value = compressDoneText(outcome.mode, outcome.removedCount)
+                }
+            } finally {
+                _compressing.value = false
+            }
+        }
+    }
+
+    /**
+     * 流前压缩检查（§6.1）：超预算（或 [force]）时压缩并整体写回会话
+     * （进行中的流式占位消息由 compressor 原位保留）。
+     * @return 是否实际压缩（ContextOverflow 重试路径据此决定是否重试）
+     */
+    private suspend fun compressBeforeStream(
+        provider: AiProvider,
+        model: AiModel,
+        force: Boolean = false
+    ): Boolean {
+        val outcome = compressor.compressIfNeeded(
+            history = session.messages.value,
+            provider = provider,
+            model = model,
+            force = force
+        ) ?: return false
+        session.replaceMessages(outcome.messages)
+        if (outcome.removedCount > 0) {
+            _message.value = UiText.of(R.string.ai_chat_auto_compressed)
+        }
+        return true
+    }
+
+    private fun compressDoneText(mode: SystemNoteMode, count: Int): UiText = when (mode) {
+        SystemNoteMode.SUMMARIZED -> UiText.of(R.string.ai_chat_compressed, count)
+        SystemNoteMode.TRIMMED -> UiText.of(R.string.ai_chat_trimmed, count)
+    }
+
+    // ---------------------------------------------------------------- 导出（§8）
+
+    /** 导出中（防重复导出；写盘很快，无需进度态）。 */
+    private var exporting = false
+
+    /** 打开导出对话框；[defaultSelectedId] null = 顶栏入口（默认不选），非空 = 操作行入口（默认选中该条）。 */
+    fun openExport(defaultSelectedId: String? = null) {
+        _exportDefaultSelected.value = defaultSelectedId
+        _exportVisible.value = true
+    }
+
+    fun closeExport() {
+        _exportVisible.value = false
+        _exportDefaultSelected.value = null
+    }
+
+    /** 导出勾选消息：写仓库根 + 调度保存同步 + 完成后弹「查看」入口（§8.2）。 */
+    fun exportSelected(selectedIds: Set<String>, includeToolTrail: Boolean) {
+        if (exporting || selectedIds.isEmpty()) return
+        exporting = true
+        viewModelScope.launch {
+            try {
+                val result = exporter.export(session.messages.value, selectedIds, includeToolTrail)
+                if (result == null) {
+                    _message.value = UiText.of(R.string.ai_chat_export_failed)
+                } else {
+                    syncScheduler.scheduleSaveSync()
+                    closeExport()
+                    _exportDone.value = ExportDone(result.fileName, result.absolutePath)
+                }
+            } finally {
+                exporting = false
+            }
+        }
+    }
+
+    /** 消费 Snackbar 文案（展示后置空）。 */
+    fun consumeMessage() {
+        _message.value = null
+    }
+
+    /** 消费导出完成数据（Snackbar 展示后置空）。 */
+    fun consumeExportDone() {
+        _exportDone.value = null
+    }
+
     // ---------------------------------------------------------------- 会话与模型
 
     /** ⊕ 新会话：有消息时弹二次确认（空会话无需确认）。 */
@@ -369,6 +683,8 @@ class AiChatViewModel @Inject constructor(
         stop()
         session.clear()
         _error.value = null
+        // 图片临时文件随会话清空一并清理（无消息再引用本地路径）
+        viewModelScope.launch { imagePreparer.cleanup() }
     }
 
     fun dismissNewSession() {
@@ -408,6 +724,7 @@ class AiChatViewModel @Inject constructor(
     /**
      * 流式收集：TextDelta / ReasoningDelta 写入缓冲，由 50ms ticker 合并更新
      * （§9.3 流式渲染节流）；流结束 / 取消 / 失败前强制 flush。
+     * 流前自动压缩（§6.1）；ContextOverflow 且零输出时强制压缩重试一次（§4.4）。
      */
     private suspend fun runStream(provider: AiProvider, model: AiModel, assistantId: String) =
         coroutineScope {
@@ -418,6 +735,8 @@ class AiChatViewModel @Inject constructor(
             var failure: AiError? = null
             // 是否执行过工具（零内容兜底判定用：有轨迹不算「空」）
             var toolCompleted = false
+            // ContextOverflow 压缩后重试标记（§4.4，仅重试一次）
+            var overflowRetried = false
 
             fun flush() {
                 if (!textDirty && !reasoningDirty) return
@@ -437,52 +756,67 @@ class AiChatViewModel @Inject constructor(
                 }
             }
             try {
-                engine.stream(provider, model, session.messages.value).collect { event ->
-                    when (event) {
-                        is StreamEvent.TextDelta -> {
-                            textBuffer.append(event.text)
-                            textDirty = true
-                        }
-
-                        is StreamEvent.ReasoningDelta -> {
-                            reasoningBuffer.append(event.text)
-                            reasoningDirty = true
-                        }
-
-                        is StreamEvent.Failure -> failure = event.error
-
-                        // 终态事件：状态流转在流结束后统一处理
-                        StreamEvent.MessageStop -> Unit
-
-                        // 工具循环状态事件（ToolCallRequested 为 engine 内部消化信号）
-                        is StreamEvent.ToolCallStarted -> _toolStatus.value = event.records
-
-                        is StreamEvent.ToolCallCompleted -> {
-                            toolCompleted = true
-                            _toolStatus.value = null
-                            session.updateMessage(assistantId) { message ->
-                                message.copy(
-                                    toolTrail = message.toolTrail + event.records,
-                                    toolExchanges = message.toolExchanges + event.exchange
-                                )
+                // §6.1 流前自动压缩（超预算时；进行中的流式占位消息由 compressor 原位保留）
+                compressBeforeStream(provider, model)
+                while (true) {
+                    engine.stream(provider, model, session.messages.value).collect { event ->
+                        when (event) {
+                            is StreamEvent.TextDelta -> {
+                                textBuffer.append(event.text)
+                                textDirty = true
                             }
-                        }
 
-                        is StreamEvent.ToolCallRequested -> Unit
+                            is StreamEvent.ReasoningDelta -> {
+                                reasoningBuffer.append(event.text)
+                                reasoningDirty = true
+                            }
+
+                            is StreamEvent.Failure -> failure = event.error
+
+                            // 终态事件：状态流转在流结束后统一处理
+                            StreamEvent.MessageStop -> Unit
+
+                            // 工具循环状态事件（ToolCallRequested 为 engine 内部消化信号）
+                            is StreamEvent.ToolCallStarted -> _toolStatus.value = event.records
+
+                            is StreamEvent.ToolCallCompleted -> {
+                                toolCompleted = true
+                                _toolStatus.value = null
+                                session.updateMessage(assistantId) { message ->
+                                    message.copy(
+                                        toolTrail = message.toolTrail + event.records,
+                                        toolExchanges = message.toolExchanges + event.exchange
+                                    )
+                                }
+                            }
+
+                            is StreamEvent.ToolCallRequested -> Unit
+                        }
                     }
-                }
-                flush()
-                val error = failure
-                // 零内容兜底：无正文 / 无思考 / 无工具轨迹 = 中转站静默空响应（渲染为零高
-                // 不可见气泡），统一收敛为错误条保留重试能力，绝不留静默空泡
-                val empty = textBuffer.isEmpty() && reasoningBuffer.isEmpty() && !toolCompleted
-                if (error == null && !empty) {
-                    session.updateMessage(assistantId) { it.copy(status = MessageStatus.COMPLETE) }
-                } else {
-                    session.updateMessage(assistantId) { it.copy(status = MessageStatus.ERROR) }
-                    val (text, showSettings) = error?.let { errorDisplay(it) }
-                        ?: (UiText.of(R.string.ai_chat_error_empty) to false)
-                    _error.value = ChatErrorState(assistantId, text, showSettings)
+                    flush()
+                    val error = failure
+                    // §4.4 ContextOverflow 且本轮零输出：强制压缩后重试一次（仍失败走错误条）
+                    if (error == AiError.ContextOverflow && !overflowRetried &&
+                        textBuffer.isEmpty() && reasoningBuffer.isEmpty()
+                    ) {
+                        overflowRetried = true
+                        if (compressBeforeStream(provider, model, force = true)) {
+                            failure = null
+                            continue
+                        }
+                    }
+                    // 零内容兜底：无正文 / 无思考 / 无工具轨迹 = 中转站静默空响应（渲染为零高
+                    // 不可见气泡），统一收敛为错误条保留重试能力，绝不留静默空泡
+                    val empty = textBuffer.isEmpty() && reasoningBuffer.isEmpty() && !toolCompleted
+                    if (error == null && !empty) {
+                        session.updateMessage(assistantId) { it.copy(status = MessageStatus.COMPLETE) }
+                    } else {
+                        session.updateMessage(assistantId) { it.copy(status = MessageStatus.ERROR) }
+                        val (text, showSettings) = error?.let { errorDisplay(it) }
+                            ?: (UiText.of(R.string.ai_chat_error_empty) to false)
+                        _error.value = ChatErrorState(assistantId, text, showSettings)
+                    }
+                    break
                 }
             } catch (e: CancellationException) {
                 flush()
@@ -575,6 +909,7 @@ class AiChatViewModel @Inject constructor(
             AiError.RateLimited -> UiText.of(R.string.ai_chat_error_rate_limited) to false
             AiError.Server -> UiText.of(R.string.ai_chat_error_server) to false
             AiError.ContextOverflow -> UiText.of(R.string.ai_chat_error_context_overflow) to false
+            AiError.RequestTooLarge -> UiText.of(R.string.ai_chat_error_request_too_large) to false
             AiError.Network -> UiText.of(R.string.ai_chat_error_network) to false
             is AiError.Api -> UiText.of(R.string.ai_chat_error_api, error.message) to false
             AiError.Unknown -> UiText.of(R.string.ai_chat_error_unknown) to false

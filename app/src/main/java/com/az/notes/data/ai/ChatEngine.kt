@@ -5,6 +5,7 @@ import com.az.notes.data.ai.protocol.AnthropicAdapter
 import com.az.notes.data.ai.protocol.ChatRequest
 import com.az.notes.data.ai.protocol.OpenAiChatAdapter
 import com.az.notes.data.ai.protocol.OpenAiResponsesAdapter
+import com.az.notes.data.ai.protocol.TransportImage
 import com.az.notes.data.ai.protocol.TransportMessage
 import com.az.notes.data.settings.SettingsRepository
 import com.az.notes.domain.ai.AiError
@@ -12,6 +13,7 @@ import com.az.notes.domain.ai.AiModel
 import com.az.notes.domain.ai.AiProtocol
 import com.az.notes.domain.ai.AiProvider
 import com.az.notes.domain.ai.ChatMessage
+import com.az.notes.domain.ai.ChatPart
 import com.az.notes.domain.ai.ChatRole
 import com.az.notes.domain.ai.MessageStatus
 import com.az.notes.domain.ai.PromptTemplates
@@ -31,16 +33,17 @@ import kotlinx.coroutines.flow.transformWhile
 import kotlinx.coroutines.withContext
 
 /**
- * 对话编排（B3 工具循环版）：读 Key → 按协议选 adapter → 每轮请求携带工具定义；
+ * 对话编排：读 Key → 按协议选 adapter → 每轮请求携带工具定义；
  * 模型请求工具时本地执行（[VaultToolExecutor]，IO 线程）→ 回填传输态 → 下一轮，直至无工具调用。
- * - 历史组装：仅终态消息（COMPLETE / CANCELED）参与；USER 经 [ContextAssembler] 渲染（含附件文档）；
+ * - 历史组装：仅终态消息（COMPLETE / CANCELED）参与；USER 经 [ContextAssembler] 渲染（含附件文档）
+ *   并逐张编码附加图片（[AiImagePreparer]，失败单张降级文本占位）；
  *   ASSISTANT 按 toolExchanges 展开工具往返（assistant(tool_calls) → tool 结果）后再接正文
  * - 安全阀：轮数超过 [MAX_TOOL_ROUNDS] 或工具累计超过 [MAX_TOOL_CALLS] 时，执行额度内调用并
  *   附「请基于已获取的信息作答」提示以 tools=null 收尾；收尾轮仍请求工具时丢弃调用并再
  *   强制作答一次，仍不收敛才结束——零正文时转 Failure，绝不静默空收尾
  * - 对外契约：仅透传 Text / Reasoning / Started / Completed / Stop / Failure
  *   （ToolCallRequested 为内部消化信号）
- * - 不发送采样参数（用户已确认用服务端默认）；压缩检查（B4）将在此扩展
+ * - 不发送采样参数（用户已确认用服务端默认）；上下文压缩检查由 VM 在 stream 之前前置执行
  */
 @Singleton
 class ChatEngine @Inject constructor(
@@ -49,7 +52,8 @@ class ChatEngine @Inject constructor(
     private val openAiResponses: OpenAiResponsesAdapter,
     private val anthropic: AnthropicAdapter,
     private val settingsRepository: SettingsRepository,
-    private val toolExecutor: VaultToolExecutor
+    private val toolExecutor: VaultToolExecutor,
+    private val imagePreparer: AiImagePreparer
 ) {
 
     /** 发起一次流式生成（[history] 为会话消息快照；输出统一 [StreamEvent] 流）。 */
@@ -208,13 +212,15 @@ class ChatEngine @Inject constructor(
         }
 
     /**
-     * 历史 → 传输态：
+     * 历史 → 传输态（suspend：图片编码需读盘）：
      * - 只取终态消息（COMPLETE / CANCELED）；ERROR / STREAMING 排除
-     * - USER：Text + 附件文档经 [ContextAssembler] 渲染为单条文本
+     * - USER：Text + 附件文档经 [ContextAssembler] 渲染为单条文本；附加图片逐张
+     *   [AiImagePreparer.encodeForTransport] 编码（失败单张降级 `[图片: 名称]` 文本占位）；
+     *   纯图无文本消息照常成条目
      * - ASSISTANT：先按 toolExchanges 展开往返（assistant(tool_calls) → tool 结果…），再接正文文本
-     * - SYSTEM：system 条目直传（压缩摘要，B4 起出现）
+     * - SYSTEM：system 条目直传（压缩摘要；空文本条目不进入传输）
      */
-    private fun buildTransport(history: List<ChatMessage>): List<TransportMessage> {
+    private suspend fun buildTransport(history: List<ChatMessage>): List<TransportMessage> {
         val out = mutableListOf<TransportMessage>()
         history.filter {
             it.status == MessageStatus.COMPLETE || it.status == MessageStatus.CANCELED
@@ -222,7 +228,22 @@ class ChatEngine @Inject constructor(
             when (message.role) {
                 ChatRole.USER -> {
                     val text = ContextAssembler.renderUserText(message)
-                    if (text.isNotBlank()) out += TransportMessage(role = ChatRole.USER, text = text)
+                    val images = mutableListOf<TransportImage>()
+                    val parts = mutableListOf<String>()
+                    if (text.isNotBlank()) parts += text
+                    message.parts.filterIsInstance<ChatPart.Image>().forEach { image ->
+                        val encoded = imagePreparer.encodeForTransport(image)
+                        if (encoded != null) {
+                            images += encoded
+                        } else {
+                            // 单张降级：读取失败 / 产物缺失 / 超限 → 文本占位，不影响其余图片
+                            parts += "[图片: ${image.name}]"
+                        }
+                    }
+                    val merged = parts.joinToString("\n")
+                    if (merged.isNotBlank() || images.isNotEmpty()) {
+                        out += TransportMessage(role = ChatRole.USER, text = merged, images = images)
+                    }
                 }
                 ChatRole.ASSISTANT -> {
                     message.toolExchanges.forEach { exchange ->

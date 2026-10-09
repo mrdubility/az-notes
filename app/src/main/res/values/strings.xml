@@ -340,6 +340,44 @@
     <string name="ai_chat_error_api">服务商错误：%1$s</string>
     <string name="ai_chat_error_unknown">生成失败，请重试</string>
     <string name="ai_chat_error_empty">模型未返回任何内容，请重试或更换模型</string>
+    <string name="ai_chat_error_request_too_large">请求体过大，请减少图片或文档后重试</string>
+
+    <!-- 对话增强：压缩 / 图片 / 导出 / 隐私 / 甄别 -->
+    <string name="ai_chat_disclaimer">内容由 AI 生成，请仔细甄别</string>
+    <string name="ai_chat_privacy_title">隐私提示</string>
+    <string name="ai_chat_privacy_message">发送时，对话内容、所选文档与图片将传输至你配置的模型服务商；请确认知悉后再继续。</string>
+    <string name="ai_chat_privacy_confirm">我知道了</string>
+    <string name="ai_chat_compress">压缩上下文</string>
+    <string name="ai_chat_compressing">正在压缩…</string>
+    <string name="ai_chat_compressed">已压缩 %1$d 条早期消息</string>
+    <string name="ai_chat_trimmed">已丢弃 %1$d 条早期消息</string>
+    <string name="ai_chat_auto_compressed">上下文较长，已自动压缩</string>
+    <string name="ai_chat_add_image">添加图片</string>
+    <string name="ai_chat_doc_image">文档取图</string>
+    <string name="ai_chat_doc_image_title">从文档中选择图片</string>
+    <string name="ai_chat_doc_image_empty">未在会话涉及的文档中找到可添加的图片</string>
+    <string name="ai_chat_doc_image_add">添加（%1$d）</string>
+    <string name="ai_chat_doc_image_source">来源：%1$s</string>
+    <string name="ai_chat_image_unsupported">当前模型不支持图片</string>
+    <string name="ai_chat_image_unsupported_format">不支持该图片格式（仅支持 jpg / png / webp）</string>
+    <string name="ai_chat_image_too_large">图片过大，已超出体积限制</string>
+    <string name="ai_chat_image_read_failed">图片读取失败，请重试</string>
+    <string name="ai_chat_image_limit">单条消息最多添加 3 张图片</string>
+    <string name="ai_chat_export">导出对话</string>
+    <string name="ai_chat_export_select">选择导出</string>
+    <string name="ai_chat_export_title">导出对话</string>
+    <string name="ai_chat_export_select_all">全选</string>
+    <string name="ai_chat_export_invert">反选</string>
+    <string name="ai_chat_export_include_trail">包含工具轨迹</string>
+    <string name="ai_chat_export_confirm">导出为 Markdown 文档（%1$d）</string>
+    <string name="ai_chat_export_summary_docs">已发送 %1$d 个文档</string>
+    <string name="ai_chat_export_summary_images">已发送 %1$d 张图片</string>
+    <string name="ai_chat_export_done">已导出到仓库根目录</string>
+    <string name="ai_chat_export_view">查看</string>
+    <string name="ai_chat_export_failed">导出失败，请重试</string>
+    <string name="ai_chat_role_user">用户</string>
+    <string name="ai_chat_role_ai">AI</string>
+    <string name="ai_chat_role_system">系统</string>
 
     <!-- 备份与恢复（设置 → 备份；导出 / 导入全部配置） -->
     <string name="settings_backup_section">备份</string>

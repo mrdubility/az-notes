@@ -76,6 +76,7 @@ class SettingsRepository @Inject constructor(
         val ATTACHMENT_PROMPT = booleanPreferencesKey("attachment_prompt_enabled")
         val REMOTE_IMAGE_MAX_MB = intPreferencesKey("remote_image_max_mb")
         val REMOTE_IMAGE_TIMEOUT = intPreferencesKey("remote_image_timeout_seconds")
+        val AI_PRIVACY_ACK = booleanPreferencesKey("ai_privacy_acknowledged")
 
         /** 仓库注册表（JSON 序列化的 [VaultInfo] 列表） */
         val VAULTS = stringPreferencesKey("vaults")
@@ -146,7 +147,8 @@ class SettingsRepository @Inject constructor(
                 .coerceIn(0, AppSettings.REMOTE_IMAGE_MAX_MB_LIMIT),
             remoteImageTimeoutSeconds = (prefs[Keys.REMOTE_IMAGE_TIMEOUT]
                 ?: AppSettings.DEFAULT_REMOTE_IMAGE_TIMEOUT_SECONDS)
-                .coerceIn(AppSettings.REMOTE_IMAGE_TIMEOUT_RANGE)
+                .coerceIn(AppSettings.REMOTE_IMAGE_TIMEOUT_RANGE),
+            aiPrivacyAcknowledged = prefs[Keys.AI_PRIVACY_ACK] ?: false
         )
     }
 
@@ -347,6 +349,9 @@ class SettingsRepository @Inject constructor(
     suspend fun setRemoteImageTimeoutSeconds(seconds: Int) = edit {
         it[Keys.REMOTE_IMAGE_TIMEOUT] = seconds.coerceIn(AppSettings.REMOTE_IMAGE_TIMEOUT_RANGE)
     }
+
+    /** AI 对话隐私告知已确认（§11.3 一次性告知；确认后持久化，此后不再弹出）。 */
+    suspend fun setAiPrivacyAcknowledged() = edit { it[Keys.AI_PRIVACY_ACK] = true }
 
     // ------------------------------------------------- 配置备份 / 恢复（§5.6）
 

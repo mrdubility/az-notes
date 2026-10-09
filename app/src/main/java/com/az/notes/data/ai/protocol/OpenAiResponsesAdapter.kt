@@ -28,7 +28,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
  *   结果回填为 `function_call_output`（call_id 关联）；`output_item.added` / 参数分片 / `output_item.done`
  *   累积，`response.completed` 时成组发出（否则 → MessageStop）
  * - `response.failed` / error 事件 → 透传文案
- * - 图片（B4）时扩展 input item 结构
+ * - 图片：附加图片时 input item 的 content 扩展为 input_text + input_image 数组
  */
 @Singleton
 class OpenAiResponsesAdapter @Inject constructor(
@@ -80,10 +80,28 @@ class OpenAiResponsesAdapter @Inject constructor(
                         }
                         return@forEach
                     }
-                    if (message.text.isNotBlank()) {
+                    if (message.text.isNotBlank() || message.images.isNotEmpty()) {
                         addJsonObject {
                             put("role", message.role.name.lowercase())
-                            put("content", message.text)
+                            if (message.images.isEmpty()) {
+                                put("content", message.text)
+                            } else {
+                                // 带图消息：content 数组形态（可选 input_text + input_image data URI）
+                                putJsonArray("content") {
+                                    if (message.text.isNotBlank()) {
+                                        addJsonObject {
+                                            put("type", "input_text")
+                                            put("text", message.text)
+                                        }
+                                    }
+                                    message.images.forEach { image ->
+                                        addJsonObject {
+                                            put("type", "input_image")
+                                            put("image_url", "data:${image.mime};base64,${image.base64}")
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                     message.toolCalls.forEach { call ->

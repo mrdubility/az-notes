@@ -3,6 +3,9 @@ package com.az.notes.ui.ai
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,14 +28,17 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
+import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SmallFloatingActionButton
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -51,31 +57,34 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.az.notes.R
 import com.az.notes.domain.ai.ChatRole
 import com.az.notes.domain.ai.MessageStatus
+import com.az.notes.ui.common.resolve
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 
 /**
- * 对话页（§9，B3 工具循环版）：
- * - TopAppBar：返回 / 标题 + 副标题（供应商 · 模型，点击弹模型菜单）/ ⊕ 新会话
+ * 对话页（§9）：
+ * - TopAppBar：返回 / 标题 + 副标题（供应商 · 模型，点击弹模型菜单）/ 导出 / ⊕ 新会话
  * - 消息列表：反转布局（列表原点即底部、index 0 为最新）——贴底时流式增长由布局
  *   锚定自动保持、无需程序滚动（消除闪动）；离开底部暂停跟随并显示「回到底部」，
  *   程序滚动统一走 animate 平滑过渡
- * - 输入卡片：imePadding 随键盘上浮；多行自增；生成中发送变停止；发送后收起输入法；
- *   输入行内置「选择文档」回形针入口；待发附件卡片行 + §9.3 空态三快捷动作
- * - 导出、隐私提示、压缩 / 图片项随 B4 引入，本批不预留
+ * - 输入区：待发附件行（文档 + 图片）→ 输入卡片（imePadding 随键盘上浮）→ 功能行
+ *   （选择文档 / 压缩上下文 / 添加图片 / 文档取图，§9.1）→ 甄别常驻行
+ * - 弹层：文档选择器 / 导出选择（§8.1）/ 文档取图（§7.2）/ 隐私一次性告知（§11.3）
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AiChatScreen(
     viewModel: AiChatViewModel,
     onBack: () -> Unit,
-    onOpenProviders: () -> Unit
+    onOpenProviders: () -> Unit,
+    onOpenNote: (String) -> Unit
 ) {
     // 保留 State 而非 by 解构：滚动协程内需同步读取最新消息构建指纹
     val messagesState = viewModel.messages.collectAsStateWithLifecycle()
@@ -88,11 +97,22 @@ fun AiChatScreen(
     val error by viewModel.error.collectAsStateWithLifecycle()
     val showConfirm by viewModel.showNewSessionConfirm.collectAsStateWithLifecycle()
     val pendingAttachments by viewModel.pendingAttachments.collectAsStateWithLifecycle()
+    val pendingImages by viewModel.pendingImages.collectAsStateWithLifecycle()
     val toolStatus by viewModel.toolStatus.collectAsStateWithLifecycle()
     val docPickerItems by viewModel.docPickerItems.collectAsStateWithLifecycle()
     val docPickerQuery by viewModel.docPickerQuery.collectAsStateWithLifecycle()
     val docPickerLoading by viewModel.docPickerLoading.collectAsStateWithLifecycle()
     val docPickerHasMore by viewModel.docPickerHasMore.collectAsStateWithLifecycle()
+    val canCompress by viewModel.canCompress.collectAsStateWithLifecycle()
+    val compressing by viewModel.compressing.collectAsStateWithLifecycle()
+    val visionEnabled by viewModel.visionEnabled.collectAsStateWithLifecycle()
+    val docImageItems by viewModel.docImageItems.collectAsStateWithLifecycle()
+    val docImageLoading by viewModel.docImageLoading.collectAsStateWithLifecycle()
+    val exportVisible by viewModel.exportVisible.collectAsStateWithLifecycle()
+    val exportDefaultSelected by viewModel.exportDefaultSelected.collectAsStateWithLifecycle()
+    val privacyDialog by viewModel.privacyDialog.collectAsStateWithLifecycle()
+    val snackbarMessage by viewModel.message.collectAsStateWithLifecycle()
+    val exportDone by viewModel.exportDone.collectAsStateWithLifecycle()
 
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
@@ -171,6 +191,35 @@ fun AiChatScreen(
         scope.launch { snackbarHostState.showSnackbar(context.getString(R.string.ai_chat_copied)) }
     }
 
+    // 系统图片选择器（相册）：选中后交 VM 预处理（压缩 + 临时落盘，§7）
+    val imagePicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        if (uri != null) viewModel.attachImage(uri)
+    }
+
+    // 一次性 Snackbar 文案（自动压缩 / 图片失败 / 导出失败等；展示后消费）
+    val snackbarText = snackbarMessage?.resolve()
+    LaunchedEffect(snackbarText) {
+        if (snackbarText != null) {
+            snackbarHostState.showSnackbar(snackbarText)
+            viewModel.consumeMessage()
+        }
+    }
+
+    // 导出完成提示：「查看」跳预览页（§8.2）
+    LaunchedEffect(exportDone) {
+        val done = exportDone ?: return@LaunchedEffect
+        val result = snackbarHostState.showSnackbar(
+            message = context.getString(R.string.ai_chat_export_done),
+            actionLabel = context.getString(R.string.ai_chat_export_view),
+            withDismissAction = true,
+            duration = SnackbarDuration.Long
+        )
+        if (result == SnackbarResult.ActionPerformed) onOpenNote(done.absolutePath)
+        viewModel.consumeExportDone()
+    }
+
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
@@ -232,6 +281,16 @@ fun AiChatScreen(
                     }
                 },
                 actions = {
+                    // 导出入口（§8.1）：有消息时可用，默认不勾选
+                    IconButton(
+                        onClick = { viewModel.openExport() },
+                        enabled = messages.isNotEmpty()
+                    ) {
+                        Icon(
+                            Icons.Outlined.Share,
+                            stringResource(R.string.ai_chat_export)
+                        )
+                    }
                     IconButton(onClick = viewModel::requestNewSession) {
                         Icon(
                             Icons.Outlined.Add,
@@ -270,8 +329,8 @@ fun AiChatScreen(
                         contentPadding = PaddingValues(vertical = 8.dp)
                     ) {
                         items(items = messages.asReversed(), key = { it.id }) { message ->
-                            if (message.role == ChatRole.USER) {
-                                UserBubble(
+                            when (message.role) {
+                                ChatRole.USER -> UserBubble(
                                     message = message,
                                     busy = generating,
                                     onCopy = { copyToClipboard(message.text) },
@@ -279,10 +338,15 @@ fun AiChatScreen(
                                         // 主动重发路径同样强制跟随
                                         following = true
                                         viewModel.editResend(message.id)
-                                    }
+                                    },
+                                    onExportSelect = { viewModel.openExport(message.id) }
                                 )
-                            } else {
-                                AssistantBlock(
+
+                                ChatRole.SYSTEM -> message.systemNote?.let { note ->
+                                    SystemNoteRow(note)
+                                }
+
+                                else -> AssistantBlock(
                                     message = message,
                                     error = error,
                                     busy = generating,
@@ -301,7 +365,8 @@ fun AiChatScreen(
                                         following = true
                                         viewModel.regenerate(message.id)
                                     },
-                                    onOpenSettings = onOpenProviders
+                                    onOpenSettings = onOpenProviders,
+                                    onExportSelect = { viewModel.openExport(message.id) }
                                 )
                             }
                         }
@@ -326,11 +391,13 @@ fun AiChatScreen(
                     }
                 }
             }
-            // 待发附件卡片行（非空时；随发送清空）
-            if (pendingAttachments.isNotEmpty()) {
+            // 待发附件 / 图片卡片行（非空时；随发送清空）
+            if (pendingAttachments.isNotEmpty() || pendingImages.isNotEmpty()) {
                 PendingAttachmentRow(
                     documents = pendingAttachments,
-                    onRemove = viewModel::removePendingAttachment
+                    images = pendingImages,
+                    onRemove = viewModel::removePendingAttachment,
+                    onRemoveImage = viewModel::removePendingImage
                 )
                 Spacer(Modifier.height(4.dp))
             }
@@ -339,7 +406,7 @@ fun AiChatScreen(
                 onValueChange = viewModel::setInput,
                 generating = generating,
                 canSend = selectionLabel != null,
-                hasAttachments = pendingAttachments.isNotEmpty(),
+                hasAttachments = pendingAttachments.isNotEmpty() || pendingImages.isNotEmpty(),
                 inputFocusRequester = inputFocusRequester,
                 onSend = {
                     // 自己发送时强制回到底部跟随；发送后收起输入法
@@ -348,10 +415,34 @@ fun AiChatScreen(
                     viewModel.send()
                 },
                 onStop = viewModel::stop,
-                onPickDocument = viewModel::openDocumentPicker,
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 12.dp, vertical = 8.dp)
+            )
+            // 功能行（§9.1）：选择文档 / 压缩上下文 / 添加图片 / 文档取图
+            ChatFeatureRow(
+                canCompress = canCompress,
+                compressing = compressing,
+                imageEnabled = visionEnabled,
+                onPickDocument = viewModel::openDocumentPicker,
+                onCompress = viewModel::compressContext,
+                onPickImage = {
+                    imagePicker.launch(
+                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                    )
+                },
+                onPickDocImage = viewModel::openDocImagePicker,
+                modifier = Modifier.fillMaxWidth()
+            )
+            // 常驻甄别行
+            Text(
+                text = stringResource(R.string.ai_chat_disclaimer),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 2.dp, bottom = 6.dp)
             )
         }
     }
@@ -372,6 +463,27 @@ fun AiChatScreen(
         onLoadMore = viewModel::loadMoreDocPicker,
         onConfirm = viewModel::confirmDocumentSelection,
         onDismiss = viewModel::closeDocumentPicker
+    )
+
+    ExportDialog(
+        visible = exportVisible,
+        messages = messages,
+        defaultSelectedId = exportDefaultSelected,
+        onConfirm = viewModel::exportSelected,
+        onDismiss = viewModel::closeExport
+    )
+
+    DocImagePickerDialog(
+        items = docImageItems,
+        loading = docImageLoading,
+        onConfirm = viewModel::confirmDocImageSelection,
+        onDismiss = viewModel::closeDocImagePicker
+    )
+
+    PrivacyDialog(
+        visible = privacyDialog,
+        onConfirm = viewModel::confirmPrivacy,
+        onDismiss = viewModel::dismissPrivacy
     )
 }
 

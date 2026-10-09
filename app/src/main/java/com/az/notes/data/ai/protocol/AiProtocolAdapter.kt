@@ -36,15 +36,20 @@ data class ChatRequest(
 /**
  * adapter 传输态消息（三 adapter 各自序列化）：
  * - 文本消息：role + text
+ * - 图片：[images] 非空时随消息序列化（OpenAI content 数组 image_url / Anthropic image 块 / Responses input_image）
  * - 工具调用：assistant 的 [toolCalls] 与 text 可共存
  * - 工具结果：role = TOOL，[toolCallId] 关联对应调用
  */
 data class TransportMessage(
     val role: ChatRole,
     val text: String,
+    val images: List<TransportImage> = emptyList(),
     val toolCalls: List<RawToolCall> = emptyList(),
     val toolCallId: String? = null
 )
+
+/** 附加图片的传输态：base64 为无换行编码后的载荷（发送前由调用方逐张编码，失败则该图不附、降级为文本占位）。 */
+data class TransportImage(val mime: String, val base64: String)
 
 /**
  * 三 adapter 共享的「SSE → 统一事件流」外壳：
@@ -112,6 +117,7 @@ internal object AdapterErrors {
         e.code == 401 || e.code == 403 -> AiError.Unauthorized
         e.code == 402 -> AiError.InsufficientBalance
         e.code == 404 -> AiError.NotFound
+        e.code == 413 -> AiError.RequestTooLarge
         e.code == 429 -> AiError.RateLimited
         e.code in 500..599 -> AiError.Server
         looksContextOverflow(e.body) -> AiError.ContextOverflow

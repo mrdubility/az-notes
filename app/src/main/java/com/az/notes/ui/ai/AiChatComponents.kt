@@ -1,5 +1,6 @@
 package com.az.notes.ui.ai
 
+import android.net.Uri
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -23,23 +24,26 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Stop
-import androidx.compose.material.icons.outlined.AttachFile
+import androidx.compose.material.icons.outlined.AddPhotoAlternate
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Compress
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.ExpandLess
 import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.FolderOpen
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Lightbulb
+import androidx.compose.material.icons.outlined.PhotoLibrary
 import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
@@ -61,14 +65,18 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import coil.compose.AsyncImage
 import com.az.notes.R
 import com.az.notes.domain.ai.ChatMessage
 import com.az.notes.domain.ai.ChatPart
 import com.az.notes.domain.ai.MessageStatus
+import com.az.notes.domain.ai.SystemNote
+import com.az.notes.domain.ai.SystemNoteMode
 import com.az.notes.domain.ai.ToolCallRecord
 import com.az.notes.domain.ai.ToolSpecs
 import com.az.notes.ui.common.UiText
@@ -77,23 +85,26 @@ import com.mikepenz.markdown.m3.Markdown
 import com.mikepenz.markdown.model.DefaultMarkdownAnimation
 import com.mikepenz.markdown.model.ReferenceLinkHandlerImpl
 import com.mikepenz.markdown.model.rememberMarkdownState
+import java.io.File
 import org.intellij.markdown.flavours.gfm.GFMFlavourDescriptor
 import org.intellij.markdown.parser.MarkdownParser
 
 /**
- * 对话页组件（§9.2，B3 版）：
- * - [UserBubble] 右对齐气泡（无头像）+ 操作行（复制 / 编辑重发）
+ * 对话页组件（§9.2）：
+ * - [UserBubble] 右对齐气泡（无头像）+ 已发送文档 / 图片卡片 + 操作行（复制 / 编辑重发 / 选择导出）
  * - [AssistantBlock] 思考折叠行（思考中直播滚动 / 结束自动折叠）+ 工具活动行 +
  *   Markdown 正文 + 操作行 + 错误条
  * - [ToolActivityLine] 工具状态行（运行中逐条实时文案 / 完成后已读取摘要）
- * - [PendingAttachmentRow] 待发附件卡片行（图标 + 文件名 + 移除）
- * - [ChatInputCard] 多行自增输入卡片（生成中发送变停止；输入行内置「选择文档」回形针入口）
+ * - [SystemNoteRow] 压缩系统条目（灰色小行：「已压缩 / 已丢弃 N 条早期消息」，§6.5）
+ * - [PendingAttachmentRow] 待发附件卡片行（文档 + 图片缩略图 + 移除）
+ * - [ChatInputCard] 多行自增输入卡片（生成中发送变停止）
+ * - [ChatFeatureRow] 输入卡下方功能行（选择文档 / 压缩上下文 / 添加图片 / 文档取图，§9.1）
  * - [EmptyState] 欢迎语 + §9.3 三快捷动作；无供应商 / 无模型时替换为配置引导
  * - [ErrorBar] 红条 + 重试（401/404 附「去设置」）
  */
 
 /**
- * 用户消息气泡（右对齐）：已发送文档卡片在上方（便于回看本轮发送了哪些文档），
+ * 用户消息气泡（右对齐）：已发送文档 / 图片卡片在上方（便于回看本轮发送了什么），
  * 文本气泡在下；纯附件消息不渲染空气泡。[busy]（生成中）时隐藏编辑重发。
  */
 @Composable
@@ -101,7 +112,8 @@ internal fun UserBubble(
     message: ChatMessage,
     busy: Boolean,
     onCopy: () -> Unit,
-    onEditResend: () -> Unit
+    onEditResend: () -> Unit,
+    onExportSelect: () -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -111,6 +123,10 @@ internal fun UserBubble(
     ) {
         message.parts.filterIsInstance<ChatPart.Document>().forEach { document ->
             SentAttachmentCard(document)
+            Spacer(Modifier.height(4.dp))
+        }
+        message.parts.filterIsInstance<ChatPart.Image>().forEach { image ->
+            ImageAttachmentCard(image)
             Spacer(Modifier.height(4.dp))
         }
         if (message.text.isNotEmpty()) {
@@ -147,6 +163,13 @@ internal fun UserBubble(
                         )
                     )
                 }
+                add(
+                    ChatAction(
+                        Icons.Outlined.Share,
+                        stringResource(R.string.ai_chat_export_select),
+                        onExportSelect
+                    )
+                )
             },
             // 图标自带触控内边距：右移补齐，使视觉右缘与气泡对齐
             modifier = Modifier.offset(x = 4.dp)
@@ -197,7 +220,8 @@ internal fun AssistantBlock(
     onCopy: () -> Unit,
     onRegenerate: () -> Unit,
     onRetry: () -> Unit,
-    onOpenSettings: () -> Unit
+    onOpenSettings: () -> Unit,
+    onExportSelect: () -> Unit
 ) {
     val reasoning = message.reasoning
     val streaming = message.status == MessageStatus.STREAMING
@@ -286,6 +310,13 @@ internal fun AssistantBlock(
                             )
                         )
                     }
+                    add(
+                        ChatAction(
+                            Icons.Outlined.Share,
+                            stringResource(R.string.ai_chat_export_select),
+                            onExportSelect
+                        )
+                    )
                 },
                 modifier = Modifier.offset(x = (-4).dp)
             )
@@ -371,11 +402,46 @@ private fun completedLine(records: List<ToolCallRecord>): String {
     }
 }
 
-/** 待发附件卡片行：图标 + 文件名 + 移除（横向滚动）。 */
+/**
+ * 压缩系统条目（§6.5）：灰色小行展示压缩结果概要（「已压缩 / 已丢弃 N 条早期消息」）；
+ * 摘要正文不再直接展示（已进入后续对话上下文，完整摘要经选中导出回看）。
+ */
+@Composable
+internal fun SystemNoteRow(note: SystemNote) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 6.dp)
+    ) {
+        Icon(
+            imageVector = Icons.Outlined.Info,
+            contentDescription = null,
+            modifier = Modifier.size(13.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.width(6.dp))
+        Text(
+            text = stringResource(
+                when (note.mode) {
+                    SystemNoteMode.SUMMARIZED -> R.string.ai_chat_compressed
+                    SystemNoteMode.TRIMMED -> R.string.ai_chat_trimmed
+                },
+                note.count
+            ),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+/** 待发附件卡片行：文档卡 + 图片卡（缩略图 + 文件名 + 移除，横向滚动）。 */
 @Composable
 internal fun PendingAttachmentRow(
     documents: List<ChatPart.Document>,
-    onRemove: (String) -> Unit
+    images: List<ChatPart.Image>,
+    onRemove: (String) -> Unit,
+    onRemoveImage: (String) -> Unit
 ) {
     LazyRow(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -420,6 +486,56 @@ internal fun PendingAttachmentRow(
                         tint = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
+            }
+        }
+        items(items = images, key = { it.localPath }) { image ->
+            ImageAttachmentCard(image = image, onRemove = { onRemoveImage(image.localPath) })
+        }
+    }
+}
+
+/** 图片附件卡片（待发 / 已发送复用）：缩略图（本地文件）+ 文件名 + 可选移除。 */
+@Composable
+private fun ImageAttachmentCard(image: ChatPart.Image, onRemove: (() -> Unit)? = null) {
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.8f),
+        shape = RoundedCornerShape(12.dp)
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(start = 6.dp, end = 6.dp, top = 5.dp, bottom = 5.dp)
+        ) {
+            AsyncImage(
+                model = Uri.fromFile(File(image.localPath)),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(RoundedCornerShape(8.dp))
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(
+                text = image.name,
+                style = MaterialTheme.typography.labelMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.widthIn(max = 120.dp)
+            )
+            if (onRemove != null) {
+                Spacer(Modifier.width(2.dp))
+                Icon(
+                    imageVector = Icons.Outlined.Close,
+                    contentDescription = stringResource(
+                        R.string.ai_chat_attachment_remove,
+                        image.name
+                    ),
+                    modifier = Modifier
+                        .clip(CircleShape)
+                        .clickable(onClick = onRemove)
+                        .padding(4.dp)
+                        .size(14.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
     }
@@ -606,7 +722,8 @@ private fun ChatActionRow(actions: List<ChatAction>, modifier: Modifier = Modifi
 }
 
 /**
- * 输入卡片：多行自增；生成中发送变停止；输入行内置「选择文档」回形针入口。
+ * 输入卡片：多行自增；生成中发送变停止。功能入口（选择文档 / 压缩 / 图片）在
+ * 卡片下方 [ChatFeatureRow] 一行四按钮（§9.1）。
  * 边距：文本左距 = 行首 4dp + TextField 内建 16dp = 20dp；按钮距卡缘 8dp，
  * 单行时与 56dp 文本行垂直居中（40dp 圆钮 + 底部 8dp，中心对齐）。
  */
@@ -620,7 +737,6 @@ internal fun ChatInputCard(
     inputFocusRequester: FocusRequester,
     onSend: () -> Unit,
     onStop: () -> Unit,
-    onPickDocument: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Surface(
@@ -650,20 +766,6 @@ internal fun ChatInputCard(
                     disabledIndicatorColor = Color.Transparent
                 )
             )
-            // 「选择文档」入口（回形针）：与发送按钮同高同底距，单行时同排居中
-            IconButton(
-                onClick = onPickDocument,
-                modifier = Modifier
-                    .padding(bottom = 8.dp)
-                    .size(40.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Outlined.AttachFile,
-                    contentDescription = stringResource(R.string.ai_chat_attach_document),
-                    modifier = Modifier.size(22.dp),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
             FilledIconButton(
                 onClick = if (generating) onStop else onSend,
                 enabled = generating || (canSend && (value.isNotBlank() || hasAttachments)),
@@ -679,6 +781,107 @@ internal fun ChatInputCard(
                 }
             }
         }
+    }
+}
+
+/**
+ * 功能行（§9.1，输入卡下方一行四按钮）：[选择文档][压缩上下文][添加图片][文档取图]。
+ * - 「压缩上下文」：空闲且有可压缩区（[canCompress]）才可点；[compressing] 时文案变
+ *   「正在压缩…」并禁用（手动压缩防重入，§6.4）
+ * - 「添加图片 / 文档取图」：当前模型不支持图片（vision=false）时置灰，行下小字提示（§7.3）
+ */
+@Composable
+internal fun ChatFeatureRow(
+    canCompress: Boolean,
+    compressing: Boolean,
+    imageEnabled: Boolean,
+    onPickDocument: () -> Unit,
+    onCompress: () -> Unit,
+    onPickImage: () -> Unit,
+    onPickDocImage: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(modifier = modifier.fillMaxWidth()) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp)
+        ) {
+            FeatureButton(
+                icon = Icons.Outlined.Description,
+                label = stringResource(R.string.ai_chat_attach_document),
+                enabled = true,
+                onClick = onPickDocument,
+                modifier = Modifier.weight(1f)
+            )
+            FeatureButton(
+                icon = Icons.Outlined.Compress,
+                label = if (compressing) {
+                    stringResource(R.string.ai_chat_compressing)
+                } else {
+                    stringResource(R.string.ai_chat_compress)
+                },
+                enabled = canCompress,
+                onClick = onCompress,
+                modifier = Modifier.weight(1f)
+            )
+            FeatureButton(
+                icon = Icons.Outlined.AddPhotoAlternate,
+                label = stringResource(R.string.ai_chat_add_image),
+                enabled = imageEnabled,
+                onClick = onPickImage,
+                modifier = Modifier.weight(1f)
+            )
+            FeatureButton(
+                icon = Icons.Outlined.PhotoLibrary,
+                label = stringResource(R.string.ai_chat_doc_image),
+                enabled = imageEnabled,
+                onClick = onPickDocImage,
+                modifier = Modifier.weight(1f)
+            )
+        }
+        if (!imageEnabled) {
+            Text(
+                text = stringResource(R.string.ai_chat_image_unsupported),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.End,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 16.dp, end = 16.dp, top = 2.dp)
+            )
+        }
+    }
+}
+
+/** 功能行按钮：小图标 16dp + labelMedium 文案（weight 均分，窄屏省略号兜底）。 */
+@Composable
+private fun FeatureButton(
+    icon: ImageVector,
+    label: String,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    TextButton(
+        onClick = onClick,
+        enabled = enabled,
+        contentPadding = PaddingValues(horizontal = 2.dp, vertical = 4.dp),
+        modifier = modifier
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            modifier = Modifier.size(16.dp)
+        )
+        Spacer(Modifier.width(3.dp))
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelMedium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
     }
 }
 

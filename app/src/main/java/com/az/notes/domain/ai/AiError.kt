@@ -13,13 +13,16 @@ sealed class AiError {
     /** 404：接口路径错误（检查 Base URL）或模型不存在。 */
     data object NotFound : AiError()
 
+    /** 413：请求体过大（图片过多 / 单图超限，服务端拒绝）。 */
+    data object RequestTooLarge : AiError()
+
     /** 429：请求过于频繁，请稍后再试。 */
     data object RateLimited : AiError()
 
     /** 5xx：服务端错误（服务商暂时不可用）。 */
     data object Server : AiError()
 
-    /** 上下文超限（按状态码 / 错误文案识别 context / length / token；自动压缩重试留 B4）。 */
+    /** 上下文超限（按状态码 / 错误文案识别 context / length / token；VM 侧自动压缩后重试一次）。 */
     data object ContextOverflow : AiError()
 
     /** 网络异常（DNS / 连接 / 超时 / SSL）。 */

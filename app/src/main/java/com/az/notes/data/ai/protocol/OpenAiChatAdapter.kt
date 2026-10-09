@@ -91,7 +91,7 @@ class OpenAiChatAdapter @Inject constructor(
             .build()
     }
 
-    /** 单条消息 → messages 项：TOOL 结果走 tool_call_id；assistant 带 tool_calls 时附嵌套 function 数组。 */
+    /** 单条消息 → messages 项：TOOL 结果走 tool_call_id；带图消息 content 数组形态；assistant 带 tool_calls 时附嵌套 function 数组。 */
     private fun JsonArrayBuilder.addMessage(message: TransportMessage) {
         if (message.role == ChatRole.TOOL) {
             addJsonObject {
@@ -103,7 +103,27 @@ class OpenAiChatAdapter @Inject constructor(
         }
         addJsonObject {
             put("role", message.role.name.lowercase())
-            put("content", message.text)
+            if (message.images.isEmpty()) {
+                put("content", message.text)
+            } else {
+                // 带图消息：content 数组形态（文本块 + image_url data URI 块）
+                putJsonArray("content") {
+                    if (message.text.isNotBlank()) {
+                        addJsonObject {
+                            put("type", "text")
+                            put("text", message.text)
+                        }
+                    }
+                    message.images.forEach { image ->
+                        addJsonObject {
+                            put("type", "image_url")
+                            putJsonObject("image_url") {
+                                put("url", "data:${image.mime};base64,${image.base64}")
+                            }
+                        }
+                    }
+                }
+            }
             if (message.toolCalls.isNotEmpty()) {
                 putJsonArray("tool_calls") {
                     message.toolCalls.forEach { call ->

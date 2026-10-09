@@ -20,9 +20,10 @@ enum class AttachResult { ADDED, DUPLICATE, FAILED }
 
 /**
  * 内存会话（@Singleton，§1.2 不持久化）：
- * 进程内退出对话页不丢；杀进程 / 系统回收即丢（设计使然，导出留 B4）。
- * 待发附件（B3）：预览页 / 文档选择器加入的仓库文档，发送时并入用户消息
- * （[consumePendingAttachments] 取出并清空）。
+ * 进程内退出对话页不丢；杀进程 / 系统回收即丢（设计使然）。
+ * 待发内容 = 仓库文档（[attachDocument]）+ 手动附加图片（[addPendingImage]），
+ * 发送时并入用户消息（[consumePendingAttachments] / [consumePendingImages] 取出并清空）；
+ * 压缩结果经 [replaceMessages] 整体写回（非终态消息原位保留由 compressor 保证）。
  */
 @Singleton
 class AiChatSession @Inject constructor(
@@ -36,6 +37,10 @@ class AiChatSession @Inject constructor(
     /** 待发附件（发送后 / 新会话时清空）。 */
     private val _pendingAttachments = MutableStateFlow<List<ChatPart.Document>>(emptyList())
     val pendingAttachments: StateFlow<List<ChatPart.Document>> = _pendingAttachments.asStateFlow()
+
+    /** 待发图片（发送后 / 新会话时清空；数量上限由 VM 守卫）。 */
+    private val _pendingImages = MutableStateFlow<List<ChatPart.Image>>(emptyList())
+    val pendingImages: StateFlow<List<ChatPart.Image>> = _pendingImages.asStateFlow()
 
     fun append(message: ChatMessage) {
         _messages.update { it + message }
@@ -109,8 +114,45 @@ class AiChatSession @Inject constructor(
         return current
     }
 
+    /** 追加待发图片（按本地临时路径去重）。 */
+    fun addPendingImage(image: ChatPart.Image) {
+        _pendingImages.update { list ->
+            if (list.any { it.localPath == image.localPath }) list else list + image
+        }
+    }
+
+    /** 移除待发图片（按本地临时路径）。 */
+    fun removePendingImage(localPath: String) {
+        _pendingImages.update { list -> list.filterNot { it.localPath == localPath } }
+    }
+
+    /** 取出并清空待发图片（发送时并入用户消息）。 */
+    fun consumePendingImages(): List<ChatPart.Image> {
+        val current = _pendingImages.value
+        _pendingImages.value = emptyList()
+        return current
+    }
+
+    /**
+     * 恢复图片到待发区（编辑重发时回填对话框）：按本地路径去重、保持现有顺序在前。
+     * 图片临时文件在会话期间不清理（清空会话 / 新会话时才清目录），路径仍然有效。
+     */
+    fun restorePendingImages(images: List<ChatPart.Image>) {
+        if (images.isEmpty()) return
+        _pendingImages.update { current ->
+            val existing = current.mapTo(mutableSetOf()) { it.localPath }
+            current + images.filterNot { it.localPath in existing }
+        }
+    }
+
+    /** 压缩结果整体写回会话列表（含原位保留的非终态消息，由 compressor 组装）。 */
+    fun replaceMessages(messages: List<ChatMessage>) {
+        _messages.value = messages
+    }
+
     fun clear() {
         _messages.value = emptyList()
         _pendingAttachments.value = emptyList()
+        _pendingImages.value = emptyList()
     }
 }
