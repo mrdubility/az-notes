@@ -168,7 +168,7 @@ internal fun AssistantBlock(
         }
 
         when {
-            hasText -> ChatMarkdown(text = message.text)
+            hasText -> ChatMarkdown(text = message.text, streaming = streaming)
 
             streaming && reasoning.isNullOrEmpty() -> Row(verticalAlignment = Alignment.CenterVertically) {
                 CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
@@ -218,9 +218,21 @@ internal fun AssistantBlock(
     }
 }
 
-/** 正文 Markdown（mikepenz，流式中未闭合标记由库容错；关闭尺寸动画避免流式抖动）。 */
+/**
+ * 正文渲染：流式中用纯文本（未闭合的 Markdown 标记令解析结构反复突变，底部锚定下
+ * 表现为屏幕持续跳动），流结束后一次性切换完整 Markdown 渲染（行业成熟做法）。
+ */
 @Composable
-private fun ChatMarkdown(text: String) {
+private fun ChatMarkdown(text: String, streaming: Boolean) {
+    if (streaming) {
+        // 流式期间纯文本：高度单调增长，反转布局底部锚定下画面稳定不跳
+        Text(
+            text = text,
+            style = MaterialTheme.typography.bodyLarge,
+            modifier = Modifier.fillMaxWidth()
+        )
+        return
+    }
     // 解析链实例显式稳定化：默认参数在重组时会新建实例导致反复重新解析（对齐预览页先例）
     val flavour = remember { GFMFlavourDescriptor() }
     val parser = remember(flavour) { MarkdownParser(flavour) }
