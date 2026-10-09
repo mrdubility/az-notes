@@ -1,6 +1,5 @@
 package com.az.notes.ui.ai
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -10,6 +9,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -23,6 +23,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.outlined.AttachFile
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Close
@@ -32,11 +33,13 @@ import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.ExpandLess
 import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.FolderOpen
+import androidx.compose.material.icons.outlined.Lightbulb
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
@@ -84,12 +87,15 @@ import org.intellij.markdown.parser.MarkdownParser
  *   Markdown 正文 + 操作行 + 错误条
  * - [ToolActivityLine] 工具状态行（运行中逐条实时文案 / 完成后已读取摘要）
  * - [PendingAttachmentRow] 待发附件卡片行（图标 + 文件名 + 移除）
- * - [ChatInputCard] 多行自增输入卡片（生成中发送变停止）+ 底部「选择文档」按钮行
+ * - [ChatInputCard] 多行自增输入卡片（生成中发送变停止；输入行内置「选择文档」回形针入口）
  * - [EmptyState] 欢迎语 + §9.3 三快捷动作；无供应商 / 无模型时替换为配置引导
  * - [ErrorBar] 红条 + 重试（401/404 附「去设置」）
  */
 
-/** 用户消息气泡（右对齐）。[busy]（生成中）时隐藏会打断当前流的操作（编辑重发）。 */
+/**
+ * 用户消息气泡（右对齐）：已发送文档卡片在上方（便于回看本轮发送了哪些文档），
+ * 文本气泡在下；纯附件消息不渲染空气泡。[busy]（生成中）时隐藏编辑重发。
+ */
 @Composable
 internal fun UserBubble(
     message: ChatMessage,
@@ -103,27 +109,35 @@ internal fun UserBubble(
             .padding(horizontal = 16.dp, vertical = 4.dp),
         horizontalAlignment = Alignment.End
     ) {
-        Surface(
-            color = MaterialTheme.colorScheme.primaryContainer,
-            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-            shape = RoundedCornerShape(16.dp),
-            modifier = Modifier.widthIn(max = 320.dp)
-        ) {
-            Text(
-                text = message.text,
-                style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
-            )
+        message.parts.filterIsInstance<ChatPart.Document>().forEach { document ->
+            SentAttachmentCard(document)
+            Spacer(Modifier.height(4.dp))
+        }
+        if (message.text.isNotEmpty()) {
+            Surface(
+                color = MaterialTheme.colorScheme.primaryContainer,
+                contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier.widthIn(max = 320.dp)
+            ) {
+                Text(
+                    text = message.text,
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                )
+            }
         }
         ChatActionRow(
             actions = buildList {
-                add(
-                    ChatAction(
-                        Icons.Outlined.ContentCopy,
-                        stringResource(R.string.ai_chat_copy),
-                        onCopy
+                if (message.text.isNotEmpty()) {
+                    add(
+                        ChatAction(
+                            Icons.Outlined.ContentCopy,
+                            stringResource(R.string.ai_chat_copy),
+                            onCopy
+                        )
                     )
-                )
+                }
                 if (!busy) {
                     add(
                         ChatAction(
@@ -133,8 +147,39 @@ internal fun UserBubble(
                         )
                     )
                 }
-            }
+            },
+            // 图标自带触控内边距：右移补齐，使视觉右缘与气泡对齐
+            modifier = Modifier.offset(x = 4.dp)
         )
+    }
+}
+
+/** 已发送文档卡片（用户气泡上方；与待发卡片同风格、不可移除）。 */
+@Composable
+private fun SentAttachmentCard(document: ChatPart.Document) {
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.8f),
+        shape = RoundedCornerShape(12.dp),
+        modifier = Modifier.widthIn(max = 320.dp)
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Outlined.Description,
+                contentDescription = null,
+                modifier = Modifier.size(15.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(
+                text = document.name,
+                style = MaterialTheme.typography.labelMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
     }
 }
 
@@ -182,16 +227,16 @@ internal fun AssistantBlock(
                 expanded = reasoningExpanded,
                 onToggle = { userChoice = !reasoningExpanded }
             )
-            Spacer(Modifier.height(6.dp))
+            Spacer(Modifier.height(8.dp))
         }
 
         // 工具活动行：运行中（toolRunning）或完成后（toolTrail 摘要），正文之前展示
         if (toolRunning != null && toolRunning.isNotEmpty()) {
             ToolActivityLine(records = toolRunning, running = true)
-            Spacer(Modifier.height(6.dp))
+            Spacer(Modifier.height(8.dp))
         } else if (message.toolTrail.isNotEmpty()) {
             ToolActivityLine(records = message.toolTrail, running = false)
-            Spacer(Modifier.height(6.dp))
+            Spacer(Modifier.height(8.dp))
         }
 
         when {
@@ -219,8 +264,10 @@ internal fun AssistantBlock(
             )
         }
 
-        // 操作行：流结束后展示（复制 / 重新生成；错误条另含重试）
+        // 操作行：流结束后展示（复制 / 重新生成；错误条另含重试）——
+        // 与正文留出呼吸间距；图标视觉左缘与正文对齐（左移抵消图标触控内边距）
         if (hasText && !streaming) {
+            Spacer(Modifier.height(6.dp))
             ChatActionRow(
                 actions = buildList {
                     add(
@@ -239,7 +286,8 @@ internal fun AssistantBlock(
                             )
                         )
                     }
-                }
+                },
+                modifier = Modifier.offset(x = (-4).dp)
             )
         }
     }
@@ -410,7 +458,10 @@ private fun ChatMarkdown(text: String, streaming: Boolean) {
     )
 }
 
-/** 思考折叠行（不计时；仅本地展示——不回传、不导出）。 */
+/**
+ * 思考折叠行（设计稿同款无背景行：灯泡图标 + 文案 + 展开箭头；不计时，仅本地展示）。
+ * 左缘与正文对齐；展开的思考内容与正文同宽（不再内缩）。
+ */
 @Composable
 private fun ReasoningSection(
     reasoning: String,
@@ -418,19 +469,22 @@ private fun ReasoningSection(
     expanded: Boolean,
     onToggle: () -> Unit
 ) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f))
-    ) {
+    Column(modifier = Modifier.fillMaxWidth()) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
                 .fillMaxWidth()
+                .clip(RoundedCornerShape(6.dp))
                 .clickable(onClick = onToggle)
-                .padding(horizontal = 8.dp, vertical = 6.dp)
+                .padding(vertical = 6.dp)
         ) {
+            Icon(
+                imageVector = Icons.Outlined.Lightbulb,
+                contentDescription = null,
+                modifier = Modifier.size(16.dp),
+                tint = MaterialTheme.colorScheme.primary
+            )
+            Spacer(Modifier.width(4.dp))
             Text(
                 text = stringResource(
                     if (thinking) R.string.ai_chat_reasoning_thinking
@@ -462,7 +516,7 @@ private fun ReasoningSection(
                         .fillMaxWidth()
                         .height(REASONING_LIVE_HEIGHT)
                         .verticalScroll(scrollState)
-                        .padding(start = 8.dp, end = 8.dp, bottom = 8.dp)
+                        .padding(bottom = 4.dp)
                 )
             } else {
                 // 思考结束：展开显示全部内容（不限制高度）
@@ -470,7 +524,7 @@ private fun ReasoningSection(
                     text = reasoning,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(start = 8.dp, end = 8.dp, bottom = 8.dp)
+                    modifier = Modifier.padding(bottom = 4.dp)
                 )
             }
         }
@@ -530,8 +584,9 @@ private data class ChatAction(
 
 /** 紧凑操作行：小号图标按钮（复制 / 编辑重发 / 重新生成）。 */
 @Composable
-private fun ChatActionRow(actions: List<ChatAction>) {
+private fun ChatActionRow(actions: List<ChatAction>, modifier: Modifier = Modifier) {
     Row(
+        modifier = modifier,
         horizontalArrangement = Arrangement.spacedBy(2.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -550,7 +605,11 @@ private fun ChatActionRow(actions: List<ChatAction>) {
     }
 }
 
-/** 输入卡片：多行自增；生成中发送按钮变停止；下方「选择文档」按钮行（B4 再扩压缩 / 图片）。 */
+/**
+ * 输入卡片：多行自增；生成中发送变停止；输入行内置「选择文档」回形针入口。
+ * 边距：文本左距 = 行首 4dp + TextField 内建 16dp = 20dp；按钮距卡缘 8dp，
+ * 单行时与 56dp 文本行垂直居中（40dp 圆钮 + 底部 8dp，中心对齐）。
+ */
 @Composable
 internal fun ChatInputCard(
     value: String,
@@ -564,63 +623,60 @@ internal fun ChatInputCard(
     onPickDocument: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    Column(modifier = modifier) {
-        Surface(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(24.dp),
-            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
-        ) {
-            Row(
-                verticalAlignment = Alignment.Bottom,
-                modifier = Modifier.padding(start = 16.dp, end = 6.dp, top = 2.dp, bottom = 6.dp)
-            ) {
-                TextField(
-                    value = value,
-                    onValueChange = onValueChange,
-                    modifier = Modifier
-                        .weight(1f)
-                        .focusRequester(inputFocusRequester),
-                    placeholder = { Text(stringResource(R.string.ai_chat_input_hint)) },
-                    maxLines = 6,
-                    textStyle = MaterialTheme.typography.bodyMedium,
-                    colors = TextFieldDefaults.colors(
-                        focusedContainerColor = Color.Transparent,
-                        unfocusedContainerColor = Color.Transparent,
-                        disabledContainerColor = Color.Transparent,
-                        focusedIndicatorColor = Color.Transparent,
-                        unfocusedIndicatorColor = Color.Transparent,
-                        disabledIndicatorColor = Color.Transparent
-                    )
-                )
-                FilledIconButton(
-                    onClick = if (generating) onStop else onSend,
-                    enabled = generating || (canSend && (value.isNotBlank() || hasAttachments)),
-                    // bottom padding：单行时与输入框文本行垂直居中（56dp 高）；多行增长时保持贴底
-                    modifier = Modifier
-                        .padding(bottom = 8.dp)
-                        .size(40.dp)
-                ) {
-                    if (generating) {
-                        Icon(Icons.Filled.Stop, stringResource(R.string.ai_chat_stop))
-                    } else {
-                        Icon(Icons.AutoMirrored.Filled.Send, stringResource(R.string.ai_chat_send))
-                    }
-                }
-            }
-        }
-        // 底部按钮行：「选择文档」入口
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(24.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+    ) {
         Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.padding(start = 4.dp, top = 2.dp)
+            verticalAlignment = Alignment.Bottom,
+            modifier = Modifier.padding(start = 4.dp, end = 8.dp, top = 4.dp, bottom = 4.dp)
         ) {
-            TextButton(onClick = onPickDocument) {
-                Icon(
-                    imageVector = Icons.Outlined.Description,
-                    contentDescription = null,
-                    modifier = Modifier.size(16.dp)
+            TextField(
+                value = value,
+                onValueChange = onValueChange,
+                modifier = Modifier
+                    .weight(1f)
+                    .focusRequester(inputFocusRequester),
+                placeholder = { Text(stringResource(R.string.ai_chat_input_hint)) },
+                maxLines = 6,
+                textStyle = MaterialTheme.typography.bodyMedium,
+                colors = TextFieldDefaults.colors(
+                    focusedContainerColor = Color.Transparent,
+                    unfocusedContainerColor = Color.Transparent,
+                    disabledContainerColor = Color.Transparent,
+                    focusedIndicatorColor = Color.Transparent,
+                    unfocusedIndicatorColor = Color.Transparent,
+                    disabledIndicatorColor = Color.Transparent
                 )
-                Spacer(Modifier.width(4.dp))
-                Text(stringResource(R.string.ai_chat_attach_document))
+            )
+            // 「选择文档」入口（回形针）：与发送按钮同高同底距，单行时同排居中
+            IconButton(
+                onClick = onPickDocument,
+                modifier = Modifier
+                    .padding(bottom = 8.dp)
+                    .size(40.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.AttachFile,
+                    contentDescription = stringResource(R.string.ai_chat_attach_document),
+                    modifier = Modifier.size(22.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            FilledIconButton(
+                onClick = if (generating) onStop else onSend,
+                enabled = generating || (canSend && (value.isNotBlank() || hasAttachments)),
+                // bottom padding：单行时与输入框文本行垂直居中；多行增长时保持贴底
+                modifier = Modifier
+                    .padding(start = 2.dp, bottom = 8.dp)
+                    .size(40.dp)
+            ) {
+                if (generating) {
+                    Icon(Icons.Filled.Stop, stringResource(R.string.ai_chat_stop))
+                } else {
+                    Icon(Icons.AutoMirrored.Filled.Send, stringResource(R.string.ai_chat_send))
+                }
             }
         }
     }

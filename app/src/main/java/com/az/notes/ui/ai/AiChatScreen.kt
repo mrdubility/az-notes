@@ -67,7 +67,7 @@ import kotlinx.coroutines.launch
  *   锚定自动保持、无需程序滚动（消除闪动）；离开底部暂停跟随并显示「回到底部」，
  *   程序滚动统一走 animate 平滑过渡
  * - 输入卡片：imePadding 随键盘上浮；多行自增；生成中发送变停止；发送后收起输入法；
- *   待发附件卡片行 +「选择文档」入口 + §9.3 空态三快捷动作
+ *   输入行内置「选择文档」回形针入口；待发附件卡片行 + §9.3 空态三快捷动作
  * - 导出、隐私提示、压缩 / 图片项随 B4 引入，本批不预留
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -90,6 +90,9 @@ fun AiChatScreen(
     val pendingAttachments by viewModel.pendingAttachments.collectAsStateWithLifecycle()
     val toolStatus by viewModel.toolStatus.collectAsStateWithLifecycle()
     val docPickerItems by viewModel.docPickerItems.collectAsStateWithLifecycle()
+    val docPickerQuery by viewModel.docPickerQuery.collectAsStateWithLifecycle()
+    val docPickerLoading by viewModel.docPickerLoading.collectAsStateWithLifecycle()
+    val docPickerHasMore by viewModel.docPickerHasMore.collectAsStateWithLifecycle()
 
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
@@ -361,7 +364,12 @@ fun AiChatScreen(
 
     DocumentPickerDialog(
         items = docPickerItems,
+        query = docPickerQuery,
+        loading = docPickerLoading,
+        hasMore = docPickerHasMore,
         pendingRelPaths = pendingAttachments.map { it.vaultRelPath }.toSet(),
+        onQueryChange = viewModel::setDocPickerQuery,
+        onLoadMore = viewModel::loadMoreDocPicker,
         onConfirm = viewModel::confirmDocumentSelection,
         onDismiss = viewModel::closeDocumentPicker
     )

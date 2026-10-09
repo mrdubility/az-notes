@@ -25,6 +25,8 @@ import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -33,6 +35,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -42,6 +45,9 @@ data class ChatSelection(val providerId: String, val modelId: String)
 
 /** 错误条状态：关联消息 id + 本地化文案 + 是否附「去设置」（401/404 配置类错误）。 */
 data class ChatErrorState(val messageId: String, val text: UiText, val showSettings: Boolean)
+
+/** 文档选择器条目：节点 + 正文预览（列表页同款结构；预览分批并行读取）。 */
+data class DocPickerItem(val node: FileNode, val preview: String = "")
 
 /**
  * 对话页 ViewModel（B3 工具循环版）：
@@ -101,13 +107,35 @@ class AiChatViewModel @Inject constructor(
     val toolStatus: StateFlow<List<ToolCallRecord>?> = _toolStatus.asStateFlow()
 
     /** 文档选择器条目（null = 未打开；打开期间先置空列表再 IO 填充）。 */
-    private val _docPickerItems = MutableStateFlow<List<FileNode>?>(null)
-    val docPickerItems: StateFlow<List<FileNode>?> = _docPickerItems.asStateFlow()
+    private val _docPickerItems = MutableStateFlow<List<DocPickerItem>?>(null)
+    val docPickerItems: StateFlow<List<DocPickerItem>?> = _docPickerItems.asStateFlow()
+
+    /** 文档选择器搜索词（过滤在 VM，预览随当前过滤视图分批读取）。 */
+    private val _docPickerQuery = MutableStateFlow("")
+    val docPickerQuery: StateFlow<String> = _docPickerQuery.asStateFlow()
+
+    /** 文档选择器是否还有未装载预览的后续条目（滚动加载指示）。 */
+    private val _docPickerHasMore = MutableStateFlow(false)
+    val docPickerHasMore: StateFlow<Boolean> = _docPickerHasMore.asStateFlow()
+
+    /** 文档选择器装载中（首次扫描 / 搜索过滤期间；空列表时区分「加载中」与「无结果」）。 */
+    private val _docPickerLoading = MutableStateFlow(false)
+    val docPickerLoading: StateFlow<Boolean> = _docPickerLoading.asStateFlow()
 
     private var streamJob: Job? = null
 
     /** 流式中的 AI 消息 id（onCleared 兜底收尾用）。 */
     private var streamingMessageId: String? = null
+
+    /** 选择器全量节点（null = 首次扫描未完成；完成后为修改时间倒序）。 */
+    private var docPickerAll: List<FileNode>? = null
+
+    /** 当前视图尚未装载预览的剩余节点（滚动续载）。 */
+    private var docPickerPending: List<FileNode> = emptyList()
+
+    /** 选择器装载世代：搜索词变化 / 关闭重开时旧批次作废（对齐列表页 listingGeneration 先例）。 */
+    private var docPickerGeneration = 0
+    private var docPickerLoadJob: Job? = null
 
     init {
         viewModelScope.launch {
@@ -175,12 +203,14 @@ class AiChatViewModel @Inject constructor(
         launchStream(provider, model)
     }
 
-    /** 编辑重发：回填输入框并截断该用户条及之后（用户改完自行发送）。 */
+    /** 编辑重发：回填输入框与已发送文档（附回对话框）并截断该用户条及之后。 */
     fun editResend(messageId: String) {
         if (_generating.value) return
         val message = session.messages.value.firstOrNull { it.id == messageId } ?: return
         if (message.role != ChatRole.USER) return
         _input.value = message.text
+        // 文档附回待发区（沿用消息内的内容快照；去重）
+        session.restorePendingAttachments(message.parts.filterIsInstance<ChatPart.Document>())
         session.truncateFrom(messageId)
         _error.value = null
     }
@@ -209,25 +239,121 @@ class AiChatViewModel @Inject constructor(
         }
     }
 
-    /** 打开文档选择器：先置空列表（加载中），IO 扫描仓库 Markdown 后填充。 */
+    /**
+     * 打开文档选择器：先置空列表（加载中），IO 扫描仓库 Markdown——按修改时间倒序
+     * （最新在前，与主页默认排序一致）——首批并行读预览后填充，其余滚动加载。
+     */
     fun openDocumentPicker() {
         if (_docPickerItems.value != null) return
         _docPickerItems.value = emptyList()
+        _docPickerLoading.value = true
+        _docPickerQuery.value = ""
+        docPickerAll = null
+        docPickerPending = emptyList()
+        docPickerGeneration++
+        val generation = docPickerGeneration
         viewModelScope.launch {
-            val items = withContext(Dispatchers.IO) {
+            val nodes = withContext(Dispatchers.IO) {
                 val vaultPath = runCatching {
                     settingsRepository.settings.first().vaultPath
                 }.getOrNull()
                 vaultPath?.let { path ->
-                    vaultRepository.scanTree(path).filter { it.isMarkdown }
+                    vaultRepository.scanTree(path)
+                        .filter { it.isMarkdown }
+                        .sortedByDescending { it.lastModified }
                 } ?: emptyList()
             }
-            _docPickerItems.value = items
+            if (generation != docPickerGeneration || _docPickerItems.value == null) return@launch
+            docPickerAll = nodes
+            applyDocPickerView(generation)
         }
     }
 
+    /** 选择器搜索词更新：按文件名 / 相对路径过滤后重新装载首批预览。 */
+    fun setDocPickerQuery(query: String) {
+        if (_docPickerQuery.value == query) return
+        _docPickerQuery.value = query
+        if (_docPickerItems.value == null) return
+        // 首次扫描未完成：仅记录查询词，扫描完成后按最新词统一装载（避免空数据出图）
+        if (docPickerAll == null) return
+        _docPickerLoading.value = true
+        docPickerGeneration++
+        val generation = docPickerGeneration
+        viewModelScope.launch { applyDocPickerView(generation) }
+    }
+
+    /**
+     * 应用当前过滤视图：过滤全量节点 → 首批预览并行读取（只读文件头，列表页同款
+     * [VaultRepository.readPreview]）→ 提交 UI；其余由 [loadMoreDocPicker] 滚动加载。
+     */
+    private suspend fun applyDocPickerView(generation: Int) {
+        val all = docPickerAll ?: return
+        val keyword = _docPickerQuery.value.trim()
+        val filtered = if (keyword.isEmpty()) {
+            all
+        } else {
+            all.filter {
+                it.name.contains(keyword, ignoreCase = true) ||
+                    it.relativePath.contains(keyword, ignoreCase = true)
+            }
+        }
+        val previewChars = currentPreviewChars()
+        val firstBatch = filtered.take(DOC_PICKER_PAGE_SIZE)
+        val items = withContext(Dispatchers.IO) {
+            firstBatch.map { node ->
+                async {
+                    DocPickerItem(
+                        node = node,
+                        preview = vaultRepository.readPreview(node.absolutePath, previewChars)
+                    )
+                }
+            }.awaitAll()
+        }
+        if (generation != docPickerGeneration || _docPickerItems.value == null) return
+        docPickerPending = filtered.drop(DOC_PICKER_PAGE_SIZE)
+        _docPickerItems.value = items
+        _docPickerHasMore.value = docPickerPending.isNotEmpty()
+        _docPickerLoading.value = false
+    }
+
+    /** 滚动接近末尾时加载下一批（含预览并行读取；仅追加，避免已显示条目闪动）。 */
+    fun loadMoreDocPicker() {
+        val remaining = docPickerPending
+        if (remaining.isEmpty() || docPickerLoadJob?.isActive == true) return
+        val generation = docPickerGeneration
+        docPickerLoadJob = viewModelScope.launch {
+            val batch = remaining.take(DOC_PICKER_PAGE_SIZE)
+            val previewChars = currentPreviewChars()
+            val newItems = withContext(Dispatchers.IO) {
+                batch.map { node ->
+                    async {
+                        DocPickerItem(
+                            node = node,
+                            preview = vaultRepository.readPreview(node.absolutePath, previewChars)
+                        )
+                    }
+                }.awaitAll()
+            }
+            if (generation != docPickerGeneration || _docPickerItems.value == null) return@launch
+            docPickerPending = remaining.drop(DOC_PICKER_PAGE_SIZE)
+            _docPickerItems.update { current -> current?.plus(newItems) }
+            _docPickerHasMore.value = docPickerPending.isNotEmpty()
+        }
+    }
+
+    /** 预览字符数设置（读取失败时回退默认值，与 AppSettings.previewChars 默认一致）。 */
+    private suspend fun currentPreviewChars(): Int =
+        runCatching { settingsRepository.settings.first().previewChars }
+            .getOrDefault(DEFAULT_PREVIEW_CHARS)
+
     fun closeDocumentPicker() {
+        docPickerGeneration++
+        docPickerAll = null
+        docPickerPending = emptyList()
+        _docPickerQuery.value = ""
         _docPickerItems.value = null
+        _docPickerHasMore.value = false
+        _docPickerLoading.value = false
     }
 
     // ---------------------------------------------------------------- 会话与模型
@@ -432,6 +558,12 @@ class AiChatViewModel @Inject constructor(
     companion object {
         /** 流式渲染节流窗口（§9.3：50ms 缓冲合并后再更新 StateFlow）。 */
         private const val STREAM_FLUSH_INTERVAL_MS = 50L
+
+        /** 文档选择器每批装载数（首批预览并行读、其余滚动加载；对齐列表页分页先例）。 */
+        private const val DOC_PICKER_PAGE_SIZE = 60
+
+        /** 预览字符数兜底默认值（与 AppSettings.previewChars 默认一致）。 */
+        private const val DEFAULT_PREVIEW_CHARS = 100
 
         /** AiError → 错误条文案 + 是否附「去设置」（§4.4 / §9.3：401/404 为配置类错误）。 */
         fun errorDisplay(error: AiError): Pair<UiText, Boolean> = when (error) {

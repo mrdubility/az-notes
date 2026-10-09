@@ -90,6 +90,18 @@ class AiChatSession @Inject constructor(
         _pendingAttachments.update { list -> list.filterNot { it.vaultRelPath == vaultRelPath } }
     }
 
+    /**
+     * 恢复附件到待发区（编辑重发时把已发送文档附回对话框）：
+     * 沿用消息内的内容快照（无需重读文件）；按相对路径去重、保持现有顺序在前。
+     */
+    fun restorePendingAttachments(documents: List<ChatPart.Document>) {
+        if (documents.isEmpty()) return
+        _pendingAttachments.update { current ->
+            val existing = current.mapTo(mutableSetOf()) { it.vaultRelPath }
+            current + documents.filterNot { it.vaultRelPath in existing }
+        }
+    }
+
     /** 取出并清空待发附件（发送时并入用户消息）。 */
     fun consumePendingAttachments(): List<ChatPart.Document> {
         val current = _pendingAttachments.value
