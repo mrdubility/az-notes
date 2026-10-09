@@ -150,9 +150,10 @@ class AiChatViewModel @Inject constructor(
     private val _docPickerLoading = MutableStateFlow(false)
     val docPickerLoading: StateFlow<Boolean> = _docPickerLoading.asStateFlow()
 
-    /** 应用设置（隐私确认键读取；DataStore 异步到达，默认值兜底）。 */
+    /** 应用设置（隐私确认键读取；DataStore 异步到达，默认值兜底）。
+     *  Eagerly：VM 内多处直读 .value（隐私确认等），须立即订阅上游保证实时生效。 */
     private val settings: StateFlow<AppSettings> = settingsRepository.settings
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AppSettings())
+        .stateIn(viewModelScope, SharingStarted.Eagerly, AppSettings())
 
     /** 当前模型是否支持图片（vision=false → 「添加图片」「文档取图」置灰 + 提示，§7.3）。 */
     val visionEnabled: StateFlow<Boolean> = combine(selection, providers) { sel, list ->
@@ -527,7 +528,7 @@ class AiChatViewModel @Inject constructor(
      * 去重）→ [ImageReference.resolveExisting]（nameIndex 空，按笔记同目录 / assets/ /
      * 根路径启发）→ 白名单过滤 + 绝对路径去重。
      */
-    private fun resolveDocImages(): List<DocImageItem> {
+    private suspend fun resolveDocImages(): List<DocImageItem> {
         val vaultPath = runCatching { settingsRepository.settings.first().vaultPath }.getOrNull()
             ?: return emptyList()
         val root = File(vaultPath).normalize()
