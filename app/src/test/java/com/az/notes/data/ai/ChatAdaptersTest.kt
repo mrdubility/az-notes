@@ -10,7 +10,9 @@ import com.az.notes.domain.ai.AiModel
 import com.az.notes.domain.ai.AiProtocol
 import com.az.notes.domain.ai.AiProvider
 import com.az.notes.domain.ai.ChatRole
+import com.az.notes.domain.ai.RawToolCall
 import com.az.notes.domain.ai.StreamEvent
+import com.az.notes.domain.ai.ToolSpecs
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -19,6 +21,7 @@ import kotlinx.serialization.json.contentOrNull
 import okhttp3.Request
 import okio.Buffer
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 /**
@@ -26,6 +29,8 @@ import org.junit.Test
  * - 请求体 JSON 断言：system 位置（OpenAI messages[0] / Responses instructions / Anthropic 顶层）、
  *   stream=true、Anthropic max_tokens 必填与专属请求头
  * - 事件映射纯函数断言：text / reasoning / 结束 / error 透传、非 JSON 安全跳过
+ * - 工具（B3）：tools 定义序列化、assistant tool_calls / tool 结果消息序列化（Anthropic 角色合并）、
+ *   分片累积器 → ToolCallRequested 流事件解析
  */
 class ChatAdaptersTest {
 
@@ -52,6 +57,9 @@ class ChatAdaptersTest {
         ),
         maxOutputTokens = 4096
     )
+
+    private fun toolRequest(protocol: AiProtocol) =
+        chatRequest(protocol).copy(tools = ToolSpecs.ALL)
 
     private fun Request.bodyJson(): JsonObject {
         val buffer = Buffer()
@@ -199,5 +207,235 @@ class ChatAdaptersTest {
             anthropic.parseEvent("""{"type":"error","error":{"message":"overloaded"}}""")
         )
         assertEquals(emptyList<StreamEvent>(), anthropic.parseEvent("junk"))
+    }
+
+    // ---------- 工具：请求序列化 ----------
+
+    @Test
+    fun `openai chat serializes tool definitions and tool messages`() {
+        val messages = listOf(
+            TransportMessage(ChatRole.USER, "读一下 a.md"),
+            TransportMessage(
+                ChatRole.ASSISTANT,
+                "",
+                toolCalls = listOf(RawToolCall("call_1", "read_note", """{"path":"a.md"}"""))
+            ),
+            TransportMessage(ChatRole.TOOL, "正文A", toolCallId = "call_1")
+        )
+        val body = openAiChat
+            .buildRequest(toolRequest(AiProtocol.OPENAI_CHAT).copy(messages = messages), "sk")
+            .bodyJson()
+
+        val tools = body["tools"] as JsonArray
+        assertEquals(3, tools.size)
+        val first = tools[0] as JsonObject
+        assertEquals("function", first.str("type"))
+        val function = first["function"] as JsonObject
+        assertEquals("list_notes", function.str("name"))
+        assertEquals("object", (function["parameters"] as JsonObject).str("type"))
+
+        // system + user + assistant(tool_calls) + tool
+        assertEquals(4, body.sizeOf("messages"))
+        val assistant = body.objAt("messages", 2)
+        assertEquals("assistant", assistant.str("role"))
+        val toolCall = (assistant["tool_calls"] as JsonArray)[0] as JsonObject
+        assertEquals("call_1", toolCall.str("id"))
+        assertEquals("function", toolCall.str("type"))
+        assertEquals("read_note", (toolCall["function"] as JsonObject).str("name"))
+        assertEquals("""{"path":"a.md"}""", (toolCall["function"] as JsonObject).str("arguments"))
+
+        val tool = body.objAt("messages", 3)
+        assertEquals("tool", tool.str("role"))
+        assertEquals("call_1", tool.str("tool_call_id"))
+        assertEquals("正文A", tool.str("content"))
+    }
+
+    @Test
+    fun `anthropic serializes tools merges roles and wraps tool results in user`() {
+        val messages = listOf(
+            TransportMessage(ChatRole.USER, "q1"),
+            TransportMessage(ChatRole.USER, "q2"),
+            TransportMessage(
+                ChatRole.ASSISTANT,
+                "回答",
+                toolCalls = listOf(RawToolCall("tool_1", "search_notes", """{"query":"k"}"""))
+            ),
+            TransportMessage(ChatRole.TOOL, "r1", toolCallId = "tool_1"),
+            TransportMessage(ChatRole.TOOL, "r2", toolCallId = "tool_2")
+        )
+        val body = anthropic
+            .buildRequest(toolRequest(AiProtocol.ANTHROPIC_MESSAGES).copy(messages = messages), "sk")
+            .bodyJson()
+
+        val tools = body["tools"] as JsonArray
+        assertEquals(3, tools.size)
+        val first = tools[0] as JsonObject
+        assertEquals("list_notes", first.str("name"))
+        assertEquals("object", (first["input_schema"] as JsonObject).str("type"))
+
+        // 相邻同角色合并：user(q1+q2) / assistant(text+tool_use) / user(tool_result ×2)
+        assertEquals(3, body.sizeOf("messages"))
+        val firstMsg = body.objAt("messages", 0)
+        assertEquals("user", firstMsg.str("role"))
+        assertEquals(2, (firstMsg["content"] as JsonArray).size)
+
+        val secondMsg = body.objAt("messages", 1)
+        assertEquals("assistant", secondMsg.str("role"))
+        val blocks = secondMsg["content"] as JsonArray
+        assertEquals("text", (blocks[0] as JsonObject).str("type"))
+        val toolUse = blocks[1] as JsonObject
+        assertEquals("tool_use", toolUse.str("type"))
+        assertEquals("tool_1", toolUse.str("id"))
+        assertEquals("k", ((toolUse["input"] as JsonObject)["query"] as? JsonPrimitive)?.contentOrNull)
+
+        val thirdMsg = body.objAt("messages", 2)
+        assertEquals("user", thirdMsg.str("role"))
+        val results = thirdMsg["content"] as JsonArray
+        assertEquals(2, results.size)
+        assertEquals("tool_result", (results[0] as JsonObject).str("type"))
+        assertEquals("tool_1", (results[0] as JsonObject).str("tool_use_id"))
+        assertEquals("r1", (results[0] as JsonObject).str("content"))
+        assertEquals("tool_2", (results[1] as JsonObject).str("tool_use_id"))
+    }
+
+    @Test
+    fun `responses serializes flat tools and function call items`() {
+        val messages = listOf(
+            TransportMessage(ChatRole.USER, "帮我看看"),
+            TransportMessage(
+                ChatRole.ASSISTANT,
+                "",
+                toolCalls = listOf(RawToolCall("call_x", "list_notes", "{}"))
+            ),
+            TransportMessage(ChatRole.TOOL, "结果", toolCallId = "call_x")
+        )
+        val body = openAiResponses
+            .buildRequest(toolRequest(AiProtocol.OPENAI_RESPONSES).copy(messages = messages), "sk")
+            .bodyJson()
+
+        val tools = body["tools"] as JsonArray
+        assertEquals(3, tools.size)
+        val first = tools[0] as JsonObject
+        assertEquals("function", first.str("type"))
+        assertEquals("list_notes", first.str("name"))
+        assertEquals("object", (first["parameters"] as JsonObject).str("type"))
+        assertNull(first.str("input_schema"))
+
+        val input = body["input"] as JsonArray
+        assertEquals(3, input.size)
+        assertEquals("user", (input[0] as JsonObject).str("role"))
+        val fnCall = input[1] as JsonObject
+        assertEquals("function_call", fnCall.str("type"))
+        assertEquals("call_x", fnCall.str("call_id"))
+        assertEquals("list_notes", fnCall.str("name"))
+        val fnOut = input[2] as JsonObject
+        assertEquals("function_call_output", fnOut.str("type"))
+        assertEquals("call_x", fnOut.str("call_id"))
+        assertEquals("结果", fnOut.str("output"))
+    }
+
+    // ---------- 工具：流式事件（累积器 → ToolCallRequested） ----------
+
+    @Test
+    fun `openai chat accumulates tool call fragments and emits on finish reason`() {
+        val accumulator = OpenAiToolAccumulator()
+        assertEquals(
+            emptyList<StreamEvent>(),
+            openAiChat.parseChunk(
+                """{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"read_note","arguments":"{\"pa"}}]}}]}""",
+                accumulator
+            )
+        )
+        assertEquals(
+            emptyList<StreamEvent>(),
+            openAiChat.parseChunk(
+                """{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"th\":\"a.md\"}"}}]}}]}""",
+                accumulator
+            )
+        )
+        assertEquals(
+            listOf(
+                StreamEvent.ToolCallRequested(
+                    listOf(RawToolCall("call_1", "read_note", """{"path":"a.md"}"""))
+                )
+            ),
+            openAiChat.parseChunk(
+                """{"choices":[{"delta":{},"finish_reason":"tool_calls"}]}""",
+                accumulator
+            )
+        )
+    }
+
+    @Test
+    fun `anthropic accumulates tool use block and emits on message stop`() {
+        val accumulator = AnthropicToolAccumulator()
+        assertEquals(
+            emptyList<StreamEvent>(),
+            anthropic.parseEvent(
+                """{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"tool_1","name":"read_note"}}""",
+                accumulator
+            )
+        )
+        assertEquals(
+            emptyList<StreamEvent>(),
+            anthropic.parseEvent(
+                """{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"pa"}}""",
+                accumulator
+            )
+        )
+        assertEquals(
+            emptyList<StreamEvent>(),
+            anthropic.parseEvent(
+                """{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"th\":\"a.md\"}"}}""",
+                accumulator
+            )
+        )
+        assertEquals(
+            emptyList<StreamEvent>(),
+            anthropic.parseEvent("""{"type":"content_block_stop","index":1}""", accumulator)
+        )
+        assertEquals(
+            listOf(
+                StreamEvent.ToolCallRequested(
+                    listOf(RawToolCall("tool_1", "read_note", """{"path":"a.md"}"""))
+                )
+            ),
+            anthropic.parseEvent("""{"type":"message_stop"}""", accumulator)
+        )
+    }
+
+    @Test
+    fun `responses accumulates function call item and emits on completed`() {
+        val accumulator = ResponsesToolAccumulator()
+        assertEquals(
+            emptyList<StreamEvent>(),
+            openAiResponses.parseEvent(
+                """{"type":"response.output_item.added","item":{"type":"function_call","id":"fc_1","call_id":"call_x","name":"list_notes","arguments":""}}""",
+                accumulator
+            )
+        )
+        assertEquals(
+            emptyList<StreamEvent>(),
+            openAiResponses.parseEvent(
+                """{"type":"response.function_call_arguments.delta","item_id":"fc_1","delta":"{\"dir\":\"s"}""",
+                accumulator
+            )
+        )
+        // done：服务器权威参数覆盖分片累积结果
+        assertEquals(
+            emptyList<StreamEvent>(),
+            openAiResponses.parseEvent(
+                """{"type":"response.output_item.done","item":{"type":"function_call","id":"fc_1","call_id":"call_x","name":"list_notes","arguments":"{\"dir\":\"sub\"}"}}""",
+                accumulator
+            )
+        )
+        assertEquals(
+            listOf(
+                StreamEvent.ToolCallRequested(
+                    listOf(RawToolCall("call_x", "list_notes", """{"dir":"sub"}"""))
+                )
+            ),
+            openAiResponses.parseEvent("""{"type":"response.completed"}""", accumulator)
+        )
     }
 }

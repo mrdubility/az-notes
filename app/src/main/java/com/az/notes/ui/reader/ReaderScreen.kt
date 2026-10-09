@@ -14,6 +14,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.List
+import androidx.compose.material.icons.outlined.SmartToy
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -73,6 +74,8 @@ fun ReaderScreen(
     viewModel: ReaderViewModel,
     onBack: () -> Unit,
     onEdit: (String) -> Unit,
+    /** 「加入 AI 对话」：附件已入待发列表后导航到聊天页 */
+    onAddToAiChat: () -> Unit,
     /** 刚从“新建待办”进入：退出（顶栏返回 / 系统返回键）时若无条目则清理占位文件 */
     fresh: Boolean = false
 ) {
@@ -206,6 +209,16 @@ fun ReaderScreen(
                     // 文档信息：文件属性与正文统计
                     IconButton(onClick = { viewModel.loadDocInfo() }) {
                         Icon(Icons.Outlined.Info, stringResource(R.string.reader_info))
+                    }
+                    // 加入 AI 对话：当前文档作为附件入待发列表并跳转聊天页
+                    IconButton(onClick = {
+                        viewModel.addToAiChat()
+                        onAddToAiChat()
+                    }) {
+                        Icon(
+                            Icons.Outlined.SmartToy,
+                            stringResource(R.string.reader_add_to_ai_chat)
+                        )
                     }
                     IconButton(onClick = { onEdit(state.path) }) {
                         Icon(Icons.Filled.Edit, stringResource(R.string.action_edit))

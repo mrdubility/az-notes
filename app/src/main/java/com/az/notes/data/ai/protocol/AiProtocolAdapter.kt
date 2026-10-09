@@ -6,7 +6,9 @@ import com.az.notes.domain.ai.AiError
 import com.az.notes.domain.ai.AiModel
 import com.az.notes.domain.ai.AiProvider
 import com.az.notes.domain.ai.ChatRole
+import com.az.notes.domain.ai.RawToolCall
 import com.az.notes.domain.ai.StreamEvent
+import com.az.notes.domain.ai.ToolSpec
 import java.io.IOException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
@@ -19,32 +21,42 @@ interface AiProtocolAdapter {
     fun stream(req: ChatRequest, apiKey: String): Flow<StreamEvent>
 }
 
-/** 单次请求描述（B3 工具循环将增设 tools 字段）。 */
+/** 单次请求描述（B3 起含工具定义）。 */
 data class ChatRequest(
     val provider: AiProvider,
     val model: AiModel,
     val systemPrompt: String?,
     val messages: List<TransportMessage>,
-    val maxOutputTokens: Int
+    val maxOutputTokens: Int,
+    /** 工具定义（null / 空 = 不带工具）。 */
+    val tools: List<ToolSpec>? = null
 )
 
-/** adapter 传输态消息（本批仅文本；B3 / B4 扩展图片 / 文档 / 工具段，三 adapter 各自序列化）。 */
+/**
+ * adapter 传输态消息（三 adapter 各自序列化）：
+ * - 文本消息：role + text
+ * - 工具调用：assistant 的 [toolCalls] 与 text 可共存
+ * - 工具结果：role = TOOL，[toolCallId] 关联对应调用
+ */
 data class TransportMessage(
     val role: ChatRole,
-    val text: String
+    val text: String,
+    val toolCalls: List<RawToolCall> = emptyList(),
+    val toolCallId: String? = null
 )
 
 /**
  * 三 adapter 共享的「SSE → 统一事件流」外壳：
  * - 请求构建失败（URL 非法）→ Unknown；非 2xx / 网络 / 未知异常 → 对应 AiError
- * - [terminal] 跟踪：已收到 MessageStop / Failure 后不再补发或误报
- *   （覆盖「服务端发完完成事件后被动断流」的场景）
+ * - [terminal] 跟踪：已收到终态事件（停止 / 失败 / 工具调用，见 [isTerminal]）后不再补发或误报
+ * - [flush]：流自然结束且未 terminal 时先补发（工具调用累积兜底：中转站不发 finish_reason 的场景）
  * - 取消（停止生成）原样抛出，保证 SseReader 的断流语义
  */
 internal fun sseEventFlow(
     sse: SseReader,
     buildRequest: () -> Request,
-    parse: (String) -> List<StreamEvent>
+    parse: (String) -> List<StreamEvent>,
+    flush: () -> List<StreamEvent> = { emptyList() }
 ): Flow<StreamEvent> = flow {
     val request = try {
         buildRequest()
@@ -56,9 +68,7 @@ internal fun sseEventFlow(
     try {
         sse.dataLines(request).collect { payload ->
             parse(payload).forEach { event ->
-                if (event is StreamEvent.MessageStop || event is StreamEvent.Failure) {
-                    terminal = true
-                }
+                if (event.isTerminal()) terminal = true
                 emit(event)
             }
         }
@@ -74,8 +84,21 @@ internal fun sseEventFlow(
         if (!terminal) emit(StreamEvent.Failure(AiError.Unknown))
         return@flow
     }
+    if (!terminal) {
+        val flushed = flush()
+        flushed.forEach {
+            terminal = true
+            emit(it)
+        }
+    }
     if (!terminal) emit(StreamEvent.MessageStop)
 }
+
+/** 终态判定：停止 / 失败 / 工具调用（工具调用后由上层进入下一轮，不再期待同流内文本）。 */
+internal fun StreamEvent.isTerminal(): Boolean =
+    this is StreamEvent.MessageStop ||
+        this is StreamEvent.Failure ||
+        this is StreamEvent.ToolCallRequested
 
 /** 三 adapter 共享的错误映射（§4.4）。 */
 internal object AdapterErrors {

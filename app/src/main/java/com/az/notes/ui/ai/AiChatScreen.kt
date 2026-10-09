@@ -8,8 +8,10 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -44,6 +46,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -52,18 +55,20 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.az.notes.R
 import com.az.notes.domain.ai.ChatRole
+import com.az.notes.domain.ai.MessageStatus
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 
 /**
- * 对话页（§9，B2 骨架版）：
+ * 对话页（§9，B3 工具循环版）：
  * - TopAppBar：返回 / 标题 + 副标题（供应商 · 模型，点击弹模型菜单）/ ⊕ 新会话
  * - 消息列表：反转布局（列表原点即底部、index 0 为最新）——贴底时流式增长由布局
  *   锚定自动保持、无需程序滚动（消除闪动）；离开底部暂停跟随并显示「回到底部」，
  *   程序滚动统一走 animate 平滑过渡
- * - 输入卡片：imePadding 随键盘上浮；多行自增；生成中发送变停止；发送后收起输入法
- * - 附件行、压缩 / 图片 / 文档取图、导出、隐私提示与空态三快捷动作随 B3 / B4 引入，本批不预留
+ * - 输入卡片：imePadding 随键盘上浮；多行自增；生成中发送变停止；发送后收起输入法；
+ *   待发附件卡片行 +「选择文档」入口 + §9.3 空态三快捷动作
+ * - 导出、隐私提示、压缩 / 图片项随 B4 引入，本批不预留
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -82,10 +87,16 @@ fun AiChatScreen(
     val selection by viewModel.selection.collectAsStateWithLifecycle()
     val error by viewModel.error.collectAsStateWithLifecycle()
     val showConfirm by viewModel.showNewSessionConfirm.collectAsStateWithLifecycle()
+    val pendingAttachments by viewModel.pendingAttachments.collectAsStateWithLifecycle()
+    val toolStatus by viewModel.toolStatus.collectAsStateWithLifecycle()
+    val docPickerItems by viewModel.docPickerItems.collectAsStateWithLifecycle()
 
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
+    // 空态「直接提问」/「让 AI 浏览仓库」快捷动作的焦点目标
+    val inputFocusRequester = remember { FocusRequester() }
+    val browsePrompt = stringResource(R.string.ai_chat_quick_browse_prompt)
     val context = LocalContext.current
     val keyboard = LocalSoftwareKeyboardController.current
     var modelMenuExpanded by remember { mutableStateOf(false) }
@@ -239,7 +250,13 @@ fun AiChatScreen(
                     EmptyState(
                         loaded = loaded,
                         hasSelection = selectionLabel != null,
-                        onOpenProviders = onOpenProviders
+                        onOpenProviders = onOpenProviders,
+                        onPickDocument = viewModel::openDocumentPicker,
+                        onBrowseRepository = {
+                            viewModel.setInput(browsePrompt)
+                            inputFocusRequester.requestFocus()
+                        },
+                        onAskDirectly = { inputFocusRequester.requestFocus() }
                     )
                 } else {
                     // 反转布局：列表原点即最新消息——贴底时内容增长由布局锚定自然保持
@@ -266,6 +283,11 @@ fun AiChatScreen(
                                     message = message,
                                     error = error,
                                     busy = generating,
+                                    toolRunning = if (message.status == MessageStatus.STREAMING) {
+                                        toolStatus
+                                    } else {
+                                        null
+                                    },
                                     onCopy = { copyToClipboard(message.text) },
                                     onRegenerate = {
                                         // 主动重新生成路径同样强制跟随
@@ -301,11 +323,21 @@ fun AiChatScreen(
                     }
                 }
             }
+            // 待发附件卡片行（非空时；随发送清空）
+            if (pendingAttachments.isNotEmpty()) {
+                PendingAttachmentRow(
+                    documents = pendingAttachments,
+                    onRemove = viewModel::removePendingAttachment
+                )
+                Spacer(Modifier.height(4.dp))
+            }
             ChatInputCard(
                 value = input,
                 onValueChange = viewModel::setInput,
                 generating = generating,
                 canSend = selectionLabel != null,
+                hasAttachments = pendingAttachments.isNotEmpty(),
+                inputFocusRequester = inputFocusRequester,
                 onSend = {
                     // 自己发送时强制回到底部跟随；发送后收起输入法
                     following = true
@@ -313,6 +345,7 @@ fun AiChatScreen(
                     viewModel.send()
                 },
                 onStop = viewModel::stop,
+                onPickDocument = viewModel::openDocumentPicker,
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 12.dp, vertical = 8.dp)
@@ -324,6 +357,13 @@ fun AiChatScreen(
         visible = showConfirm,
         onConfirm = viewModel::confirmNewSession,
         onDismiss = viewModel::dismissNewSession
+    )
+
+    DocumentPickerDialog(
+        items = docPickerItems,
+        pendingRelPaths = pendingAttachments.map { it.vaultRelPath }.toSet(),
+        onConfirm = viewModel::confirmDocumentSelection,
+        onDismiss = viewModel::closeDocumentPicker
     )
 }
 

@@ -289,7 +289,7 @@
     <string name="ai_preset_glm">智谱 GLM</string>
     <string name="ai_preset_ollama">Ollama（本地）</string>
 
-    <!-- AI 对话（B2：单轮流式对话；抽屉入口） -->
+    <!-- AI 对话（B3：工具循环 + 文档附件；抽屉入口） -->
     <string name="ai_chat_title">AI 对话</string>
     <string name="ai_chat_new_session">新会话</string>
     <string name="ai_chat_new_session_message">开始新会话将清空当前对话内容，此操作不可恢复。</string>
@@ -298,7 +298,18 @@
     <string name="ai_chat_no_provider">尚未配置 AI 供应商，请先添加供应商与模型</string>
     <string name="ai_chat_go_provider">去配置供应商</string>
     <string name="ai_chat_welcome_title">你好，我是 Az Notes 笔记助理</string>
-    <string name="ai_chat_welcome_hint">问我任何问题吧。仓库浏览与文档问答将在后续版本开放。</string>
+    <string name="ai_chat_welcome_hint">问我任何问题吧，也可以让我浏览仓库或阅读你选择的文档。</string>
+    <string name="ai_chat_attach_document">选择文档</string>
+    <string name="ai_chat_attachment_remove">移除 %1$s</string>
+    <string name="ai_chat_doc_picker_title">选择文档</string>
+    <string name="ai_chat_doc_picker_search">搜索笔记</string>
+    <string name="ai_chat_doc_picker_add">添加（%1$d）</string>
+    <string name="ai_chat_doc_picker_selected">已在对话中</string>
+    <string name="ai_chat_doc_picker_empty">没有找到笔记</string>
+    <string name="ai_chat_quick_attach">选择文档提问</string>
+    <string name="ai_chat_quick_browse">让 AI 浏览仓库</string>
+    <string name="ai_chat_quick_browse_prompt">请先浏览我的仓库结构，然后告诉我有哪些主题</string>
+    <string name="ai_chat_quick_ask">直接提问</string>
     <string name="ai_chat_input_hint">输入消息…</string>
     <string name="ai_chat_send">发送</string>
     <string name="ai_chat_stop">停止生成</string>
@@ -309,6 +320,13 @@
     <string name="ai_chat_reasoning_thinking">思考中</string>
     <string name="ai_chat_reasoning_done">已思考</string>
     <string name="ai_chat_generating">正在生成…</string>
+    <string name="ai_chat_tool_reading">正在读取 %1$s</string>
+    <string name="ai_chat_tool_searching">正在搜索「%1$s」</string>
+    <string name="ai_chat_tool_listing">正在浏览 %1$s</string>
+    <string name="ai_chat_tool_listing_root">正在浏览仓库根目录</string>
+    <string name="ai_chat_tool_read_summary">已读取：%1$s</string>
+    <string name="ai_chat_tool_read_summary_more">已读取：%1$s 等 %2$d 篇</string>
+    <string name="ai_chat_tool_executed">已执行 %1$d 次工具调用</string>
     <string name="ai_chat_retry">重试</string>
     <string name="ai_chat_go_settings">去设置</string>
     <string name="ai_chat_back_to_bottom">回到底部</string>
@@ -444,6 +462,7 @@
     <string name="reader_info_chars">字符数</string>
     <string name="reader_info_lines">行数</string>
     <string name="reader_info_headings">标题数</string>
+    <string name="reader_add_to_ai_chat">加入 AI 对话</string>
     <string name="reader_outline_empty">本文无标题层级</string>
     <string name="reader_outline_untitled">（无标题）</string>
     <string name="reader_attrs_title">属性</string>

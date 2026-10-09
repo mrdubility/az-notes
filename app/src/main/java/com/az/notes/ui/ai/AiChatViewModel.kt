@@ -6,6 +6,8 @@ import com.az.notes.R
 import com.az.notes.data.ai.AiChatSession
 import com.az.notes.data.ai.AiProviderRepository
 import com.az.notes.data.ai.ChatEngine
+import com.az.notes.data.settings.SettingsRepository
+import com.az.notes.data.storage.VaultRepository
 import com.az.notes.domain.ai.AiError
 import com.az.notes.domain.ai.AiModel
 import com.az.notes.domain.ai.AiProvider
@@ -14,11 +16,14 @@ import com.az.notes.domain.ai.ChatPart
 import com.az.notes.domain.ai.ChatRole
 import com.az.notes.domain.ai.MessageStatus
 import com.az.notes.domain.ai.StreamEvent
+import com.az.notes.domain.ai.ToolCallRecord
+import com.az.notes.domain.model.FileNode
 import com.az.notes.ui.common.UiText
 import dagger.hilt.android.lifecycle.HiltViewModel
 import java.util.UUID
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -30,6 +35,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** 当前选择的「供应商 + 模型」（id 引用；显示与请求时按 providers 列表解析）。 */
 data class ChatSelection(val providerId: String, val modelId: String)
@@ -38,18 +44,22 @@ data class ChatSelection(val providerId: String, val modelId: String)
 data class ChatErrorState(val messageId: String, val text: UiText, val showSettings: Boolean)
 
 /**
- * 对话页 ViewModel（B2 单轮流式）：
+ * 对话页 ViewModel（B3 工具循环版）：
  * - 会话消息由 [AiChatSession]（@Singleton 内存态）透出：退出页面重进保留，杀进程即丢
- * - 发送管线：追加 USER + ASSISTANT(STREAMING) → ChatEngine.stream → TextDelta 50ms 节流合并
- *   → MessageStop → COMPLETE；Failure → ERROR（错误条）；stop → CANCELED（空内容移除）
+ * - 发送管线：追加 USER（文本 + 待发附件） + ASSISTANT(STREAMING) → ChatEngine.stream →
+ *   TextDelta 50ms 节流合并 → MessageStop → COMPLETE；Failure → ERROR（错误条）；stop → CANCELED（空内容移除）
+ * - 工具循环：ToolCallStarted → toolStatus 状态行；ToolCallCompleted → 轨迹 / 传输态回写消息
  * - 历史组装由 ChatEngine 完成（仅 COMPLETE / CANCELED 参与，ERROR 排除）
+ * - 文档附件（B3）：选择器打开时扫描仓库；待发附件随发送并入用户消息
  * - 模型选择：默认按供应商 lastModelId 恢复；切换即写回记忆（repository.update）
  */
 @HiltViewModel
 class AiChatViewModel @Inject constructor(
     private val repository: AiProviderRepository,
     private val session: AiChatSession,
-    private val engine: ChatEngine
+    private val engine: ChatEngine,
+    private val vaultRepository: VaultRepository,
+    private val settingsRepository: SettingsRepository
 ) : ViewModel() {
 
     /** 会话消息（内存态；退出页面重进保留）。 */
@@ -83,6 +93,17 @@ class AiChatViewModel @Inject constructor(
     private val _showNewSessionConfirm = MutableStateFlow(false)
     val showNewSessionConfirm: StateFlow<Boolean> = _showNewSessionConfirm.asStateFlow()
 
+    /** 待发附件（会话级；发送后 / 新会话时清空）。 */
+    val pendingAttachments: StateFlow<List<ChatPart.Document>> = session.pendingAttachments
+
+    /** 工具执行状态行（null = 无；ToolCallStarted 置入，Completed / 流结束清空）。 */
+    private val _toolStatus = MutableStateFlow<List<ToolCallRecord>?>(null)
+    val toolStatus: StateFlow<List<ToolCallRecord>?> = _toolStatus.asStateFlow()
+
+    /** 文档选择器条目（null = 未打开；打开期间先置空列表再 IO 填充）。 */
+    private val _docPickerItems = MutableStateFlow<List<FileNode>?>(null)
+    val docPickerItems: StateFlow<List<FileNode>?> = _docPickerItems.asStateFlow()
+
     private var streamJob: Job? = null
 
     /** 流式中的 AI 消息 id（onCleared 兜底收尾用）。 */
@@ -111,20 +132,24 @@ class AiChatViewModel @Inject constructor(
         _input.value = value
     }
 
-    /** 发送：追加用户消息 → 开启一条新的 AI 流式消息。 */
+    /** 发送：追加用户消息（文本 + 待发附件）→ 开启一条新的 AI 流式消息。 */
     fun send() {
         if (_generating.value) return
-        val text = _input.value.trim()
-        if (text.isEmpty()) return
         val provider = currentProvider() ?: return
         val model = currentModel(provider) ?: return
+        val text = _input.value.trim()
+        val attachments = session.consumePendingAttachments()
+        if (text.isEmpty() && attachments.isEmpty()) return
         _input.value = ""
         _error.value = null
+        val parts = mutableListOf<ChatPart>()
+        if (text.isNotEmpty()) parts.add(ChatPart.Text(text))
+        parts.addAll(attachments)
         session.append(
             ChatMessage(
                 id = UUID.randomUUID().toString(),
                 role = ChatRole.USER,
-                parts = listOf(ChatPart.Text(text)),
+                parts = parts,
                 status = MessageStatus.COMPLETE,
                 timestamp = System.currentTimeMillis()
             )
@@ -158,6 +183,51 @@ class AiChatViewModel @Inject constructor(
         _input.value = message.text
         session.truncateFrom(messageId)
         _error.value = null
+    }
+
+    // ---------------------------------------------------------------- 文档附件
+
+    /** 单文档加入待发附件（失败 / 重复静默）。 */
+    fun attachDocument(absolutePath: String) {
+        viewModelScope.launch { session.attachDocument(absolutePath) }
+    }
+
+    /** 移除待发附件（按仓库相对路径）。 */
+    fun removePendingAttachment(vaultRelPath: String) {
+        session.removePendingAttachment(vaultRelPath)
+    }
+
+    /** 选择器确认：批量加入（IO 逐个读取；失败 / 重复跳过）。 */
+    fun confirmDocumentSelection(paths: List<String>) {
+        if (paths.isEmpty()) {
+            closeDocumentPicker()
+            return
+        }
+        viewModelScope.launch {
+            paths.forEach { session.attachDocument(it) }
+            closeDocumentPicker()
+        }
+    }
+
+    /** 打开文档选择器：先置空列表（加载中），IO 扫描仓库 Markdown 后填充。 */
+    fun openDocumentPicker() {
+        if (_docPickerItems.value != null) return
+        _docPickerItems.value = emptyList()
+        viewModelScope.launch {
+            val items = withContext(Dispatchers.IO) {
+                val vaultPath = runCatching {
+                    settingsRepository.settings.first().vaultPath
+                }.getOrNull()
+                vaultPath?.let { path ->
+                    vaultRepository.scanTree(path).filter { it.isMarkdown }
+                } ?: emptyList()
+            }
+            _docPickerItems.value = items
+        }
+    }
+
+    fun closeDocumentPicker() {
+        _docPickerItems.value = null
     }
 
     // ---------------------------------------------------------------- 会话与模型
@@ -256,7 +326,19 @@ class AiChatViewModel @Inject constructor(
                         // 终态事件：状态流转在流结束后统一处理
                         StreamEvent.MessageStop -> Unit
 
-                        // B3 工具循环接入；本批不产生
+                        // 工具循环状态事件（ToolCallRequested 为 engine 内部消化信号）
+                        is StreamEvent.ToolCallStarted -> _toolStatus.value = event.records
+
+                        is StreamEvent.ToolCallCompleted -> {
+                            _toolStatus.value = null
+                            session.updateMessage(assistantId) { message ->
+                                message.copy(
+                                    toolTrail = message.toolTrail + event.records,
+                                    toolExchanges = message.toolExchanges + event.exchange
+                                )
+                            }
+                        }
+
                         is StreamEvent.ToolCallRequested -> Unit
                     }
                 }
@@ -283,6 +365,7 @@ class AiChatViewModel @Inject constructor(
                 )
             } finally {
                 ticker.cancel()
+                _toolStatus.value = null
                 _generating.value = false
                 streamingMessageId = null
             }

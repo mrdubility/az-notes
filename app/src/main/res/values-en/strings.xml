@@ -289,7 +289,7 @@
     <string name="ai_preset_glm">Zhipu GLM</string>
     <string name="ai_preset_ollama">Ollama (local)</string>
 
-    <!-- AI chat (B2: single-turn streaming; drawer entry) -->
+    <!-- AI chat (B3: tool loop + document attachments; drawer entry) -->
     <string name="ai_chat_title">AI Chat</string>
     <string name="ai_chat_new_session">New chat</string>
     <string name="ai_chat_new_session_message">Starting a new chat will clear the current conversation. This cannot be undone.</string>
@@ -298,7 +298,18 @@
     <string name="ai_chat_no_provider">No AI provider configured yet. Add a provider and model first.</string>
     <string name="ai_chat_go_provider">Configure provider</string>
     <string name="ai_chat_welcome_title">Hi, I\'m your Az Notes assistant</string>
-    <string name="ai_chat_welcome_hint">Ask me anything. Vault browsing and document Q&amp;A are coming in a later version.</string>
+    <string name="ai_chat_welcome_hint">Ask me anything. I can also browse your vault or read documents you pick.</string>
+    <string name="ai_chat_attach_document">Select documents</string>
+    <string name="ai_chat_attachment_remove">Remove %1$s</string>
+    <string name="ai_chat_doc_picker_title">Add documents</string>
+    <string name="ai_chat_doc_picker_search">Search notes</string>
+    <string name="ai_chat_doc_picker_add">Add (%1$d)</string>
+    <string name="ai_chat_doc_picker_selected">Already in chat</string>
+    <string name="ai_chat_doc_picker_empty">No notes found</string>
+    <string name="ai_chat_quick_attach">Ask about documents</string>
+    <string name="ai_chat_quick_browse">Let AI browse the vault</string>
+    <string name="ai_chat_quick_browse_prompt">Please browse my vault structure first, then tell me what topics it covers</string>
+    <string name="ai_chat_quick_ask">Ask a question</string>
     <string name="ai_chat_input_hint">Type a message…</string>
     <string name="ai_chat_send">Send</string>
     <string name="ai_chat_stop">Stop generating</string>
@@ -309,6 +320,13 @@
     <string name="ai_chat_reasoning_thinking">Thinking</string>
     <string name="ai_chat_reasoning_done">Thought</string>
     <string name="ai_chat_generating">Generating…</string>
+    <string name="ai_chat_tool_reading">Reading %1$s</string>
+    <string name="ai_chat_tool_searching">Searching "%1$s"</string>
+    <string name="ai_chat_tool_listing">Browsing %1$s</string>
+    <string name="ai_chat_tool_listing_root">Browsing vault root</string>
+    <string name="ai_chat_tool_read_summary">Read: %1$s</string>
+    <string name="ai_chat_tool_read_summary_more">Read: %1$s and %2$d more</string>
+    <string name="ai_chat_tool_executed">%1$d tool calls executed</string>
     <string name="ai_chat_retry">Retry</string>
     <string name="ai_chat_go_settings">Settings</string>
     <string name="ai_chat_back_to_bottom">Back to bottom</string>
@@ -444,6 +462,7 @@
     <string name="reader_info_chars">Characters</string>
     <string name="reader_info_lines">Lines</string>
     <string name="reader_info_headings">Headings</string>
+    <string name="reader_add_to_ai_chat">Add to AI chat</string>
     <string name="reader_outline_empty">This note has no headings</string>
     <string name="reader_outline_untitled">(Untitled)</string>
     <string name="reader_attrs_title">Properties</string>

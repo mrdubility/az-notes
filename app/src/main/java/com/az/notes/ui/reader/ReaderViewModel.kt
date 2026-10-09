@@ -4,6 +4,7 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.az.notes.R
+import com.az.notes.data.ai.AiChatSession
 import com.az.notes.data.debug.DebugLogLevel
 import com.az.notes.data.debug.DebugLogRepository
 import com.az.notes.data.debug.DebugLogType
@@ -75,7 +76,8 @@ class ReaderViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
     private val vaultRepository: VaultRepository,
     private val settingsRepository: SettingsRepository,
-    private val debugLogRepository: DebugLogRepository
+    private val debugLogRepository: DebugLogRepository,
+    private val aiSession: AiChatSession
 ) : ViewModel() {
 
     private val absolutePath: String =
@@ -172,6 +174,14 @@ class ReaderViewModel @Inject constructor(
     /** 图片加载链路日志（写入调试日志 IMAGE 类型；未开启收集时静默丢弃）。 */
     fun imageLog(level: DebugLogLevel, msg: String, extra: Map<String, Any?>) {
         debugLogRepository.log(level, DebugLogType.IMAGE, msg, extra)
+    }
+
+    /**
+     * 「加入 AI 对话」：当前文档作为待发附件加入会话（vaultPath 护栏 / 重复静默跳过
+     * 由 [AiChatSession.attachDocument] 内部处理）；调用方随后导航到聊天页。
+     */
+    fun addToAiChat() {
+        viewModelScope.launch { aiSession.attachDocument(absolutePath) }
     }
 
     /** 切换待办勾选状态（写回磁盘后静默刷新列表）。 */

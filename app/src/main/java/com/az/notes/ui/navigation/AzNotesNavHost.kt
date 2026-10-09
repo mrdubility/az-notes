@@ -111,6 +111,8 @@ fun AzNotesNavHost(
                     // 去重：编辑页已是栈顶时直接回退复用，避免反复入栈
                     navController.navigateOrBack(entry, Routes.EDITOR_BASE, path, Routes.editor(path))
                 },
+                // 加入 AI 对话（B3）：附件已入待发列表，跳转聊天页
+                onAddToAiChat = { navController.navigate(Routes.AI_CHAT) },
                 fresh = entry.arguments?.getBoolean("fresh") ?: false
             )
         }

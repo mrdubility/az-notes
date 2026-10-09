@@ -14,6 +14,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -21,16 +23,22 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.outlined.ChatBubbleOutline
+import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.ExpandLess
 import androidx.compose.material.icons.outlined.ExpandMore
+import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -46,14 +54,20 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.az.notes.R
 import com.az.notes.domain.ai.ChatMessage
+import com.az.notes.domain.ai.ChatPart
 import com.az.notes.domain.ai.MessageStatus
+import com.az.notes.domain.ai.ToolCallRecord
+import com.az.notes.domain.ai.ToolSpecs
 import com.az.notes.ui.common.UiText
 import com.az.notes.ui.common.resolve
 import com.mikepenz.markdown.m3.Markdown
@@ -64,11 +78,14 @@ import org.intellij.markdown.flavours.gfm.GFMFlavourDescriptor
 import org.intellij.markdown.parser.MarkdownParser
 
 /**
- * 对话页组件（§9.2，B2 版）：
+ * 对话页组件（§9.2，B3 版）：
  * - [UserBubble] 右对齐气泡（无头像）+ 操作行（复制 / 编辑重发）
- * - [AssistantBlock] 思考折叠行（思考中直播滚动 / 结束自动折叠）+ Markdown 正文 + 操作行 + 错误条
- * - [ChatInputCard] 多行自增输入卡片（生成中发送变停止）
- * - [EmptyState] 欢迎语；无供应商 / 无模型时替换为配置引导
+ * - [AssistantBlock] 思考折叠行（思考中直播滚动 / 结束自动折叠）+ 工具活动行 +
+ *   Markdown 正文 + 操作行 + 错误条
+ * - [ToolActivityLine] 工具状态行（运行中逐条实时文案 / 完成后已读取摘要）
+ * - [PendingAttachmentRow] 待发附件卡片行（图标 + 文件名 + 移除）
+ * - [ChatInputCard] 多行自增输入卡片（生成中发送变停止）+ 底部「选择文档」按钮行
+ * - [EmptyState] 欢迎语 + §9.3 三快捷动作；无供应商 / 无模型时替换为配置引导
  * - [ErrorBar] 红条 + 重试（401/404 附「去设置」）
  */
 
@@ -131,6 +148,7 @@ internal fun AssistantBlock(
     message: ChatMessage,
     error: ChatErrorState?,
     busy: Boolean,
+    toolRunning: List<ToolCallRecord>?,
     onCopy: () -> Unit,
     onRegenerate: () -> Unit,
     onRetry: () -> Unit,
@@ -164,6 +182,15 @@ internal fun AssistantBlock(
                 expanded = reasoningExpanded,
                 onToggle = { userChoice = !reasoningExpanded }
             )
+            Spacer(Modifier.height(6.dp))
+        }
+
+        // 工具活动行：运行中（toolRunning）或完成后（toolTrail 摘要），正文之前展示
+        if (toolRunning != null && toolRunning.isNotEmpty()) {
+            ToolActivityLine(records = toolRunning, running = true)
+            Spacer(Modifier.height(6.dp))
+        } else if (message.toolTrail.isNotEmpty()) {
+            ToolActivityLine(records = message.toolTrail, running = false)
             Spacer(Modifier.height(6.dp))
         }
 
@@ -214,6 +241,138 @@ internal fun AssistantBlock(
                     }
                 }
             )
+        }
+    }
+}
+
+/**
+ * 工具活动行：运行中逐条展示实时操作（读取 / 搜索 / 浏览，argsSummary 填充）；
+ * 完成后从轨迹聚合「已读取」摘要（无读取则回退为执行次数）。
+ */
+@Composable
+internal fun ToolActivityLine(records: List<ToolCallRecord>, running: Boolean) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        if (running) {
+            records.forEach { record ->
+                ToolStatusRow(
+                    running = true,
+                    text = when (record.tool) {
+                        ToolSpecs.READ_NOTE ->
+                            stringResource(R.string.ai_chat_tool_reading, record.argsSummary)
+
+                        ToolSpecs.SEARCH_NOTES ->
+                            stringResource(R.string.ai_chat_tool_searching, record.argsSummary)
+
+                        ToolSpecs.LIST_NOTES -> if (record.argsSummary.isBlank() || record.argsSummary == ".") {
+                            stringResource(R.string.ai_chat_tool_listing_root)
+                        } else {
+                            stringResource(R.string.ai_chat_tool_listing, record.argsSummary)
+                        }
+
+                        else -> record.tool
+                    }
+                )
+            }
+        } else {
+            ToolStatusRow(running = false, text = completedLine(records))
+        }
+    }
+}
+
+/** 工具状态行单行（前缀：运行中 = 转圈；完成 = 对勾）。 */
+@Composable
+private fun ToolStatusRow(running: Boolean, text: String) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        if (running) {
+            CircularProgressIndicator(modifier = Modifier.size(12.dp), strokeWidth = 1.5.dp)
+        } else {
+            Icon(
+                imageVector = Icons.Outlined.CheckCircle,
+                contentDescription = null,
+                modifier = Modifier.size(13.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Spacer(Modifier.width(6.dp))
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+/** 完成态摘要：优先列出读取过的文件名（去重，超 [READ_SUMMARY_MAX] 篇附「等 N 篇」）。 */
+@Composable
+private fun completedLine(records: List<ToolCallRecord>): String {
+    val readTargets = records
+        .filter { it.tool == ToolSpecs.READ_NOTE && it.argsSummary.isNotBlank() }
+        .map { it.argsSummary }
+        .distinct()
+    if (readTargets.isEmpty()) {
+        return stringResource(R.string.ai_chat_tool_executed, records.size)
+    }
+    return if (readTargets.size > READ_SUMMARY_MAX) {
+        stringResource(
+            R.string.ai_chat_tool_read_summary_more,
+            readTargets.take(READ_SUMMARY_MAX).joinToString("、"),
+            readTargets.size
+        )
+    } else {
+        stringResource(R.string.ai_chat_tool_read_summary, readTargets.joinToString("、"))
+    }
+}
+
+/** 待发附件卡片行：图标 + 文件名 + 移除（横向滚动）。 */
+@Composable
+internal fun PendingAttachmentRow(
+    documents: List<ChatPart.Document>,
+    onRemove: (String) -> Unit
+) {
+    LazyRow(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        contentPadding = PaddingValues(horizontal = 16.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        items(items = documents, key = { it.vaultRelPath }) { document ->
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.8f),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(start = 10.dp, end = 6.dp, top = 6.dp, bottom = 6.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.Description,
+                        contentDescription = null,
+                        modifier = Modifier.size(15.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        text = document.name,
+                        style = MaterialTheme.typography.labelMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.widthIn(max = 150.dp)
+                    )
+                    Spacer(Modifier.width(2.dp))
+                    Icon(
+                        imageVector = Icons.Outlined.Close,
+                        contentDescription = stringResource(
+                            R.string.ai_chat_attachment_remove,
+                            document.name
+                        ),
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .clickable { onRemove(document.vaultRelPath) }
+                            .padding(4.dp)
+                            .size(14.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
         }
     }
 }
@@ -391,69 +550,94 @@ private fun ChatActionRow(actions: List<ChatAction>) {
     }
 }
 
-/** 输入卡片：多行自增；生成中发送按钮变停止。 */
+/** 输入卡片：多行自增；生成中发送按钮变停止；下方「选择文档」按钮行（B4 再扩压缩 / 图片）。 */
 @Composable
 internal fun ChatInputCard(
     value: String,
     onValueChange: (String) -> Unit,
     generating: Boolean,
     canSend: Boolean,
+    hasAttachments: Boolean,
+    inputFocusRequester: FocusRequester,
     onSend: () -> Unit,
     onStop: () -> Unit,
+    onPickDocument: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    Surface(
-        modifier = modifier,
-        shape = RoundedCornerShape(24.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
-    ) {
-        Row(
-            verticalAlignment = Alignment.Bottom,
-            modifier = Modifier.padding(start = 16.dp, end = 6.dp, top = 2.dp, bottom = 6.dp)
+    Column(modifier = modifier) {
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(24.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
         ) {
-            TextField(
-                value = value,
-                onValueChange = onValueChange,
-                modifier = Modifier.weight(1f),
-                placeholder = { Text(stringResource(R.string.ai_chat_input_hint)) },
-                maxLines = 6,
-                textStyle = MaterialTheme.typography.bodyMedium,
-                colors = TextFieldDefaults.colors(
-                    focusedContainerColor = Color.Transparent,
-                    unfocusedContainerColor = Color.Transparent,
-                    disabledContainerColor = Color.Transparent,
-                    focusedIndicatorColor = Color.Transparent,
-                    unfocusedIndicatorColor = Color.Transparent,
-                    disabledIndicatorColor = Color.Transparent
-                )
-            )
-            FilledIconButton(
-                onClick = if (generating) onStop else onSend,
-                enabled = generating || (canSend && value.isNotBlank()),
-                // bottom padding：单行时与输入框文本行垂直居中（56dp 高）；多行增长时保持贴底
-                modifier = Modifier
-                    .padding(bottom = 8.dp)
-                    .size(40.dp)
+            Row(
+                verticalAlignment = Alignment.Bottom,
+                modifier = Modifier.padding(start = 16.dp, end = 6.dp, top = 2.dp, bottom = 6.dp)
             ) {
-                if (generating) {
-                    Icon(Icons.Filled.Stop, stringResource(R.string.ai_chat_stop))
-                } else {
-                    Icon(Icons.AutoMirrored.Filled.Send, stringResource(R.string.ai_chat_send))
+                TextField(
+                    value = value,
+                    onValueChange = onValueChange,
+                    modifier = Modifier
+                        .weight(1f)
+                        .focusRequester(inputFocusRequester),
+                    placeholder = { Text(stringResource(R.string.ai_chat_input_hint)) },
+                    maxLines = 6,
+                    textStyle = MaterialTheme.typography.bodyMedium,
+                    colors = TextFieldDefaults.colors(
+                        focusedContainerColor = Color.Transparent,
+                        unfocusedContainerColor = Color.Transparent,
+                        disabledContainerColor = Color.Transparent,
+                        focusedIndicatorColor = Color.Transparent,
+                        unfocusedIndicatorColor = Color.Transparent,
+                        disabledIndicatorColor = Color.Transparent
+                    )
+                )
+                FilledIconButton(
+                    onClick = if (generating) onStop else onSend,
+                    enabled = generating || (canSend && (value.isNotBlank() || hasAttachments)),
+                    // bottom padding：单行时与输入框文本行垂直居中（56dp 高）；多行增长时保持贴底
+                    modifier = Modifier
+                        .padding(bottom = 8.dp)
+                        .size(40.dp)
+                ) {
+                    if (generating) {
+                        Icon(Icons.Filled.Stop, stringResource(R.string.ai_chat_stop))
+                    } else {
+                        Icon(Icons.AutoMirrored.Filled.Send, stringResource(R.string.ai_chat_send))
+                    }
                 }
+            }
+        }
+        // 底部按钮行：「选择文档」入口
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(start = 4.dp, top = 2.dp)
+        ) {
+            TextButton(onClick = onPickDocument) {
+                Icon(
+                    imageVector = Icons.Outlined.Description,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(Modifier.width(4.dp))
+                Text(stringResource(R.string.ai_chat_attach_document))
             }
         }
     }
 }
 
 /**
- * 空态：欢迎语；无供应商 / 无模型（[hasSelection] = false 且已回流完成）时
- * 替换为配置引导（直达供应商管理页）。
+ * 空态：欢迎语 + §9.3 三快捷动作（选择文档提问 / 让 AI 浏览仓库 / 直接提问）；
+ * 无供应商 / 无模型（[hasSelection] = false 且已回流完成）时替换为配置引导（直达供应商管理页）。
  */
 @Composable
 internal fun EmptyState(
     loaded: Boolean,
     hasSelection: Boolean,
-    onOpenProviders: () -> Unit
+    onOpenProviders: () -> Unit,
+    onPickDocument: () -> Unit,
+    onBrowseRepository: () -> Unit,
+    onAskDirectly: () -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -485,9 +669,43 @@ internal fun EmptyState(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center
             )
+            // §9.3 三快捷动作：选择文档提问 / 让 AI 浏览仓库 / 直接提问
+            Spacer(Modifier.height(24.dp))
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = onPickDocument) {
+                    Icon(
+                        imageVector = Icons.Outlined.Description,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(stringResource(R.string.ai_chat_quick_attach))
+                }
+                OutlinedButton(onClick = onBrowseRepository) {
+                    Icon(
+                        imageVector = Icons.Outlined.FolderOpen,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(stringResource(R.string.ai_chat_quick_browse))
+                }
+                OutlinedButton(onClick = onAskDirectly) {
+                    Icon(
+                        imageVector = Icons.Outlined.ChatBubbleOutline,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(stringResource(R.string.ai_chat_quick_ask))
+                }
+            }
         }
     }
 }
 
 /** 思考中直播框固定高度（一小块滚动区域，约 5 行 bodySmall）。 */
 private val REASONING_LIVE_HEIGHT = 96.dp
+
+/** 完成态「已读取」摘要最多列出的文件名数（超出附「等 N 篇」）。 */
+private const val READ_SUMMARY_MAX = 5
