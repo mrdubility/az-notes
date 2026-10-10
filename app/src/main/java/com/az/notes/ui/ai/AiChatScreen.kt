@@ -6,6 +6,13 @@ import android.content.Context
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -53,10 +60,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
@@ -70,6 +80,8 @@ import com.az.notes.ui.components.MoveTargetDialog
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * 对话页（§9）：
@@ -140,8 +152,8 @@ fun AiChatScreen(
     }
 
     // —— 自动跟随（反转布局）：贴底时流式增长由布局锚定自动保持（无需程序滚动）；
-    // 离开底部暂停跟随并显示「回到底部」——
-    val thresholdPx = with(LocalDensity.current) { FOLLOW_THRESHOLD_DP.dp.toPx() }
+    // 跟随意图只在贴底时为 true——用户任何上滑（离开底部）立即暂停跟随（从头阅读不被拉回），
+    // 只有滑回贴底或点击「回到底部」按钮才恢复跟随——
     var following by remember { mutableStateOf(true) }
     // 程序滚动守卫：平滑滚动的动画期间抑制位置观察，防动画中间态互夺跟随状态
     var programmaticScroll by remember { mutableStateOf(false) }
@@ -155,6 +167,12 @@ fun AiChatScreen(
     // - userScrolling：手势滚动进行中（拖拽与抬手后的惯性都保持 true）
     var listPressed by remember { mutableStateOf(false) }
     var userScrolling by remember { mutableStateOf(false) }
+
+    // 漂移补偿（暂停跟随防画面漂移）：反转布局锚定保持「距列表底端」的距离，
+    // 最新消息（index 0）流式增长会推高整列内容（阅读画面向上漂移）；记录最新消息的
+    // 实时布局高度与已补偿基线，暂停时按高度增量向下滚动抵消，保持阅读画面稳定
+    var latestItemHeight by remember { mutableStateOf(0) }
+    var compensatedHeight by remember { mutableStateOf(0) }
 
     // 唯一滚动出口：平滑滚到最新。
     // - 防重入：追赶滚动进行中时直接返回——高频内容变化不打断进行中的动画
@@ -178,6 +196,45 @@ fun AiChatScreen(
         }
     }
 
+    // 暂停跟随时的漂移补偿：内容增长 Δ → 画面向上漂移 Δ → scrollBy(+Δ) 向下滚动抵消
+    // （scrollBy 正值 = 向历史方向，即 firstVisibleItemScrollOffset 增大）。
+    // - Mutex 串行化：内容流与静止发射两路并发触发时防重复补偿（基线重算收敛）；
+    // - 用户交互（按住/拖拽/惯性）期间跳过：手势自身主导画面位置，且共享互斥锁下
+    //   scrollBy 会排队等待手势结束；该期间的漂移由位置观察的静止发射兑底补偿。
+    val driftMutex = remember { Mutex() }
+    val compensateDrift: suspend () -> Unit = {
+        driftMutex.withLock {
+            if (!following && !listPressed && !userScrolling) {
+                val delta = latestItemHeight - compensatedHeight
+                if (delta != 0) {
+                    if (listState.isAtLatest()) {
+                        // 已回贴底：贴底锚定自动保持画面，仅同步基线
+                        compensatedHeight = latestItemHeight
+                    } else {
+                        try {
+                            listState.scrollBy(delta.toFloat())
+                            compensatedHeight = latestItemHeight
+                        } catch (_: CancellationException) {
+                            // 滚动被用户手势抢占：本次作废，基线保持待静止发射兑底
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 高度观测：监听布局信息中最新消息（index 0）的实时高度，供漂移补偿使用
+    // （item 0 不可见时不更新，漂移补偿跳过；高度写由指纹流吸收后触发补偿）
+    LaunchedEffect(listState) {
+        snapshotFlow {
+            listState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == 0 }?.size?.height
+        }
+            .distinctUntilChanged()
+            .collect { height ->
+                if (height != null) latestItemHeight = height
+            }
+    }
+
     // 内容驱动：消息指纹（条数 / 末条文本与思考长度 / 状态）变化时若处于跟随态则收口到底。
     // 贴底流式（最常见）时位置恒为 (0, 0)，本路无操作——零程序滚动即零闪动
     LaunchedEffect(listState) {
@@ -187,15 +244,26 @@ fun AiChatScreen(
                 messagesState.value.size,
                 last?.text?.length ?: 0,
                 last?.reasoning?.length ?: 0,
-                last?.status?.ordinal ?: -1
+                last?.status?.ordinal ?: -1,
+                latestItemHeight
             )
         }
             .distinctUntilChanged()
-            .collect { if (following) scrollToLatest() }
+            .collect {
+                if (following) {
+                    scrollToLatest()
+                    // 跟随态（贴底锚定自动保持画面）同步漂移补偿基线
+                    compensatedHeight = latestItemHeight
+                } else {
+                    compensateDrift()
+                }
+            }
     }
-    // 位置观察：滚动中实时更新跟随意图（距底 ≤ 阈值恢复跟随）并维护手势滚动标记；
-    // 静止时若跟随态下仍离开底部（数据增删的自动位置修正、被取消动画的残留）→ 平滑收口回底
-    LaunchedEffect(listState, thresholdPx) {
+    // 位置观察：用户手势（拖拽/惯性）期间实时更新跟随意图——贴底才跟随：上滑一旦离开
+    // 底部立即暂停（用户从头阅读时不被拉回），滑回贴底自动恢复；静止发射复位手势滚动
+    // 标记并兑底补偿手势期间的漂移（未贴底的收口统一由内容驱动出口在跟随态下处理，
+    // 避免「近底拉回」干扰阅读）
+    LaunchedEffect(listState) {
         snapshotFlow {
             listState.isScrollInProgress to
                 (listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset)
@@ -203,14 +271,14 @@ fun AiChatScreen(
             .collect { (inProgress, pos) ->
                 if (programmaticScroll) return@collect
                 if (inProgress) {
-                    // 非程序动画的滚动进行中 = 用户手势（拖拽/惯性）
+                    // 非程序动画的滚动进行中 = 用户手势（拖拽/惯性）：
+                    // 贴底才跟随——上滑离开底部立即暂停，滑回贴底自动恢复
                     userScrolling = true
-                    following = pos.first == 0 && pos.second <= thresholdPx
+                    following = pos.first == 0 && pos.second == 0
                 } else {
                     userScrolling = false
-                    if (following && (pos.first != 0 || pos.second != 0)) {
-                        scrollToLatest()
-                    }
+                    // 手势结束（互斥锁已释放）：兑底补偿手势期间的累计漂移
+                    compensateDrift()
                 }
             }
     }
@@ -414,22 +482,53 @@ fun AiChatScreen(
                         }
                     }
                 }
-                // 用户上滑离开底部：显示「回到底部」气泡
+                // 用户上滑离开底部：显示「回到底部」按钮；输出中附加环绕按钮的旋转圆弧动画，
+                // 输出结束移除组合即停止动画
                 if (messages.isNotEmpty() && !following) {
-                    SmallFloatingActionButton(
-                        onClick = {
-                            following = true
-                            scope.launch { scrollToLatest() }
-                        },
+                    Box(
+                        contentAlignment = Alignment.Center,
                         modifier = Modifier
                             .align(Alignment.BottomEnd)
-                            .padding(16.dp),
-                        containerColor = MaterialTheme.colorScheme.secondaryContainer
+                            .padding(16.dp)
+                            .size(48.dp)
                     ) {
-                        Icon(
-                            Icons.Outlined.KeyboardArrowDown,
-                            stringResource(R.string.ai_chat_back_to_bottom)
-                        )
+                        if (generating) {
+                            val ringTransition = rememberInfiniteTransition(label = "aiOutputRing")
+                            val ringAngle by ringTransition.animateFloat(
+                                initialValue = 0f,
+                                targetValue = 360f,
+                                animationSpec = infiniteRepeatable(
+                                    animation = tween(durationMillis = 1200, easing = LinearEasing),
+                                    repeatMode = RepeatMode.Restart
+                                ),
+                                label = "aiOutputRingAngle"
+                            )
+                            val ringColor = MaterialTheme.colorScheme.primary
+                            Canvas(Modifier.fillMaxSize()) {
+                                val stroke = 3.dp.toPx()
+                                drawArc(
+                                    color = ringColor,
+                                    startAngle = ringAngle - 90f,
+                                    sweepAngle = 110f,
+                                    useCenter = false,
+                                    style = Stroke(width = stroke, cap = StrokeCap.Round),
+                                    topLeft = Offset(stroke, stroke),
+                                    size = Size(size.width - stroke * 2, size.height - stroke * 2)
+                                )
+                            }
+                        }
+                        SmallFloatingActionButton(
+                            onClick = {
+                                following = true
+                                scope.launch { scrollToLatest() }
+                            },
+                            containerColor = MaterialTheme.colorScheme.secondaryContainer
+                        ) {
+                            Icon(
+                                Icons.Outlined.KeyboardArrowDown,
+                                stringResource(R.string.ai_chat_back_to_bottom)
+                            )
+                        }
                     }
                 }
             }
@@ -546,8 +645,6 @@ fun AiChatScreen(
         onDismiss = viewModel::dismissPrivacy
     )
 }
-
-private const val FOLLOW_THRESHOLD_DP = 100
 
 /**
  * 反转布局（reverseLayout）下滚动原点即列表底部、index 0 为最新消息：
