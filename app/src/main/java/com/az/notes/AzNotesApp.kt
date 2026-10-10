@@ -42,8 +42,8 @@ class AzNotesApp : Application(), SingletonImageLoader.Factory {
         super.onCreate()
         installCrashLogger()
         // AI 线路诊断挂接：开启调试日志收集后 type=AI 记录 SSE 包数 / 首包摘录 / 每轮事件
-        AiDiag.sink = { msg, extra ->
-            debugLogRepository.log(DebugLogLevel.INFO, DebugLogType.AI, msg, extra)
+        AiDiag.sink = { level, msg, extra ->
+            debugLogRepository.log(level, DebugLogType.AI, msg, extra)
         }
         appScope.launch {
             coilHolder.bootstrap()
