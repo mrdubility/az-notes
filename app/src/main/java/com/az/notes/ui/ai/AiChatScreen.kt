@@ -215,45 +215,40 @@ fun AiChatScreen(
         }
     }
 
-    // 内容驱动：消息指纹（条数 / 末条文本·思考·工具轨迹长度 / 状态）变化时若处于跟随态，
-    // 快照滚到列表尽头（scrollToItem 带 forceRemeasure 同步重测量：新内容与贴底位置同帧
-    // 渲染，零可见闪动；不可用 scroll { scrollBy }——基于旧布局的边界钳位会让最新一次
-    // 增长永远滚不掉，画面落后几行字；也不可用 scrollToItem(末项) 默认偏移——其语义是
-    // 「顶部对齐」，末项高于一屏时停在正文第一行在顶部而非贴底）。手势进行中不抢滚动锁
-    // （贴底收口由位置观察的手势结束复核补齐）。翻看上文（非跟随态）时不滚动——底部
-    // 增长由顶部锚定自然吸收，画面静止
-
     // 近底收口窗口（仅 settle 负侧生效）：末项底边差视口底不超过该距离时精确收口到底——
     // 覆盖「输出中划回贴底惯性停在差几行处」（内容增长使边界下移、惯性停在旧边界）的
     // 场景；判定仍严格「完全可见」（正侧不吸附），窗口远小于翻看距离，不会重蹈弹回覆辙
     val bottomSnapThresholdPx = with(LocalDensity.current) { 64.dp.toPx() }
 
-    LaunchedEffect(listState) {
-        snapshotFlow {
-            val last = messagesState.value.lastOrNull()
-            listOf(
-                messagesState.value.size,
-                last?.text?.length ?: 0,
-                last?.reasoning?.length ?: 0,
-                last?.toolTrail?.size ?: 0,
-                last?.status?.ordinal ?: -1
+    // 内容驱动贴底（同帧关键）：以消息指纹为 LaunchedEffect key——指纹变化 → 重组 →
+    // 本 effect 在「组合完成后、布局之前」重启，此时新内容已完成组合，scrollToItem 的
+    // forceRemeasure 测得新高度并滚到尽头，同一帧渲染贴底、零可见闪动。不可用
+    // snapshotFlow collect 替代：collect 在状态写入后立即执行（组合之前），forceRemeasure
+    // 只能测得旧组合的内容高度，滚到旧尽头后重组又把 item 变高——画面永久落后最新
+    // 增长量（最后一行被截半、操作行不露出，正是本缺陷）。也不可用 scrollToItem(末项)
+    // 默认偏移（顶部对齐语义，末项高于一屏时停在正文第一行在顶部）。手势进行中不抢
+    // 滚动锁（贴底收口由位置观察的手势结束复核补齐）。翻看上文（非跟随态）时不滚动——
+    // 底部增长由顶部锚定自然吸收，画面静止
+    val contentFingerprint = listOf(
+        messages.size,
+        messages.lastOrNull()?.text?.length ?: 0,
+        messages.lastOrNull()?.reasoning?.length ?: 0,
+        messages.lastOrNull()?.toolTrail?.size ?: 0,
+        messages.lastOrNull()?.status?.ordinal ?: -1
+    )
+    LaunchedEffect(contentFingerprint) {
+        if (following && !programmaticScroll && !listState.isScrollInProgress &&
+            messagesState.value.isNotEmpty()
+        ) {
+            listState.scrollToItem(messagesState.value.lastIndex, BOTTOM_OVERSHOOT)
+            scrollLog(
+                "scroll_snap",
+                mapOf(
+                    "index" to messagesState.value.lastIndex,
+                    "size" to messagesState.value.size
+                )
             )
         }
-            .distinctUntilChanged()
-            .collect {
-                if (following && !programmaticScroll && !listState.isScrollInProgress &&
-                    messagesState.value.isNotEmpty()
-                ) {
-                    listState.scrollToItem(messagesState.value.lastIndex, BOTTOM_OVERSHOOT)
-                    scrollLog(
-                        "scroll_snap",
-                        mapOf(
-                            "index" to messagesState.value.lastIndex,
-                            "size" to messagesState.value.size
-                        )
-                    )
-                }
-            }
     }
     // 位置观察：用户手势（拖拽/惯性）期间实时判定「贴底才跟随」——贴底 = 末项完全可见
     // （视口坐标系下末项底边在视口底之内，等价「滚到列表尽头」；末项高于一屏时滚到
