@@ -65,7 +65,6 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
@@ -159,9 +158,9 @@ fun AiChatScreen(
     // 布局锚定在列表顶部（首可见项）：用户翻看上文时，最新消息（列表底部）流式增长
     // 不会推动画面——阅读画面天然静止，无需任何补偿滚动（反转布局下「正文被顶出屏幕
     // 顶端」的漂移根源整体移除）。贴底跟随时内容增长由「同帧快照滚动」保持：内容指纹
-    // 变化 → scrollToItem(末项) 非动画跳转，与内容增长同帧渲染，零可见闪动。
-    // 跟随意图：手势（拖拽/惯性）期间实时判定「贴底才跟随」（末项完全可见）；手势结束
-    // 停在贴底附近（阈值内）自动吸附回底；翻看较远则暂停跟随，画面静止。
+    // 变化 → scroll { scrollBy(超大值) } 边界钳位滚到尽头，与内容增长同帧渲染，零可见闪动。
+    // 跟随意图：手势（拖拽/惯性）期间实时判定「贴底才跟随」（末项完全可见 = 滚到尽头）；
+    // 上滑离开尽头立即暂停（画面停在哪就在哪，绝不拉回），滑回尽头自动恢复。
     var following by remember { mutableStateOf(true) }
     // 程序动画守卫：「回到底部」平滑动画期间抑制位置观察，防动画中间态互夺跟随状态
     var programmaticScroll by remember { mutableStateOf(false) }
@@ -199,29 +198,26 @@ fun AiChatScreen(
                 programmaticScroll = false
                 // 动画结束/取消后重新评估（动画期间位置观察被抑制）：正常完成必然贴底
                 // 继续跟随；被取消则按用户当前实际位置决定跟随意图；仍跟随且未到尽头
-                // 时补一步快照兜底（滚动边界钳位，已在尽头则不动）
-                if (following && listState.canScrollForward &&
-                    messagesState.value.isNotEmpty()
-                ) {
+                // 时补一步快照兑底（滚动边界钳位，已在尽头则不动）
+                val info = listState.layoutInfo
+                val lastItem = info.visibleItemsInfo.lastOrNull()
+                val atBottom = lastItem != null &&
+                    lastItem.index == messagesState.value.lastIndex &&
+                    lastItem.offset + lastItem.size <= info.viewportEndOffset
+                following = atBottom
+                if (following && messagesState.value.isNotEmpty()) {
                     listState.scroll { scrollBy(BOTTOM_OVERSHOOT.toFloat()) }
                 }
-                val info = listState.layoutInfo
-                val atBottom = (info.visibleItemsInfo.lastOrNull()?.index ?: -1) ==
-                    messagesState.value.lastIndex
-                following = atBottom
                 AiDiag.emitDebug("scroll_animate_done", mapOf("atBottom" to atBottom))
             }
         }
     }
 
-    // 近底吸附阈值：手势结束时末项底边距视口底边小于该距离 → 视为贴底恢复跟随并收口
-    val bottomSnapThresholdPx = with(LocalDensity.current) { 48.dp.toPx() }
-
     // 内容驱动：消息指纹（条数 / 末条文本·思考·工具轨迹长度 / 状态）变化时若处于跟随态，
     // 快照滚到列表尽头（scrollBy 超大值受滚动边界钳位，非动画、与内容增长同帧生效，
     // 零可见闪动；不可用 scrollToItem(末项)——其语义是「顶部对齐」，末项高于一屏时停在
     // 正文第一行在顶部而非贴底）；手势进行中不抢滚动锁（贴底收口由位置观察的手势结束
-    // 吸附补齐）。翻看上文（非跟随态）时不滚动——底部增长由顶部锚定自然吸收，画面静止
+    // 复核补齐）。翻看上文（非跟随态）时不滚动——底部增长由顶部锚定自然吸收，画面静止
     LaunchedEffect(listState) {
         snapshotFlow {
             val last = messagesState.value.lastOrNull()
@@ -249,12 +245,12 @@ fun AiChatScreen(
                 }
             }
     }
-    // 位置观察：用户手势（拖拽/惯性）期间实时判定「贴底才跟随」——贴底 = 末项可见
-    // （能看到最新消息即跟随：与内容增长解耦，末项自身变高不改变可见性，判定稳定）；
-    // 离开底部（末项滚出屏幕）立即暂停，滑回露出末项自动恢复；手势结束停在贴底附近
-    // （阈值内）自动吸附回底。翻看上文静止期记录画面位置作锚：若此后位置自发变化
-    // （异常漂移）埋点取证——本方案（普通布局锚定顶部）下不应发生。程序动画自身引起
-    // 的位置变化不属于用户手势，抑制
+    // 位置观察：用户手势（拖拽/惯性）期间实时判定「贴底才跟随」——贴底 = 末项完全可见
+    // （视口坐标系下末项底边在视口底之内，等价「滚到列表尽头」；末项高于一屏时滚到
+    // 尽头同样成立）。上滑离开尽头立即暂停（画面停在哪就在哪，绝不拉回），滑回尽头
+    // 自动恢复；手势结束仅在真贴底时恢复跟随并快照收口。翻看上文静止期记录画面位置
+    // 作锚：若此后位置自发变化（异常漂移）埋点取证——本方案（普通布局锚定顶部）下
+    // 不应发生。程序动画自身引起的位置变化不属于用户手势，抑制
     LaunchedEffect(listState) {
         var wasInProgress = false
         var quietAnchor: Pair<Int, Int>? = null
@@ -262,8 +258,10 @@ fun AiChatScreen(
             val info = listState.layoutInfo
             val lastItem = info.visibleItemsInfo.lastOrNull()
             val lastIndex = messagesState.value.lastIndex
-            // 贴底 = 末项在可见集中（末项自身高度变化不影响判定；滚动到尽头必可见）
-            val atBottom = lastItem != null && lastItem.index == lastIndex
+            // 贴底 = 末项完全可见（末项底边在视口底之内；末项高于一屏时滚到尽头
+            // offset 为负、可见部分底边仍在视口内，判定同样成立）
+            val atBottom = lastItem != null && lastItem.index == lastIndex &&
+                lastItem.offset + lastItem.size <= info.viewportEndOffset
             // 末项底边到视口底边的剩余距离（负 = 内容被截断；非末项 = MAX 哨兵）
             val gap = if (lastItem != null && lastItem.index == lastIndex) {
                 info.viewportEndOffset - (lastItem.offset + lastItem.size)
@@ -297,15 +295,22 @@ fun AiChatScreen(
                         )
                     }
                 } else if (wasInProgress) {
-                    // 手势结束：贴底（末项可见）/ 近底（阈值内）恢复跟随并快照收口到底
-                    if (atBottom || gap in 0..bottomSnapThresholdPx.toInt()) {
+                    // 手势结束：真贴底恢复跟随并快照收口（手势期间增长未滚部分）；
+                    // 未贴底则暂停跟随——画面停在用户松手位置，绝不吸附拉回
+                    if (atBottom) {
                         following = true
                         if (messagesState.value.isNotEmpty()) {
                             listState.scroll { scrollBy(BOTTOM_OVERSHOOT.toFloat()) }
                         }
                         AiDiag.emitDebug(
                             "follow_settle_snap",
-                            mapOf("atBottom" to atBottom, "gap" to gap)
+                            mapOf("gap" to gap)
+                        )
+                    } else if (following) {
+                        following = false
+                        AiDiag.emitDebug(
+                            "follow_settle_pause",
+                            mapOf("gap" to gap)
                         )
                     }
                 } else if (!following) {
