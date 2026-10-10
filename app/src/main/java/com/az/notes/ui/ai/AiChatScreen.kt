@@ -260,7 +260,7 @@ fun AiChatScreen(
             } else Int.MAX_VALUE
             Triple(
                 listState.isScrollInProgress,
-                info.firstVisibleItemIndex to info.firstVisibleItemScrollOffset,
+                listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset,
                 atBottom to gap
             )
         }
