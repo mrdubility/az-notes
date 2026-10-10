@@ -7,7 +7,6 @@ import com.az.notes.data.storage.VaultRepository
 import com.az.notes.domain.model.AppLanguage
 import com.az.notes.domain.model.AppSettings
 import com.az.notes.domain.model.DefaultNoteMode
-import com.az.notes.domain.model.FabAction
 import com.az.notes.domain.model.FileNode
 import com.az.notes.domain.model.NoteSortOrder
 import com.az.notes.domain.model.ThemeMode
@@ -83,10 +82,6 @@ class SettingsViewModel @Inject constructor(
     /** 打开笔记的默认落点（查看页 / 编辑页）。 */
     fun setDefaultNoteMode(mode: DefaultNoteMode) =
         viewModelScope.launch { settingsRepository.setDefaultNoteMode(mode) }
-
-    /** 右下角加号点击的默认行为。 */
-    fun setFabAction(action: FabAction) =
-        viewModelScope.launch { settingsRepository.setFabAction(action) }
 
     /** 应用语言（写偏好 + 镜像；重建 Activity 由 UI 层触发）。 */
     fun setLanguage(language: AppLanguage) =

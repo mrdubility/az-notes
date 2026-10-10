@@ -39,7 +39,6 @@ data class BackupSettings(
     val sortOrder: String? = null,
     val defaultNoteName: String? = null,
     val trashRetentionDays: Int? = null,
-    val fabAction: String? = null,
     val language: String? = null,
     val trashEnabled: Boolean? = null,
     val editorToolOrder: List<String>? = null,
@@ -53,7 +52,7 @@ data class BackupSettings(
     val remoteImageTimeoutSeconds: Int? = null
 )
 
-/** 单个仓库的备份：注册表信息 + per-vault 配置（收藏 / 分享目录 / 同步配置）。 */
+/** 单个仓库的备份：注册表信息 + per-vault 配置（收藏 / 最近查看 / 分享目录 / 同步配置）。 */
 @Serializable
 data class BackupVault(
     val id: String? = null,
@@ -64,6 +63,8 @@ data class BackupVault(
     val hidden: Boolean? = null,
     /** 收藏的笔记（相对仓库根路径） */
     val favoritePaths: List<String>? = null,
+    /** 最近查看记录（相对仓库根路径，最近优先） */
+    val recentPaths: List<String>? = null,
     /** 分享笔记默认保存文件夹（相对仓库根） */
     val shareFolder: String? = null,
     /** WebDAV 同步配置（不含密码：密码永不导出，导入后需重新填写） */

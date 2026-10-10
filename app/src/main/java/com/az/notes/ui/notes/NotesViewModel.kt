@@ -13,7 +13,6 @@ import com.az.notes.data.storage.VaultRepository
 import com.az.notes.data.sync.SyncEngine
 import com.az.notes.data.sync.SyncRunNotifier
 import com.az.notes.domain.model.AppSettings
-import com.az.notes.domain.model.FabAction
 import com.az.notes.domain.model.FileNode
 import com.az.notes.domain.model.NoteSortOrder
 import com.az.notes.domain.model.VaultInfo
@@ -65,8 +64,6 @@ data class NotesUiState(
     val searching: Boolean = false,
     val searchResults: List<NoteListItem> = emptyList(),
     val sortOrder: NoteSortOrder = NoteSortOrder.MODIFIED_DESC,
-    /** 右下角加号点击的默认行为（浮层展示全部动作，加号按此执行） */
-    val fabAction: FabAction = FabAction.NEW_NOTE,
     /** 是否启用回收站（关闭时删除直接物理删除、抽屉隐藏入口） */
     val trashEnabled: Boolean = true,
     /** 收藏的笔记相对路径集合（仅本地，不参与同步） */
@@ -163,7 +160,6 @@ class NotesViewModel @Inject constructor(
         _state.update {
             it.copy(
                 sortOrder = s.sortOrder,
-                fabAction = s.fabAction,
                 trashEnabled = s.trashEnabled,
                 favoritePaths = s.favoritePaths,
                 vaults = s.vaults,
@@ -702,6 +698,7 @@ class NotesViewModel @Inject constructor(
             } else {
                 movedPairs.forEach { (src, target) ->
                     migrateFavorite(src, target)
+                    migrateRecent(src, target)
                     syncRemoteRename(src, target)
                 }
             }
@@ -737,7 +734,10 @@ class NotesViewModel @Inject constructor(
             val ok = withContext(Dispatchers.IO) { vaultRepository.rename(sourcePath, target) }
             if (ok) {
                 if (crossVault) removeFavoriteTrees(listOf(sourcePath))
-                else migrateFavorite(sourcePath, target)
+                else {
+                    migrateFavorite(sourcePath, target)
+                    migrateRecent(sourcePath, target)
+                }
                 reloadItems(pullRefresh = false)
                 if (!crossVault) syncRemoteRename(sourcePath, target)
                 scheduleSaveSync()
@@ -912,6 +912,25 @@ class NotesViewModel @Inject constructor(
             }
         }.toSet()
         if (migrated != favorites) runCatching { settingsRepository.setFavorites(migrated) }
+    }
+
+    /**
+     * 应用内改名 / 移动后迁移最近查看记录：文件本身与其子孙目录内的记录一并迁移，
+     * 保证记录始终指向原始文档（未涉及记录时不做任何事）。
+     */
+    private suspend fun migrateRecent(oldAbsPath: String, newAbsPath: String) {
+        val vault = currentSettings.vaultPath ?: return
+        val oldRel = vaultRelative(vault, oldAbsPath) ?: return
+        val newRel = vaultRelative(vault, newAbsPath) ?: return
+        val recents = currentSettings.recentPaths
+        val migrated = recents.map { rel ->
+            when {
+                rel == oldRel -> newRel
+                rel.startsWith("$oldRel/") -> newRel + rel.removePrefix(oldRel)
+                else -> rel
+            }
+        }
+        if (migrated != recents) runCatching { settingsRepository.setRecentPaths(migrated) }
     }
 
     /** 目标目录是否在当前仓库之外（跨仓库移动判定）。 */

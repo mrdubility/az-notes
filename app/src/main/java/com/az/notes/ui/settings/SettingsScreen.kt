@@ -10,7 +10,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.Sort
-import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Backup
 import androidx.compose.material.icons.outlined.Build
@@ -54,7 +53,6 @@ import com.az.notes.data.settings.SettingsRepository
 import com.az.notes.domain.model.AppLanguage
 import com.az.notes.domain.model.AppSettings
 import com.az.notes.domain.model.DefaultNoteMode
-import com.az.notes.domain.model.FabAction
 import com.az.notes.domain.model.NoteSortOrder
 import com.az.notes.domain.model.ThemeMode
 import com.az.notes.ui.common.label
@@ -65,7 +63,7 @@ import kotlin.math.roundToInt
 
 /**
  * 设置页（§5.6 重设计）：图标 + 标题 + 副标题的分组列表。
- * 单选类选项（主题 / 默认模式 / 排序 / 加号行为 / 回收站清理）→ 行旁浮层菜单，
+ * 单选类选项（主题 / 默认模式 / 排序 / 回收站清理）→ 行旁浮层菜单，
  * 单手即可触达；预览字符数 / 回收站天数 / 网络图片限制 → 滑杆对话框；
  * 动态取色 → 开关；仓库组（仓库管理 / WebDAV 同步 / 接收分享位置）与回收站组各自独立。
  */
@@ -203,15 +201,6 @@ fun SettingsScreen(
                     options = NoteSortOrder.entries.map { it to it.label() },
                     selected = settings.sortOrder,
                     onSelect = viewModel::setSortOrder
-                )
-            }
-            item {
-                SettingsChoiceRow(
-                    icon = Icons.Outlined.Add,
-                    title = stringResource(R.string.settings_fab_action),
-                    options = FabAction.entries.map { it to it.label() },
-                    selected = settings.fabAction,
-                    onSelect = viewModel::setFabAction
                 )
             }
 

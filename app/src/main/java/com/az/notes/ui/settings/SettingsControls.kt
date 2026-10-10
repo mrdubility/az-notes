@@ -34,7 +34,6 @@ import androidx.compose.ui.unit.dp
 import com.az.notes.R
 import com.az.notes.domain.model.AppLanguage
 import com.az.notes.domain.model.DefaultNoteMode
-import com.az.notes.domain.model.FabAction
 import com.az.notes.domain.model.ThemeMode
 
 /**
@@ -187,16 +186,6 @@ internal fun DefaultNoteMode.label(): String = stringResource(
     when (this) {
         DefaultNoteMode.VIEW -> R.string.settings_default_note_mode_view
         DefaultNoteMode.EDIT -> R.string.settings_default_note_mode_edit
-    }
-)
-
-@Composable
-internal fun FabAction.label(): String = stringResource(
-    when (this) {
-        FabAction.NEW_NOTE -> R.string.settings_fab_action_new_note
-        FabAction.NEW_TASK -> R.string.settings_fab_action_new_task
-        FabAction.NEW_FOLDER -> R.string.settings_fab_action_new_folder
-        FabAction.SHOW_MENU -> R.string.settings_fab_action_menu
     }
 )
 

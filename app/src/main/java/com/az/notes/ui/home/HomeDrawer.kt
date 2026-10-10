@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.RestoreFromTrash
 import androidx.compose.material.icons.outlined.Settings
@@ -24,8 +25,8 @@ import androidx.compose.ui.unit.dp
 import com.az.notes.R
 
 /**
- * 主页抽屉内容：仓库信息（名称 + 路径） + 收藏夹 / 图库 / 回收站（关闭时隐藏入口） / 设置入口。
- * 自 HomeScreen 拆分独立文件（纯 UI，逻辑不变）。
+ * 主页抽屉内容：仓库信息（名称 + 路径） + 收藏夹 / 最近查看 / 图库 / 回收站（关闭时隐藏入口）
+ * / 设置入口。自 HomeScreen 拆分独立文件（纯 UI，逻辑不变）。
  */
 @Composable
 internal fun DrawerContent(
@@ -35,6 +36,7 @@ internal fun DrawerContent(
     trashEnabled: Boolean,
     onOpenAiChat: () -> Unit,
     onFavorites: () -> Unit,
+    onRecent: () -> Unit,
     onGallery: () -> Unit,
     onTrash: () -> Unit,
     onSettings: () -> Unit
@@ -80,6 +82,13 @@ internal fun DrawerContent(
             icon = { Icon(Icons.Outlined.Star, null) },
             selected = false,
             onClick = onFavorites,
+            modifier = Modifier.padding(horizontal = 12.dp)
+        )
+        NavigationDrawerItem(
+            label = { Text(stringResource(R.string.recents_title)) },
+            icon = { Icon(Icons.Outlined.History, null) },
+            selected = false,
+            onClick = onRecent,
             modifier = Modifier.padding(horizontal = 12.dp)
         )
         NavigationDrawerItem(

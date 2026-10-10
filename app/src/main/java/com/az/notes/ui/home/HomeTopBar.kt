@@ -47,6 +47,8 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.az.notes.R
@@ -98,6 +100,14 @@ internal fun HomeTopBar(
 ) {
     var sortMenuOpen by remember { mutableStateOf(false) }
     var selectMenuOpen by remember { mutableStateOf(false) }
+    // 搜索框输入载体（TextFieldValue 以显式控制选区）：程序化回填（点击历史项 / 清除等）
+    // 时光标定位到末尾——项目约定：凡程序化往输入框填文字，光标一律置于末尾
+    var searchField by remember { mutableStateOf(TextFieldValue("")) }
+    LaunchedEffect(searchQuery) {
+        if (searchField.text != searchQuery) {
+            searchField = TextFieldValue(searchQuery, selection = TextRange(searchQuery.length))
+        }
+    }
     // 进入搜索时自动聚焦输入框（弹软键盘）
     val searchFocus = remember { FocusRequester() }
     LaunchedEffect(searchActive) {
@@ -113,8 +123,11 @@ internal fun HomeTopBar(
             when {
                 selectMode -> Text(stringResource(R.string.home_selected_count, selectedCount))
                 searchActive -> BasicTextField(
-                    value = searchQuery,
-                    onValueChange = onSearchQueryChange,
+                    value = searchField,
+                    onValueChange = { value ->
+                        searchField = value
+                        onSearchQueryChange(value.text)
+                    },
                     singleLine = true,
                     modifier = Modifier
                         .fillMaxWidth()
@@ -125,7 +138,7 @@ internal fun HomeTopBar(
                     cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                     decorationBox = { innerTextField ->
                         Box {
-                            if (searchQuery.isEmpty()) {
+                            if (searchField.text.isEmpty()) {
                                 Text(
                                     text = stringResource(R.string.home_search_hint),
                                     style = MaterialTheme.typography.titleMedium,
@@ -210,7 +223,7 @@ internal fun HomeTopBar(
                     }
                 }
                 searchActive -> {
-                    if (searchQuery.isNotEmpty()) {
+                    if (searchField.text.isNotEmpty()) {
                         IconButton(onClick = { onSearchQueryChange("") }) {
                             Icon(Icons.Outlined.Close, stringResource(R.string.action_close))
                         }

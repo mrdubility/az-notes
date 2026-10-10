@@ -17,7 +17,6 @@ import com.az.notes.domain.model.AppLanguage
 import com.az.notes.domain.model.AppSettings
 import com.az.notes.domain.model.DefaultNoteMode
 import com.az.notes.domain.model.EditorTool
-import com.az.notes.domain.model.FabAction
 import com.az.notes.domain.model.FontFamilyPreference
 import com.az.notes.domain.model.NoteSortOrder
 import com.az.notes.domain.model.ThemeMode
@@ -39,9 +38,10 @@ import kotlinx.serialization.json.Json
 
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "az_notes_settings")
 
-/** 某仓库的 per-vault 设置快照（收藏路径 + 分享目录），用于配置备份导出。 */
+/** 某仓库的 per-vault 设置快照（收藏路径 + 最近查看 + 分享目录），用于配置备份导出。 */
 data class VaultPerVault(
     val favorites: Set<String>,
+    val recents: List<String>,
     val shareFolder: String?
 )
 
@@ -69,7 +69,6 @@ class SettingsRepository @Inject constructor(
         val SORT_ORDER = stringPreferencesKey("note_sort_order")
         val DEFAULT_NOTE_NAME = stringPreferencesKey("default_note_name")
         val TRASH_RETENTION = intPreferencesKey("trash_retention_days")
-        val FAB_ACTION = stringPreferencesKey("fab_action")
         val LANGUAGE = stringPreferencesKey("language")
         val TRASH_ENABLED = booleanPreferencesKey("trash_enabled")
         val TOOL_ORDER = stringPreferencesKey("editor_tool_order")
@@ -125,9 +124,6 @@ class SettingsRepository @Inject constructor(
             defaultNoteName = prefs[Keys.DEFAULT_NOTE_NAME]?.takeIf { it.isNotBlank() }
                 ?: "新建笔记",
             trashRetentionDays = (prefs[Keys.TRASH_RETENTION] ?: 30).coerceIn(0, TRASH_RETENTION_LIMIT_DAYS),
-            fabAction = prefs[Keys.FAB_ACTION]
-                ?.let { runCatching { FabAction.valueOf(it) }.getOrNull() }
-                ?: FabAction.NEW_NOTE,
             language = prefs[Keys.LANGUAGE]
                 ?.let { runCatching { AppLanguage.valueOf(it) }.getOrNull() }
                 ?: AppLanguage.SYSTEM,
@@ -146,6 +142,7 @@ class SettingsRepository @Inject constructor(
                 ?.let { runCatching { DefaultNoteMode.valueOf(it) }.getOrNull() }
                 ?: DefaultNoteMode.VIEW,
             favoritePaths = prefs[favoritesKey(currentId)] ?: emptySet(),
+            recentPaths = decodeStringList(prefs[recentKey(currentId)]),
             shareFolder = prefs[shareFolderKey(currentId)]?.takeIf { it.isNotBlank() },
             imageCompressEnabled = prefs[Keys.IMAGE_COMPRESS] ?: true,
             attachmentPromptEnabled = prefs[Keys.ATTACHMENT_PROMPT] ?: true,
@@ -259,6 +256,7 @@ class SettingsRepository @Inject constructor(
         }
         persistVaults(prefs, vaults)
         prefs.remove(stringSetPreferencesKey("favorite_paths_$id"))
+        prefs.remove(stringPreferencesKey("recent_paths_$id"))
         prefs.remove(stringPreferencesKey("share_folder_$id"))
         if (prefs[Keys.CURRENT_VAULT_ID] == id) {
             prefs[Keys.CURRENT_VAULT_ID] = vaults.first().id
@@ -313,9 +311,6 @@ class SettingsRepository @Inject constructor(
     /** 打开笔记的默认落点（查看页 / 编辑页）。 */
     suspend fun setDefaultNoteMode(mode: DefaultNoteMode) = edit { it[Keys.DEFAULT_NOTE_MODE] = mode.name }
 
-    /** 右下角加号点击的默认行为。 */
-    suspend fun setFabAction(action: FabAction) = edit { it[Keys.FAB_ACTION] = action.name }
-
     /** 应用语言：同时写 SharedPreferences 镜像，供 attachBaseContext 同步读取。 */
     suspend fun setLanguage(language: AppLanguage) {
         LocaleHelper.persist(appContext, language.tag)
@@ -346,14 +341,14 @@ class SettingsRepository @Inject constructor(
     /** 搜索历史（最近优先；上限 [SEARCH_HISTORY_LIMIT] 条）。 */
     val searchHistory: Flow<List<String>> = dataStore.data
         .catch { e -> if (e is IOException) emit(emptyPreferences()) else throw e }
-        .map { prefs -> decodeSearchHistory(prefs[Keys.SEARCH_HISTORY]) }
+        .map { prefs -> decodeStringList(prefs[Keys.SEARCH_HISTORY]) }
         .distinctUntilChanged()
 
     /** 记录一次搜索：去除首尾空白，去重后插入头部，超上限截断。 */
     suspend fun addSearchHistory(query: String) = edit { prefs ->
         val cleaned = query.trim()
         if (cleaned.isEmpty()) return@edit
-        val current = decodeSearchHistory(prefs[Keys.SEARCH_HISTORY])
+        val current = decodeStringList(prefs[Keys.SEARCH_HISTORY])
         val next = (listOf(cleaned) + current.filterNot { it == cleaned })
             .take(SEARCH_HISTORY_LIMIT)
         prefs[Keys.SEARCH_HISTORY] = json.encodeToString(next)
@@ -361,7 +356,7 @@ class SettingsRepository @Inject constructor(
 
     /** 移除一条搜索历史。 */
     suspend fun removeSearchHistory(query: String) = edit { prefs ->
-        val current = decodeSearchHistory(prefs[Keys.SEARCH_HISTORY])
+        val current = decodeStringList(prefs[Keys.SEARCH_HISTORY])
         val next = current.filterNot { it == query }
         if (next.isEmpty()) prefs.remove(Keys.SEARCH_HISTORY)
         else prefs[Keys.SEARCH_HISTORY] = json.encodeToString(next)
@@ -369,12 +364,6 @@ class SettingsRepository @Inject constructor(
 
     /** 清空全部搜索历史。 */
     suspend fun clearSearchHistory() = edit { prefs -> prefs.remove(Keys.SEARCH_HISTORY) }
-
-    /** 历史记录解码（损坏回退空列表；过滤空白项）。 */
-    private fun decodeSearchHistory(raw: String?): List<String> =
-        raw?.let { runCatching { json.decodeFromString<List<String>>(it) }.getOrNull() }
-            ?.filter { it.isNotBlank() }
-            .orEmpty()
 
     // ---------------------------------------------------------------- 图片（本批新增）
 
@@ -403,11 +392,12 @@ class SettingsRepository @Inject constructor(
     /** 内置默认仓库在本设备的绝对路径（导入时重定向到本设备，不信任备份中的绝对路径）。 */
     fun builtinVaultPath(): String = File(appContext.filesDir, DEFAULT_VAULT_DIR).absolutePath
 
-    /** 读取某仓库的 per-vault 设置快照（收藏 / 分享目录），用于导出。 */
+    /** 读取某仓库的 per-vault 设置快照（收藏 / 最近查看 / 分享目录），用于导出。 */
     suspend fun perVaultSnapshot(vaultId: String): VaultPerVault {
         val prefs = dataStore.data.first()
         return VaultPerVault(
             favorites = prefs[favoritesKey(vaultId)] ?: emptySet(),
+            recents = decodeStringList(prefs[recentKey(vaultId)]),
             shareFolder = prefs[shareFolderKey(vaultId)]?.takeIf { it.isNotBlank() }
         )
     }
@@ -437,11 +427,20 @@ class SettingsRepository @Inject constructor(
         }
     }
 
-    /** 备份导入：恢复某仓库的收藏 / 分享目录（仓库不在注册表时忽略，保证导入健壮性）。 */
-    suspend fun restorePerVault(vaultId: String, favorites: Set<String>, shareFolder: String?) = edit { prefs ->
+    /** 备份导入：按 id 恢复某仓库的 per-vault 设置（收藏 / 最近查看 / 分享目录）；仓库不存在时忽略。 */
+    suspend fun restorePerVault(
+        vaultId: String,
+        favorites: Set<String>,
+        recents: List<String>,
+        shareFolder: String?
+    ) = edit { prefs ->
         if (parseVaults(prefs[Keys.VAULTS]).none { it.id == vaultId }) return@edit
         val favKey = favoritesKey(vaultId)
         if (favorites.isEmpty()) prefs.remove(favKey) else prefs[favKey] = favorites
+        val recentK = recentKey(vaultId)
+        val recentsClean = recents.filter { it.isNotBlank() }.take(RECENT_LIMIT)
+        if (recentsClean.isEmpty()) prefs.remove(recentK)
+        else prefs[recentK] = json.encodeToString(recentsClean)
         val sfKey = shareFolderKey(vaultId)
         if (shareFolder.isNullOrBlank()) prefs.remove(sfKey) else prefs[sfKey] = shareFolder
     }
@@ -480,6 +479,34 @@ class SettingsRepository @Inject constructor(
         prefs[favoritesKey(currentVaultIdOf(prefs))] = relativePaths
     }
 
+    // ------------------------------------------------------- 最近查看（per-vault）
+
+    /** 记录一次打开（查看 / 编辑）：去重置顶，超出上限淘汰最旧。 */
+    suspend fun addRecent(relativePath: String) = edit { prefs ->
+        if (relativePath.isBlank()) return@edit
+        val key = recentKey(currentVaultIdOf(prefs))
+        val current = decodeStringList(prefs[key])
+        val next = (listOf(relativePath) + current.filterNot { it == relativePath })
+            .take(RECENT_LIMIT)
+        prefs[key] = json.encodeToString(next)
+    }
+
+    /** 移除一条最近记录。 */
+    suspend fun removeRecent(relativePath: String) = edit { prefs ->
+        val key = recentKey(currentVaultIdOf(prefs))
+        val current = decodeStringList(prefs[key])
+        val next = current.filterNot { it == relativePath }
+        if (next.isEmpty()) prefs.remove(key) else prefs[key] = json.encodeToString(next)
+    }
+
+    /** 清空当前仓库的全部最近记录。 */
+    suspend fun clearRecent() = edit { prefs -> prefs.remove(recentKey(currentVaultIdOf(prefs))) }
+
+    /** 以现存列表覆盖最近记录（改名 / 移动迁移与失效清理用）。 */
+    suspend fun setRecentPaths(paths: List<String>) = edit { prefs ->
+        prefs[recentKey(currentVaultIdOf(prefs))] = json.encodeToString(paths.take(RECENT_LIMIT))
+    }
+
     // ---------------------------------------------------------------- 内部
 
     /**
@@ -494,6 +521,16 @@ class SettingsRepository @Inject constructor(
     /** 收藏键：按仓库 id 隔离；id 缺失（建档前极早期）回退内置默认仓库，与其读取口合成一致。 */
     private fun favoritesKey(vaultId: String?): Preferences.Key<Set<String>> =
         stringSetPreferencesKey("favorite_paths_${vaultId ?: DEFAULT_VAULT_ID}")
+
+    /** 最近查看键：按仓库 id 隔离；回退规则同 [favoritesKey]。 */
+    private fun recentKey(vaultId: String?): Preferences.Key<String> =
+        stringPreferencesKey("recent_paths_${vaultId ?: DEFAULT_VAULT_ID}")
+
+    /** 字符串列表解码（损坏回退空列表；过滤空白项）。 */
+    private fun decodeStringList(raw: String?): List<String> =
+        raw?.let { runCatching { json.decodeFromString<List<String>>(it) }.getOrNull() }
+            ?.filter { it.isNotBlank() }
+            .orEmpty()
 
     /** 分享目录键：按仓库 id 隔离；回退规则同 [favoritesKey]。 */
     private fun shareFolderKey(vaultId: String?): Preferences.Key<String> =
@@ -519,6 +556,9 @@ class SettingsRepository @Inject constructor(
 
         /** 搜索历史上限（条）：行业常规的最近记录长度。 */
         const val SEARCH_HISTORY_LIMIT = 10
+
+        /** 最近查看记录上限（条）：超出后淘汰最旧（滚动存储）。 */
+        const val RECENT_LIMIT = 50
 
         /** 内置默认仓库位于 App 私有目录下的子目录名。 */
         private const val DEFAULT_VAULT_DIR = "vault"

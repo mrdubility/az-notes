@@ -45,7 +45,7 @@ class SyncScheduler @Inject constructor(
         manager.enqueueUniquePeriodicWork(WORK_PERIODIC, ExistingPeriodicWorkPolicy.UPDATE, request)
     }
 
-    /** 打开应用后立即拉取一次（§6.4，可关）：尽早上到其他端的新增 / 修改。 */
+    /** 打开应用后尽快拉取一次（§6.4，可关）：尽早上到其他端的新增 / 修改。 */
     suspend fun scheduleStartupSync() {
         val config = runCatching { syncConfigRepository.config.first() }.getOrNull() ?: return
         if (!config.configured || !config.autoSyncOnStart) return
@@ -109,8 +109,9 @@ class SyncScheduler @Inject constructor(
         const val WORK_STARTUP = "az_notes_sync_startup"
         const val WORK_SAVE = "az_notes_sync_save"
 
-        /** 打开应用后立即触发（0 延迟；仍带网络约束，离线时由 WorkManager 等网络恢复） */
-        const val STARTUP_DELAY_MS = 0L
+        /** 启动同步延迟：启动任务队列中优先级最高，约 1 秒后触发
+         *  （仍带网络约束，离线时由 WorkManager 等网络恢复） */
+        const val STARTUP_DELAY_MS = 1_000L
         const val SAVE_DEBOUNCE_MS = 30_000L
     }
 }

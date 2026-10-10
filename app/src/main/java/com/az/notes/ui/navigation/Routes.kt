@@ -40,6 +40,9 @@ object Routes {
     /** 收藏夹：跨文件夹展示收藏的笔记（仅本地）；从抽屉进入。 */
     const val FAVORITES = "favorites"
 
+    /** 最近查看：最近打开（查看 / 编辑）过的笔记（仅本地、按仓库隔离）；从抽屉进入。 */
+    const val RECENTS = "recents"
+
     /** 仓库管理页：切换 / 添加 / 重命名 / 移除仓库；从设置页与顶栏仓库菜单进入。 */
     const val VAULTS = "vaults"
 

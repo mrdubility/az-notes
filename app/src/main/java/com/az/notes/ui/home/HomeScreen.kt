@@ -14,22 +14,17 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.draganddrop.dragAndDropTarget
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Checklist
 import androidx.compose.material.icons.outlined.CreateNewFolder
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material3.DrawerValue
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -37,7 +32,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -70,7 +64,6 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.az.notes.R
 import com.az.notes.data.media.AttachmentRepository
-import com.az.notes.domain.model.FabAction
 import com.az.notes.ui.common.resolve
 import com.az.notes.ui.components.MoveTargetDialog
 import com.az.notes.ui.components.RenameDialog
@@ -103,6 +96,8 @@ fun HomeScreen(
     onOpenEditor: (path: String, fresh: Boolean, fromShare: Boolean) -> Unit,
     onOpenTrash: () -> Unit,
     onOpenFavorites: () -> Unit,
+    /** 最近查看页（抽屉入口，位于收藏夹下方）：最近打开过的笔记 */
+    onOpenRecent: () -> Unit,
     onOpenGallery: () -> Unit,
     /** AI 对话页（B2）：抽屉入口 */
     onOpenAiChat: () -> Unit,
@@ -136,7 +131,6 @@ fun HomeScreen(
     var deleteTarget by remember { mutableStateOf<NoteListItem?>(null) }
     // 删除确认时的附件引用统计（仅笔记、开关开启时非 null）
     var deleteReferenced by remember { mutableStateOf<AttachmentRepository.ReferencedAttachments?>(null) }
-    var fabMenuOpen by remember { mutableStateOf(false) }
     var newFolderDialog by remember { mutableStateOf(false) }
     var moveDialog by remember { mutableStateOf(false) }
     var moveSingle by remember { mutableStateOf<String?>(null) }
@@ -304,6 +298,10 @@ fun HomeScreen(
                         scope.launch { drawerState.close() }
                         onOpenFavorites()
                     },
+                    onRecent = {
+                        scope.launch { drawerState.close() }
+                        onOpenRecent()
+                    },
                     onOpenAiChat = {
                         scope.launch { drawerState.close() }
                         onOpenAiChat()
@@ -369,17 +367,13 @@ fun HomeScreen(
                 )
             },
             floatingActionButton = {
-                // 新建浮层（替代原右下圆钮 + 长按菜单）：三个快捷动作 + 加号横条；
-                // 列表向下滚动时隐藏、往回划时出现（加号点击仍执行设置中的默认行为）
+                // 新建浮层：三个快捷动作横条（主题色背景）；列表向下滚动时隐藏、往回划时出现
                 AnimatedVisibility(
                     visible = fabVisible,
                     enter = fadeIn() + slideInVertically(),
                     exit = fadeOut() + slideOutVertically()
                 ) {
                     NewFabBar(
-                        fabAction = state.fabAction,
-                        menuOpen = fabMenuOpen,
-                        onMenuOpenChange = { fabMenuOpen = it },
                         onCreateNote = {
                             viewModel.createNote { path -> onOpenEditor(path, true, false) }
                         },
@@ -551,27 +545,24 @@ private const val DOUBLE_BACK_EXIT_MS = 2000L
 private const val UNDO_BANNER_MS = 5_000L
 
 /**
- * 新建浮层（替代原右下圆钮 + 长按菜单）：一条横向底座展示「新建笔记 / 新建待办 /
- * 新建文件夹」三个快捷动作与加号；加号点击执行设置中的默认行为（默认行为为
- * 「弹出选项菜单」时在加号旁展开菜单）。
+ * 新建浮层：一条横向底座展示「新建笔记 / 新建待办 / 新建文件夹」三个快捷动作
+ * （主题色背景，与旧加号同色；尺寸略大于普通图标按钮）。
  */
 @Composable
 private fun NewFabBar(
-    fabAction: FabAction,
-    menuOpen: Boolean,
-    onMenuOpenChange: (Boolean) -> Unit,
     onCreateNote: () -> Unit,
     onCreateTask: () -> Unit,
     onCreateFolder: () -> Unit
 ) {
     Surface(
         shape = RoundedCornerShape(28.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        color = MaterialTheme.colorScheme.primary,
+        contentColor = MaterialTheme.colorScheme.onPrimary,
         shadowElevation = 6.dp
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp)
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 6.dp)
         ) {
             FabMiniAction(Icons.Outlined.Edit, stringResource(R.string.home_new_note), onCreateNote)
             FabMiniAction(Icons.Filled.Checklist, stringResource(R.string.home_new_task), onCreateTask)
@@ -580,66 +571,18 @@ private fun NewFabBar(
                 stringResource(R.string.home_new_folder),
                 onCreateFolder
             )
-            Spacer(Modifier.width(4.dp))
-            Box {
-                SmallFloatingActionButton(
-                    onClick = {
-                        when (fabAction) {
-                            FabAction.NEW_NOTE -> onCreateNote()
-                            FabAction.NEW_TASK -> onCreateTask()
-                            FabAction.NEW_FOLDER -> onCreateFolder()
-                            FabAction.SHOW_MENU -> onMenuOpenChange(true)
-                        }
-                    },
-                    shape = CircleShape,
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    contentColor = MaterialTheme.colorScheme.onPrimary
-                ) {
-                    Icon(Icons.Filled.Add, stringResource(R.string.home_new_note))
-                }
-                // 默认行为为「弹出选项菜单」时：加号旁展开三项菜单
-                DropdownMenu(
-                    expanded = menuOpen,
-                    onDismissRequest = { onMenuOpenChange(false) }
-                ) {
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.home_new_note)) },
-                        leadingIcon = { Icon(Icons.Outlined.Edit, null) },
-                        onClick = {
-                            onMenuOpenChange(false)
-                            onCreateNote()
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.home_new_task)) },
-                        leadingIcon = { Icon(Icons.Filled.Checklist, null) },
-                        onClick = {
-                            onMenuOpenChange(false)
-                            onCreateTask()
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.home_new_folder)) },
-                        leadingIcon = { Icon(Icons.Outlined.CreateNewFolder, null) },
-                        onClick = {
-                            onMenuOpenChange(false)
-                            onCreateFolder()
-                        }
-                    )
-                }
-            }
         }
     }
 }
 
-/** 浮层内单个快捷动作按钮（图标 + 无障碍标签）。 */
+/** 浮层内单个快捷动作按钮（图标 + 无障碍标签；随浮层主题色着色）。 */
 @Composable
 private fun FabMiniAction(icon: ImageVector, label: String, onClick: () -> Unit) {
-    IconButton(onClick = onClick) {
+    IconButton(onClick = onClick, modifier = Modifier.size(56.dp)) {
         Icon(
             imageVector = icon,
             contentDescription = label,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant
+            modifier = Modifier.size(26.dp)
         )
     }
 }

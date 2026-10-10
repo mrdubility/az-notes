@@ -90,14 +90,18 @@ class SyncEngine @Inject constructor(
 
     /**
      * 独占发起一次同步会话；已有会话（手动 / 自动）进行中时返回 false。
+     * 会话期间置位 [syncRunNotifier]「同步中」——覆盖扫描 + 执行全流程（列表页顶栏
+     * 图标据此变化示意）；会话结束（无论成功失败）标记完成，驱动主页同步后刷新列表。
      * 调用方在 [block] 内自行调用 plan / execute。
      */
     suspend fun runExclusive(block: suspend () -> Unit): Boolean {
         if (!sessionMutex.tryLock()) return false
+        syncRunNotifier.setRunning(true)
         try {
             block()
         } finally {
             sessionMutex.unlock()
+            syncRunNotifier.markCompleted()
         }
         return true
     }
@@ -135,9 +139,6 @@ class SyncEngine @Inject constructor(
                 mapOf("attempt" to attempt)
             )
         }
-
-        // 回收站过期批次清理（保留天数可在设置调整，0 = 永不清理）：同步前顺手执行
-        purgeTrash()
 
         // 上一次同步若异常中止，快照可能残留；本轮重新扫描后才有可信快照
         lastSnapshot = null
@@ -438,20 +439,13 @@ class SyncEngine @Inject constructor(
 
     /**
      * 依计划执行；[onProgress] 回调 (已完成数, 总数, 当前操作描述)。
-     * 执行期间置位 [SyncRunNotifier]（供顶栏“同步中”指示），结束（含取消）后复位。
+     * 「同步中」指示与完成标记由会话层 [runExclusive] 统一置位（覆盖扫描 + 执行阶段）。
      */
     suspend fun execute(
         config: SyncConfig,
         plan: SyncPlan,
         onProgress: (done: Int, total: Int, label: String) -> Unit
-    ): SyncSummary {
-        syncRunNotifier.setRunning(true)
-        try {
-            return executeInternal(config, plan, onProgress)
-        } finally {
-            syncRunNotifier.markCompleted()
-        }
-    }
+    ): SyncSummary = executeInternal(config, plan, onProgress)
 
     private suspend fun executeInternal(
         config: SyncConfig,
@@ -988,12 +982,6 @@ class SyncEngine @Inject constructor(
             }
         }
         return out
-    }
-
-    /** 回收站过期清理（§6.5-3）：保留天数来自设置，0 表示永不清理。 */
-    private suspend fun purgeTrash() {
-        val days = settingsRepository.settings.first().trashRetentionDays
-        withContext(Dispatchers.IO) { trashRepository.purgeExpired(days) }
     }
 
     /** 计算文件 SHA-1（冲突记录指纹，尽力而为；读取失败返回 null）。 */

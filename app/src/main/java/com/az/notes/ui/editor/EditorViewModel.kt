@@ -97,7 +97,19 @@ class EditorViewModel @Inject constructor(
                 return@launch
             }
             _state.update { it.copy(loading = false, text = text, dirty = false) }
+            // 记录最近查看 / 编辑（打开即算；重复打开幂等置顶）
+            recordRecent()
         }
+    }
+
+    /** 记录最近查看 / 编辑：绝对路径转为当前仓库相对路径后写偏好；路径不在仓库内时跳过。 */
+    private suspend fun recordRecent() {
+        val vault = runCatching { settingsRepository.settings.first().vaultPath }
+            .getOrNull() ?: return
+        val prefix = vault.trimEnd('/') + "/"
+        val abs = absolutePath
+        if (!abs.startsWith(prefix)) return
+        runCatching { settingsRepository.addRecent(abs.removePrefix(prefix)) }
     }
 
     fun onTextChange(newText: String) {

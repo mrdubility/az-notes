@@ -11,7 +11,6 @@ import com.az.notes.domain.model.AppLanguage
 import com.az.notes.domain.model.AppSettings
 import com.az.notes.domain.model.ConflictStrategy
 import com.az.notes.domain.model.DefaultNoteMode
-import com.az.notes.domain.model.FabAction
 import com.az.notes.domain.model.FontFamilyPreference
 import com.az.notes.domain.model.NoteSortOrder
 import com.az.notes.domain.model.SyncConfig
@@ -72,6 +71,7 @@ class BackupRepository @Inject constructor(
                 builtin = vault.builtin,
                 hidden = vault.hidden,
                 favoritePaths = perVault.favorites.sorted(),
+                recentPaths = perVault.recents,
                 shareFolder = perVault.shareFolder,
                 sync = runCatching { syncConfigRepository.configOf(vault.id) }.getOrNull()?.toBackup()
             )
@@ -150,6 +150,7 @@ class BackupRepository @Inject constructor(
             takenIds += id
             perVault[id] = VaultPerVault(
                 favorites = item.favoritePaths.orEmpty().filter { it.isNotBlank() }.toSet(),
+                recents = item.recentPaths.orEmpty().filter { it.isNotBlank() },
                 shareFolder = item.shareFolder?.trim()?.takeIf { it.isNotBlank() }
             )
             item.sync?.toSyncConfig()?.let { syncConfigs[id] = it }
@@ -168,7 +169,9 @@ class BackupRepository @Inject constructor(
             )
             restored.forEach { vault ->
                 perVault[vault.id]?.let { per ->
-                    runCatching { settingsRepository.restorePerVault(vault.id, per.favorites, per.shareFolder) }
+                    runCatching {
+                        settingsRepository.restorePerVault(vault.id, per.favorites, per.recents, per.shareFolder)
+                    }
                 }
                 syncConfigs[vault.id]?.let { config ->
                     runCatching { syncConfigRepository.writeVaultConfig(vault.id, config) }
@@ -201,7 +204,6 @@ class BackupRepository @Inject constructor(
         sortOrder = sortOrder.name,
         defaultNoteName = defaultNoteName,
         trashRetentionDays = trashRetentionDays,
-        fabAction = fabAction.name,
         language = language.name,
         trashEnabled = trashEnabled,
         editorToolOrder = editorToolOrder,
@@ -262,7 +264,6 @@ class BackupRepository @Inject constructor(
             settingsRepository.setDefaultNoteName(it); applied = true
         }
         s.trashRetentionDays?.let { settingsRepository.setTrashRetentionDays(it); applied = true }
-        enumOf<FabAction>(s.fabAction)?.let { settingsRepository.setFabAction(it); applied = true }
         enumOf<AppLanguage>(s.language)?.let { settingsRepository.setLanguage(it); applied = true }
         s.trashEnabled?.let { settingsRepository.setTrashEnabled(it); applied = true }
         s.editorToolOrder?.let { settingsRepository.setEditorToolOrder(it); applied = true }

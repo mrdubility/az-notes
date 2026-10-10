@@ -31,6 +31,7 @@ import com.az.notes.ui.favorites.FavoritesScreen
 import com.az.notes.ui.gallery.GalleryScreen
 import com.az.notes.ui.home.HomeScreen
 import com.az.notes.ui.reader.ReaderScreen
+import com.az.notes.ui.recent.RecentScreen
 import com.az.notes.ui.settings.BackupScreen
 import com.az.notes.ui.settings.SettingsScreen
 import com.az.notes.ui.settings.ToolbarSettingsScreen
@@ -87,6 +88,7 @@ fun AzNotesNavHost(
                 },
                 onOpenTrash = { navController.navigate(Routes.TRASH) },
                 onOpenFavorites = { navController.navigate(Routes.FAVORITES) },
+                onOpenRecent = { navController.navigate(Routes.RECENTS) },
                 onOpenGallery = { navController.navigate(Routes.GALLERY) },
                 // AI 对话（B2）：抽屉入口
                 onOpenAiChat = { navController.navigate(Routes.AI_CHAT) },
@@ -227,6 +229,14 @@ fun AzNotesNavHost(
 
         composable(Routes.FAVORITES) { entry ->
             FavoritesScreen(
+                viewModel = hiltViewModel(),
+                onBack = { navController.popBackStackSafely(entry) },
+                onOpen = openNote
+            )
+        }
+
+        composable(Routes.RECENTS) { entry ->
+            RecentScreen(
                 viewModel = hiltViewModel(),
                 onBack = { navController.popBackStackSafely(entry) },
                 onOpen = openNote

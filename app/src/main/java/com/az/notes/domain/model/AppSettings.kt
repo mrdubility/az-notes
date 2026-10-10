@@ -9,9 +9,6 @@ enum class FontFamilyPreference { SANS, SERIF, MONO }
 /** 笔记列表排序方式（主页右上角可切换） */
 enum class NoteSortOrder { MODIFIED_DESC, MODIFIED_ASC, NAME_ASC, NAME_DESC }
 
-/** 右下角加号：新建浮层中加号点击时执行的默认行为；顺序与浮层动作一致。 */
-enum class FabAction { NEW_NOTE, NEW_TASK, NEW_FOLDER, SHOW_MENU }
-
 /** 打开笔记的默认落点（设置 → 编辑器和查看器）：查看页（阅读器）/ 编辑页。 */
 enum class DefaultNoteMode { VIEW, EDIT }
 
@@ -40,8 +37,6 @@ data class AppSettings(
     val defaultNoteName: String = "新建笔记",
     /** 回收站自动清理天数（0 = 永不清理；上限 90）；同步启动前执行 */
     val trashRetentionDays: Int = 30,
-    /** 右下角加号点击的默认行为（浮层展示全部动作，点击按此执行） */
-    val fabAction: FabAction = FabAction.NEW_NOTE,
     /** 应用语言（切换后由设置页重建 Activity 生效） */
     val language: AppLanguage = AppLanguage.SYSTEM,
     /** 是否启用回收站；关闭后删除将直接物理删除且抽屉隐藏入口 */
@@ -54,6 +49,8 @@ data class AppSettings(
     val defaultNoteMode: DefaultNoteMode = DefaultNoteMode.VIEW,
     /** 收藏的笔记相对路径集合（相对当前仓库根；仅本地，不参与同步） */
     val favoritePaths: Set<String> = emptySet(),
+    /** 最近查看的笔记相对路径（最近优先，上限 50；仅本地，不参与同步，按仓库隔离） */
+    val recentPaths: List<String> = emptyList(),
     /** 分享进入的笔记默认保存文件夹（相对当前仓库根；null = 跟随当前目录） */
     val shareFolder: String? = null,
     /** 导入图片时是否压缩（固定参数：长边 1568 / JPEG 质量 80；关闭则原样复制）。 */

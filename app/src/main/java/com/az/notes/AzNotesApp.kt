@@ -10,19 +10,29 @@ import com.az.notes.data.ai.AiDiag
 import com.az.notes.data.debug.DebugLogLevel
 import com.az.notes.data.debug.DebugLogRepository
 import com.az.notes.data.debug.DebugLogType
+import com.az.notes.data.settings.SettingsRepository
+import com.az.notes.data.storage.TrashRepository
 import com.az.notes.di.CoilHolder
 import com.az.notes.work.SyncScheduler
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
 /**
  * 应用入口。[@HiltAndroidApp] 触发 Hilt 代码生成并作为依赖图根。
- * 进程启动时对齐自动同步任务（§6.4）：周期任务按配置重建 + 可选启动后延迟同步；
- * 并安装未捕获异常记录器（写入调试日志，需在设置中开启收集）。
+ * 进程启动时：安装未捕获异常记录器（写入调试日志，需在设置中开启收集）；
+ * 并对齐后台任务（§6.4）——启动任务队列按优先级【错峰延迟】执行，避免启动
+ * 瞬间与应用首帧争抢资源：
+ *   ① 同步（最高优先级）：入队启动同步，任务自带约 1 秒触发延迟；
+ *   ② 周期同步任务对齐：启动约 2 秒后重建（WorkManager 轻量操作）；
+ *   ③ 回收站过期清理：再延迟 10 秒（启动约 12 秒后）后台执行
+ *     （原随同步计划阶段执行，为减轻启动负担迁出）。
  */
 @HiltAndroidApp
 class AzNotesApp : Application(), SingletonImageLoader.Factory {
@@ -36,6 +46,12 @@ class AzNotesApp : Application(), SingletonImageLoader.Factory {
     @Inject
     lateinit var coilHolder: CoilHolder
 
+    @Inject
+    lateinit var settingsRepository: SettingsRepository
+
+    @Inject
+    lateinit var trashRepository: TrashRepository
+
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     override fun onCreate() {
@@ -46,10 +62,19 @@ class AzNotesApp : Application(), SingletonImageLoader.Factory {
             debugLogRepository.log(level, DebugLogType.AI, msg, extra)
         }
         appScope.launch {
+            // 轻量基础工作先执行（各为一次设置读取 / 条件写，毫秒级）：
+            // 图片护栏配置快照 + 构建指纹日志
             coilHolder.bootstrap()
             logBuildFingerprint()
-            syncScheduler.reschedulePeriodic()
+            // ———— 启动任务队列：按优先级错峰延迟，避免启动瞬间争抢资源 ————
+            // ① 同步（最高优先级）：入队启动同步（任务自带约 1 秒触发延迟）
             syncScheduler.scheduleStartupSync()
+            // ② 周期同步任务对齐：启动约 2 秒后重建
+            delay(PERIODIC_ALIGN_DELAY_MS)
+            syncScheduler.reschedulePeriodic()
+            // ③ 回收站过期清理：再延迟 10 秒（启动约 12 秒后）后台执行
+            delay(TRASH_PURGE_DELAY_MS)
+            purgeTrashIfEnabled()
         }
     }
 
@@ -96,6 +121,25 @@ class AzNotesApp : Application(), SingletonImageLoader.Factory {
                 "commit" to BuildConfig.BUILD_COMMIT
             )
         )
+    }
+
+    /**
+     * 回收站过期清理（§6.5-3，保留天数来自设置，0 = 永不清理）：
+     * 启动后延迟执行（见启动任务队列），避免启动瞬间的文件系统批量操作造成卡顿。
+     */
+    private suspend fun purgeTrashIfEnabled() {
+        val days = runCatching { settingsRepository.settings.first().trashRetentionDays }
+            .getOrDefault(0)
+        if (days <= 0) return
+        withContext(Dispatchers.IO) { trashRepository.purgeExpired(days) }
+    }
+
+    private companion object {
+        /** 周期同步任务对齐延迟：启动队列中同步之后执行。 */
+        const val PERIODIC_ALIGN_DELAY_MS = 2_000L
+
+        /** 回收站过期清理延迟：与启动解耦，等首帧与同步启动之后再执行。 */
+        const val TRASH_PURGE_DELAY_MS = 10_000L
     }
 
     /**

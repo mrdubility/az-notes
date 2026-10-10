@@ -98,6 +98,13 @@
     <string name="fav_empty_hint">在笔记条目的菜单中点击「收藏」，即可在这里跨文件夹快速找到它。</string>
     <string name="fav_in_root">仓库根目录</string>
 
+    <!-- 最近查看（仅本地、按仓库隔离；上限 50 条滚动存储） -->
+    <string name="recents_title">最近查看</string>
+    <string name="recents_remove">移除该记录</string>
+    <string name="recents_clear">清空</string>
+    <string name="recents_empty">暂无最近查看</string>
+    <string name="recents_empty_hint">查看或编辑过的笔记会出现在这里，最多保留 50 条。</string>
+
     <!-- 多仓库（仓库管理 / 顶栏切换 / 标注） -->
     <string name="vault_switch">切换仓库</string>
     <string name="vault_manage">管理仓库…</string>
@@ -177,7 +184,7 @@
     <string name="settings_editor_viewer">编辑器和查看器</string>
     <string name="settings_editor_viewer_subtitle">字体大小 / 行间距</string>
     <string name="settings_default_note_mode">默认模式</string>
-    <string name="settings_default_note_mode_view">查看页</string>
+    <string name="settings_default_note_mode_view">预览页</string>
     <string name="settings_default_note_mode_edit">编辑页</string>
     <string name="settings_font_size_value">%1$d sp</string>
     <string name="settings_line_height_value">%.1f 倍</string>

@@ -137,12 +137,25 @@ class ReaderViewModel @Inject constructor(
                         )
                     }
                 }
+                // 记录最近查看（打开即算；重复打开幂等置顶）：读取抛错时不记录
+                vault?.let { v ->
+                    vaultRelative(v, absolutePath)?.let { rel ->
+                        runCatching { settingsRepository.addRecent(rel) }
+                    }
+                }
             } catch (e: Exception) {
                 _state.update { it.copy(loading = false, error = e.toUiText(R.string.msg_read_failed)) }
             } finally {
                 loadedOnce = true
             }
         }
+    }
+
+    /** 绝对路径 → Vault 根相对路径（不在 Vault 内返回 null）。 */
+    private fun vaultRelative(vault: String, absPath: String): String? {
+        val prefix = vault.trimEnd('/') + "/"
+        if (!absPath.startsWith(prefix)) return null
+        return absPath.removePrefix(prefix)
     }
 
     /** 打开“文档信息”对话框：读取文件属性并统计正文字数（一次读取，关闭后清除）。 */

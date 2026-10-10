@@ -98,6 +98,13 @@
     <string name="fav_empty_hint">Tap Favorite in a note menu to find it here across folders.</string>
     <string name="fav_in_root">Vault root</string>
 
+    <!-- 最近查看（仅本地、按仓库隔离；上限 50 条滚动存储） -->
+    <string name="recents_title">Recently viewed</string>
+    <string name="recents_remove">Remove this entry</string>
+    <string name="recents_clear">Clear</string>
+    <string name="recents_empty">Nothing viewed yet</string>
+    <string name="recents_empty_hint">Notes you view or edit will show up here, up to 50 kept.</string>
+
     <!-- Multiple vaults (management / top-bar switcher / label) -->
     <string name="vault_switch">Switch vault</string>
     <string name="vault_manage">Manage vaults…</string>
@@ -177,7 +184,7 @@
     <string name="settings_editor_viewer">Editor &amp; viewer</string>
     <string name="settings_editor_viewer_subtitle">Font size / line spacing</string>
     <string name="settings_default_note_mode">Default mode</string>
-    <string name="settings_default_note_mode_view">View page</string>
+    <string name="settings_default_note_mode_view">Preview page</string>
     <string name="settings_default_note_mode_edit">Edit page</string>
     <string name="settings_font_size_value">%1$d sp</string>
     <string name="settings_line_height_value">%.1fx</string>
