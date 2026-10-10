@@ -89,12 +89,12 @@ import com.az.notes.ui.common.resolve
 import com.mikepenz.markdown.m3.Markdown
 import com.mikepenz.markdown.model.DefaultMarkdownAnimation
 import com.mikepenz.markdown.model.MarkdownAnimations
-import com.mikepenz.markdown.model.MarkdownFlavourDescriptor
 import com.mikepenz.markdown.model.MarkdownTypography
 import com.mikepenz.markdown.model.ReferenceLinkHandler
 import com.mikepenz.markdown.model.ReferenceLinkHandlerImpl
 import com.mikepenz.markdown.model.rememberMarkdownState
 import java.io.File
+import org.intellij.markdown.flavours.MarkdownFlavourDescriptor
 import org.intellij.markdown.flavours.gfm.GFMFlavourDescriptor
 import org.intellij.markdown.parser.MarkdownParser
 
