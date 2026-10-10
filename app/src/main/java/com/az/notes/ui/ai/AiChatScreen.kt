@@ -30,6 +30,7 @@ import androidx.compose.foundation.lazy.LazyListItemInfo
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -169,6 +170,11 @@ fun AiChatScreen(
     var listPressed by remember { mutableStateOf(false) }
     var userScrolling by remember { mutableStateOf(false) }
 
+    // 漂移补偿滚动标记：补偿自身引起的滚动进行中/位置变化不属于用户滚动，位置观察需
+    // 一并抑制——否则补偿会被误判为用户滚动（userScrolling 误置、跟随判定被污染、
+    // 静止兜底被自我触发），且补偿中的重复补偿请求应等待本轮结束
+    var compensating by remember { mutableStateOf(false) }
+
     // 漂移补偿（暂停跟随防画面漂移）：反转布局锚定保持「距列表底端」的距离，
     // 最新消息（index 0）流式增长会推高整列内容（阅读画面向上漂移）；记录最新消息的
     // 实时布局高度与已补偿基线，暂停时按高度增量向下滚动抵消，保持阅读画面稳定
@@ -197,15 +203,18 @@ fun AiChatScreen(
         }
     }
 
-    // 暂停跟随时的漂移补偿：内容增长 Δ → 画面向上漂移 Δ → scrollBy(+Δ) 向下滚动抵消
-    // （scrollBy 正值 = 向历史方向，即 firstVisibleItemScrollOffset 增大）。
+    // 暂停跟随时的漂移补偿：内容增长 Δ → 正文被向上顶 Δ → 沿「翻看上文」方向补滚 Δ 抵消。
+    // - 方向（三重锚定）：官方 KDoc scrollBy 正值 = "scroll forward"（向 index 增大方向）；
+    //   本项目列表为 asReversed + reverseLayout，index 增大即「翻看上文」；用户实测
+    //   「翻看上文」正是 offset 离开 0 增大（following=false 的触发条件）。漂移使视野
+    //   向「更新」方向滑动，补偿即向「翻看上文」方向回推：scrollBy(+Δ)；
     // - Mutex 串行化：内容流与静止发射两路并发触发时防重复补偿（基线重算收敛）；
     // - 用户交互（按住/拖拽/惯性）期间跳过：手势自身主导画面位置，且共享互斥锁下
     //   scrollBy 会排队等待手势结束；该期间的漂移由位置观察的静止发射兑底补偿。
     val driftMutex = remember { Mutex() }
     val compensateDrift: suspend () -> Unit = {
         driftMutex.withLock {
-            if (!following && !listPressed && !userScrolling) {
+            if (!following && !listPressed && !userScrolling && !compensating) {
                 val delta = latestItemHeight - compensatedHeight
                 if (delta != 0) {
                     if (listState.isAtLatest()) {
@@ -214,11 +223,15 @@ fun AiChatScreen(
                     } else {
                         try {
                             // LazyListState 无 scrollBy 成员：走 ScrollableState.scroll
-                            // + ScrollScope.scrollBy 增量滚动（正值 = 向历史方向）
+                            // + ScrollScope.scrollBy 增量滚动（正值 = 翻看上文方向，
+                            // 把被漂移推离的视野推回原阅读位置）
+                            compensating = true
                             listState.scroll { scrollBy(delta.toFloat()) }
                             compensatedHeight = latestItemHeight
                         } catch (_: CancellationException) {
                             // 滚动被用户手势抢占：本次作废，基线保持待静止发射兑底
+                        } finally {
+                            compensating = false
                         }
                     }
                 }
@@ -227,8 +240,8 @@ fun AiChatScreen(
     }
 
     // 高度观测：监听布局信息中最新消息（index 0）的实时高度，供漂移补偿使用
-    // （item 0 不可见时以 -1 哨兵跳过；LazyListItemInfo.size 即主轴上像素尺寸；
-    //   高度写由指纹流吸收后触发补偿）
+    // （item 0 不可见时以 -1 哨兵跳过；LazyListItemInfo.size 即主轴上像素尺寸）。
+    // 高度变化即漂移量变化：非跟随态在此直接触发补偿（最短链路，少一跳调度延迟）
     LaunchedEffect(listState) {
         snapshotFlow {
             val item0: LazyListItemInfo? =
@@ -237,7 +250,10 @@ fun AiChatScreen(
         }
             .distinctUntilChanged()
             .collect { height ->
-                if (height >= 0) latestItemHeight = height
+                if (height >= 0) {
+                    latestItemHeight = height
+                    if (!following) compensateDrift()
+                }
             }
     }
 
@@ -268,20 +284,21 @@ fun AiChatScreen(
     // 位置观察：用户手势（拖拽/惯性）期间实时更新跟随意图——贴底才跟随：上滑一旦离开
     // 底部立即暂停（用户从头阅读时不被拉回），滑回贴底自动恢复；静止发射复位手势滚动
     // 标记并兑底补偿手势期间的漂移（未贴底的收口统一由内容驱动出口在跟随态下处理，
-    // 避免「近底拉回」干扰阅读）
+    // 避免「近底拉回」干扰阅读）；程序动画与补偿滚动自身引起的位置变化不属于用户手势，
+    // 一并抑制
     LaunchedEffect(listState) {
         snapshotFlow {
             listState.isScrollInProgress to
                 (listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset)
         }
             .collect { (inProgress, pos) ->
-                if (programmaticScroll) return@collect
+                if (programmaticScroll || compensating) return@collect
                 if (inProgress) {
-                    // 非程序动画的滚动进行中 = 用户手势（拖拽/惯性）：
+                    // 非程序/补偿滚动的滚动进行中 = 用户手势（拖拽/惯性）：
                     // 贴底才跟随——上滑离开底部立即暂停，滑回贴底自动恢复
                     userScrolling = true
                     following = pos.first == 0 && pos.second == 0
-                } else {
+                } else if (userScrolling) {
                     userScrolling = false
                     // 手势结束（互斥锁已释放）：兑底补偿手势期间的累计漂移
                     compensateDrift()
@@ -528,6 +545,8 @@ fun AiChatScreen(
                                 following = true
                                 scope.launch { scrollToLatest() }
                             },
+                            // 圆形按钮：旋转环（正圆）贴合按钮圆边环绕，不再与圆角方形相切出错位观感
+                            shape = CircleShape,
                             containerColor = MaterialTheme.colorScheme.secondaryContainer
                         ) {
                             Icon(
