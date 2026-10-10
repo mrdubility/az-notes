@@ -53,6 +53,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -144,13 +146,23 @@ fun AiChatScreen(
     // 程序滚动守卫：平滑滚动的动画期间抑制位置观察，防动画中间态互夺跟随状态
     var programmaticScroll by remember { mutableStateOf(false) }
 
+    // 用户交互守卫（修复「上滑无法暂停/回底不恢复」）：程序滚动与用户手势共享滚动互斥锁
+    // 且手势优先级更高——手指按住期间发起的 animateScrollToItem 不会抢占手势，而是「排队
+    // 等待手势结束」后才执行；等待期间位置观察被 programmaticScroll 抑制，用户整个手势期间
+    // 的跟随状态更新（含滑出跟随阈值）全部被吞掉，抬手后排队动画再把画面拉回底部。
+    // 因此用户交互（按住 / 拖拽 / 惯性）期间禁止发起新的程序滚动：
+    // - listPressed：手指按住列表（在事件 Initial 阶段最早捕获，覆盖手势开始前的窗口）
+    // - userScrolling：手势滚动进行中（拖拽与抬手后的惯性都保持 true）
+    var listPressed by remember { mutableStateOf(false) }
+    var userScrolling by remember { mutableStateOf(false) }
+
     // 唯一滚动出口：平滑滚到最新。
     // - 防重入：追赶滚动进行中时直接返回——高频内容变化不打断进行中的动画
     //   （反复 cancel 重启动画是「顿挫感」的来源）；
     // - 追赶循环：动画完成后若仍跟随且未贴底（期间内容又增长），自动续滚直至贴底。
     var scrollInFlight by remember { mutableStateOf(false) }
     val scrollToLatest: suspend () -> Unit = {
-        if (!scrollInFlight) {
+        if (!scrollInFlight && !listPressed && !userScrolling) {
             scrollInFlight = true
             programmaticScroll = true
             try {
@@ -181,8 +193,8 @@ fun AiChatScreen(
             .distinctUntilChanged()
             .collect { if (following) scrollToLatest() }
     }
-    // 位置观察：滚动中实时更新跟随意图（距底 ≤ 阈值恢复跟随）；静止时若跟随态下仍
-    // 离开底部（数据增删的自动位置修正、被取消动画的残留）→ 平滑收口回底
+    // 位置观察：滚动中实时更新跟随意图（距底 ≤ 阈值恢复跟随）并维护手势滚动标记；
+    // 静止时若跟随态下仍离开底部（数据增删的自动位置修正、被取消动画的残留）→ 平滑收口回底
     LaunchedEffect(listState, thresholdPx) {
         snapshotFlow {
             listState.isScrollInProgress to
@@ -191,9 +203,14 @@ fun AiChatScreen(
             .collect { (inProgress, pos) ->
                 if (programmaticScroll) return@collect
                 if (inProgress) {
+                    // 非程序动画的滚动进行中 = 用户手势（拖拽/惯性）
+                    userScrolling = true
                     following = pos.first == 0 && pos.second <= thresholdPx
-                } else if (following && (pos.first != 0 || pos.second != 0)) {
-                    scrollToLatest()
+                } else {
+                    userScrolling = false
+                    if (following && (pos.first != 0 || pos.second != 0)) {
+                        scrollToLatest()
+                    }
                 }
             }
     }
@@ -339,7 +356,18 @@ fun AiChatScreen(
                     LazyColumn(
                         state = listState,
                         reverseLayout = true,
-                        modifier = Modifier.fillMaxSize(),
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .pointerInput(Unit) {
+                                // 观测手指按住状态（不消费事件、不影响列表手势）：
+                                // 用户交互守卫的最早信号（见上方 scrollToLatest 门控）
+                                awaitPointerEventScope {
+                                    while (true) {
+                                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                                        listPressed = event.changes.any { it.pressed }
+                                    }
+                                }
+                            },
                         contentPadding = PaddingValues(vertical = 8.dp)
                     ) {
                         items(items = messages.asReversed(), key = { it.id }) { message ->
