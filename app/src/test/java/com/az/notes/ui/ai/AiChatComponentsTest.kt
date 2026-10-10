@@ -90,7 +90,11 @@ class AiChatComponentsTest {
         )
         samples.forEach { text ->
             val result = splitStreamingBlocks(text)
-            assertEquals(text, result.blocks.joinToString("") + result.tail, "lossless for: $text")
+            assertEquals(
+                "lossless for: $text",
+                text,
+                result.blocks.joinToString("") + result.tail
+            )
         }
     }
 
