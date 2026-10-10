@@ -19,8 +19,6 @@ import androidx.compose.material.icons.outlined.ColorLens
 import androidx.compose.material.icons.outlined.DeleteSweep
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.FolderOpen
-import androidx.compose.material.icons.outlined.FormatLineSpacing
-import androidx.compose.material.icons.outlined.FormatSize
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Language
@@ -52,10 +50,11 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.az.notes.R
+import com.az.notes.data.settings.SettingsRepository
 import com.az.notes.domain.model.AppLanguage
 import com.az.notes.domain.model.AppSettings
+import com.az.notes.domain.model.DefaultNoteMode
 import com.az.notes.domain.model.FabAction
-import com.az.notes.domain.model.FontFamilyPreference
 import com.az.notes.domain.model.NoteSortOrder
 import com.az.notes.domain.model.ThemeMode
 import com.az.notes.ui.common.label
@@ -66,8 +65,8 @@ import kotlin.math.roundToInt
 
 /**
  * 设置页（§5.6 重设计）：图标 + 标题 + 副标题的分组列表。
- * 单选类选项（主题 / 字体 / 排序 / 加号行为 / 回收站清理）→ 行旁浮层菜单，
- * 单手即可触达；字号 / 行间距 / 预览字符数 → 滑杆对话框；
+ * 单选类选项（主题 / 默认模式 / 排序 / 加号行为 / 回收站清理）→ 行旁浮层菜单，
+ * 单手即可触达；预览字符数 / 回收站天数 / 网络图片限制 → 滑杆对话框；
  * 动态取色 → 开关；仓库组（仓库管理 / WebDAV 同步 / 接收分享位置）与回收站组各自独立。
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -84,8 +83,6 @@ fun SettingsScreen(
 ) {
     val settings by viewModel.settings.collectAsStateWithLifecycle()
 
-    var fontSizeDialog by remember { mutableStateOf(false) }
-    var lineHeightDialog by remember { mutableStateOf(false) }
     var previewDialog by remember { mutableStateOf(false) }
     var noteNameDialog by remember { mutableStateOf(false) }
     var trashDisableConfirm by remember { mutableStateOf(false) }
@@ -163,26 +160,10 @@ fun SettingsScreen(
             item {
                 SettingsChoiceRow(
                     icon = Icons.Outlined.TextFormat,
-                    title = stringResource(R.string.settings_font_family),
-                    options = FontFamilyPreference.entries.map { it to it.label() },
-                    selected = settings.fontFamily,
-                    onSelect = viewModel::setFontFamily
-                )
-            }
-            item {
-                SettingsRow(
-                    icon = Icons.Outlined.FormatSize,
-                    title = stringResource(R.string.settings_font_size),
-                    subtitle = stringResource(R.string.settings_font_size_value, settings.fontSizeSp.toInt()),
-                    onClick = { fontSizeDialog = true }
-                )
-            }
-            item {
-                SettingsRow(
-                    icon = Icons.Outlined.FormatLineSpacing,
-                    title = stringResource(R.string.settings_line_height),
-                    subtitle = stringResource(R.string.settings_line_height_value, settings.lineHeightRatio),
-                    onClick = { lineHeightDialog = true }
+                    title = stringResource(R.string.settings_default_note_mode),
+                    options = DefaultNoteMode.entries.map { it to it.label() },
+                    selected = settings.defaultNoteMode,
+                    onSelect = viewModel::setDefaultNoteMode
                 )
             }
             item {
@@ -401,35 +382,6 @@ fun SettingsScreen(
         }
     }
 
-    if (fontSizeDialog) {
-        SliderDialog(
-            title = stringResource(R.string.settings_font_size),
-            value = settings.fontSizeSp,
-            valueRange = 12f..24f,
-            steps = 11,
-            valueText = { stringResource(R.string.settings_font_size_value, it.toInt()) },
-            onConfirm = {
-                viewModel.setFontSize(it)
-                fontSizeDialog = false
-            },
-            onDismiss = { fontSizeDialog = false }
-        )
-    }
-
-    if (lineHeightDialog) {
-        SliderDialog(
-            title = stringResource(R.string.settings_line_height),
-            value = settings.lineHeightRatio,
-            valueRange = 1.2f..2.0f,
-            valueText = { stringResource(R.string.settings_line_height_value, it) },
-            onConfirm = {
-                viewModel.setLineHeight(it)
-                lineHeightDialog = false
-            },
-            onDismiss = { lineHeightDialog = false }
-        )
-    }
-
     if (previewDialog) {
         SliderDialog(
             title = stringResource(R.string.settings_preview_chars),
@@ -460,12 +412,12 @@ fun SettingsScreen(
         )
     }
 
-    // 回收站自动清理天数：连续滑块可选任意天数（0 = 永不清理）
+    // 回收站自动清理天数：连续滑块可选任意天数（0 = 永不清理；上限 90 天）
     if (retentionDialog) {
         SliderDialog(
             title = stringResource(R.string.settings_trash_retention),
             value = settings.trashRetentionDays.toFloat(),
-            valueRange = 0f..180f,
+            valueRange = 0f..SettingsRepository.TRASH_RETENTION_LIMIT_DAYS.toFloat(),
             valueText = { days -> retentionLabel(days.roundToInt()) },
             onConfirm = {
                 viewModel.setTrashRetentionDays(it.roundToInt())
@@ -475,7 +427,7 @@ fun SettingsScreen(
         )
     }
 
-    // 网络图片体积上限（MB）：0 = 不加载网络图片（与 Repository 收敛区间 0..1024 一致）
+    // 网络图片体积上限（MB）：0 = 不加载网络图片（与 Repository 收敛区间 0..50 一致）
     if (imageMaxMbDialog) {
         SliderDialog(
             title = stringResource(R.string.settings_image_remote_max),

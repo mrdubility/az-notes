@@ -123,6 +123,8 @@ class SyncEngine @Inject constructor(
     suspend fun plan(config: SyncConfig, onStatus: (String) -> Unit): SyncPlan {
         val ref = requireVaultRef()
         val vault = ref.path
+        // 本轮计划开始时刻：用于区分「历史冲突记录」与「本轮执行新写入的记录」
+        val planStartedAt = System.currentTimeMillis()
         val ignore = IgnoreRules(config.ignoreRules)
         val client = buildClient(config) { attempt ->
             onStatus("触发服务端限流，自动等待重试（第 $attempt 次）…")
@@ -394,10 +396,16 @@ class SyncEngine @Inject constructor(
 
         // 执行顺序：改名先于其他操作（后续操作以新路径为准）；冲突副本先于同路径的覆盖
         val ordered = ops.sortedBy { opPriority(it.type) }
-        // 两端已完全一致（空计划）时清除历史冲突记录：角标数字源自记录条数，
-        // 残留会导致此后无差异时仍显示角标
-        if (ordered.isEmpty()) {
-            withContext(Dispatchers.IO) { conflictRecordDao.clear(ref.id) }
+        // 已处理的冲突记录清理：副本已被合并 / 删除（记录早于本轮）→ 移除该条，角标随之
+        // 消失；副本尚在的记录保留（未处理）。不能按「空计划」整体清空：冲突副本本身在
+        // 下一轮就会达成两端一致（空计划），会把尚未查看的记录一并误清——此前实现即如此，
+        // 导致冲突记录几乎从未可见
+        withContext(Dispatchers.IO) {
+            val stale = conflictRecordDao.getAll(ref.id).filter {
+                it.createdAt < planStartedAt &&
+                    it.backupPath.isNotEmpty() && !File(vault, it.backupPath).exists()
+            }
+            if (stale.isNotEmpty()) conflictRecordDao.deleteByIds(stale.map { it.id })
         }
         // 快照留给 commitBaseline 复用：同一次同步不再把远端全树扫第二遍
         lastSnapshot = ScanSnapshot(remote, carryOver, local)
@@ -460,7 +468,6 @@ class SyncEngine @Inject constructor(
         var conflictCopies = 0
         var moved = 0
         var failed = 0
-        val runStartedAt = System.currentTimeMillis()
         val failedPaths = HashSet<String>()
         // 上传 / 远端改名成功的路径 → 操作前捕获的本地属性：远端属性已变（后者不在扫描
         // 快照中），提交基线时需逐个 Depth:0 刷新；stat 失败时以捕获值兜底合成条目
@@ -620,14 +627,8 @@ class SyncEngine @Inject constructor(
                 conflictRecordDao.trimTo(ref.id, 200)
             }
         }
-        // 已解决的冲突记录清理：副本已被合并 / 删除（本轮之前创建的）→ 记录移除，角标随之消失
-        withContext(Dispatchers.IO) {
-            val stale = conflictRecordDao.getAll(ref.id).filter {
-                it.createdAt < runStartedAt &&
-                    it.backupPath.isNotEmpty() && !File(vault, it.backupPath).exists()
-            }
-            if (stale.isNotEmpty()) conflictRecordDao.deleteByIds(stale.map { it.id })
-        }
+        // 已解决的冲突记录清理已前移至计划阶段（副本被合并 / 删除后在下一轮扫描时移除，
+        // 不再依赖本轮有无待执行操作）
         // CommitBaseline：重新快照两端状态；失败路径不写基线，下一轮重新决策
         var baselineError: String? = null
         try {

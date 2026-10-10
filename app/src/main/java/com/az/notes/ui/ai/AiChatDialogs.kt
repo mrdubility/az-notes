@@ -198,6 +198,11 @@ internal fun DocumentPickerDialog(
     // 组合槽位、状态自动重置；分页追加 items 不会清空当前选择
     var selected by remember { mutableStateOf(emptyList<String>()) }
     val listState = rememberLazyListState()
+    // 过滤条件变化（收藏夹开关 / 搜索词）→ 列表回到顶部：过滤后列表内容整体替换，
+    // 保持原滚动偏移会停留在「收藏夹第一篇」等中间位置（此前取消收藏夹过滤后的缺陷）
+    LaunchedEffect(favoritesOnly, query) {
+        listState.scrollToItem(0)
+    }
     // 滚动接近末尾（距底 3 项）且还有未装载批次时自动加载；快照闭包经
     // rememberUpdatedState 读取最新值，避免捕获旧状态
     val currentHasMore by rememberUpdatedState(hasMore)

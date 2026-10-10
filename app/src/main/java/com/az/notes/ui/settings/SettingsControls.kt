@@ -33,8 +33,8 @@ import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import com.az.notes.R
 import com.az.notes.domain.model.AppLanguage
+import com.az.notes.domain.model.DefaultNoteMode
 import com.az.notes.domain.model.FabAction
-import com.az.notes.domain.model.FontFamilyPreference
 import com.az.notes.domain.model.ThemeMode
 
 /**
@@ -183,11 +183,10 @@ internal fun ThemeMode.label(): String = stringResource(
 )
 
 @Composable
-internal fun FontFamilyPreference.label(): String = stringResource(
+internal fun DefaultNoteMode.label(): String = stringResource(
     when (this) {
-        FontFamilyPreference.SANS -> R.string.settings_font_sans
-        FontFamilyPreference.SERIF -> R.string.settings_font_serif
-        FontFamilyPreference.MONO -> R.string.settings_font_mono
+        DefaultNoteMode.VIEW -> R.string.settings_default_note_mode_view
+        DefaultNoteMode.EDIT -> R.string.settings_default_note_mode_edit
     }
 )
 

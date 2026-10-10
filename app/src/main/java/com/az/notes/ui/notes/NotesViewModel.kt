@@ -29,9 +29,11 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -63,7 +65,7 @@ data class NotesUiState(
     val searching: Boolean = false,
     val searchResults: List<NoteListItem> = emptyList(),
     val sortOrder: NoteSortOrder = NoteSortOrder.MODIFIED_DESC,
-    /** 右下角加号点击的默认行为（长按始终弹出全部选项） */
+    /** 右下角加号点击的默认行为（浮层展示全部动作，加号按此执行） */
     val fabAction: FabAction = FabAction.NEW_NOTE,
     /** 是否启用回收站（关闭时删除直接物理删除、抽屉隐藏入口） */
     val trashEnabled: Boolean = true,
@@ -269,6 +271,27 @@ class NotesViewModel @Inject constructor(
     fun clearSearch() {
         searchJob?.cancel()
         _state.update { it.copy(searchQuery = "", searchResults = emptyList(), searching = false) }
+    }
+
+    // ---------------------------------------------------------------- 搜索历史
+
+    /** 搜索历史（最近优先，上限 10 条；全局共享）。 */
+    val searchHistory: StateFlow<List<String>> = settingsRepository.searchHistory
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** 记录一次搜索（非空、去重后置顶；打开结果与退出搜索时调用）。 */
+    fun recordSearchQuery(query: String) {
+        viewModelScope.launch { settingsRepository.addSearchHistory(query) }
+    }
+
+    /** 移除单条搜索历史。 */
+    fun removeSearchHistory(query: String) {
+        viewModelScope.launch { settingsRepository.removeSearchHistory(query) }
+    }
+
+    /** 清空全部搜索历史。 */
+    fun clearSearchHistory() {
+        viewModelScope.launch { settingsRepository.clearSearchHistory() }
     }
 
     /** 重命名（笔记保留/补全 .md 扩展名，文件夹仅清洗非法字符）；成功后把改名同步到云端。 */

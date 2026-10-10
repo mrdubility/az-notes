@@ -21,6 +21,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.az.notes.domain.model.DefaultNoteMode
 import com.az.notes.ui.MainViewModel
 import com.az.notes.ui.ai.AiChatScreen
 import com.az.notes.ui.ai.AiProviderScreen
@@ -46,11 +47,21 @@ fun AzNotesNavHost(
     navController: NavHostController = rememberNavController()
 ) {
     val ready by mainViewModel.ready.collectAsStateWithLifecycle()
+    val settings by mainViewModel.settings.collectAsStateWithLifecycle()
 
     if (!ready) {
         // 设置尚未回流完成：显示与启动画面一致的底色（正常仅数毫秒）
         Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface))
         return
+    }
+
+    // 打开笔记的落点：按设置中的默认模式选查看页（阅读器）或编辑页
+    val openNote: (String) -> Unit = { path ->
+        if (settings.defaultNoteMode == DefaultNoteMode.EDIT) {
+            navController.navigate(Routes.editor(path))
+        } else {
+            navController.navigate(Routes.reader(path))
+        }
     }
 
     // 无门禁引导页：首启由内置默认仓库（App 私有目录）兜底，直接进入主页；
@@ -68,7 +79,7 @@ fun AzNotesNavHost(
             val sharedText by mainViewModel.sharedText.collectAsStateWithLifecycle()
             val sharedImageUri by mainViewModel.sharedImageUri.collectAsStateWithLifecycle()
             HomeScreen(
-                onOpenFile = { navController.navigate(Routes.reader(it)) },
+                onOpenFile = openNote,
                 // 新建待办：直接进待办预览页（fresh=true → 退出时无条目则清理占位文件）
                 onOpenTask = { navController.navigate(Routes.reader(it, fresh = true)) },
                 onOpenEditor = { path, fresh, fromShare ->
@@ -218,7 +229,7 @@ fun AzNotesNavHost(
             FavoritesScreen(
                 viewModel = hiltViewModel(),
                 onBack = { navController.popBackStackSafely(entry) },
-                onOpen = { path -> navController.navigate(Routes.reader(path)) }
+                onOpen = openNote
             )
         }
 

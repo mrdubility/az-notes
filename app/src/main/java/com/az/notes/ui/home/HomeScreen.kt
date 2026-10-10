@@ -4,14 +4,23 @@ import android.app.Activity
 import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.draganddrop.dragAndDropTarget
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -23,10 +32,12 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -43,13 +54,16 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draganddrop.DragAndDropEvent
 import androidx.compose.ui.draganddrop.DragAndDropTarget
 import androidx.compose.ui.draganddrop.mimeTypes
 import androidx.compose.ui.draganddrop.toAndroidDragEvent
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -67,13 +81,15 @@ import com.az.notes.ui.notes.NoteListItem
 import com.az.notes.ui.notes.NotesViewModel
 import com.az.notes.ui.sync.SyncPhase
 import com.az.notes.ui.sync.SyncViewModel
+import kotlin.math.abs
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * 主界面（§5.1 重设计）：抽屉菜单 + 笔记卡片列表。
- * 左上角抽屉 → 设置入口；右上角 → 立即同步 / 搜索 / 排序；右下角 FAB → 新建笔记；
- * 下拉刷新；条目右侧 ⋮ → 收藏 / 重命名 / 移动 / 删除（文件夹除收藏外同样支持）；文件夹可点击进入；隐藏 '.' 开头项。
+ * 左上角抽屉 → 设置入口；右上角 → 立即同步 / 搜索 / 排序；右下角新建浮层 → 三个快捷动作 + 加号
+ * （列表向下滚动时隐藏、往回划时出现）；下拉刷新；条目右侧 ⋮ → 收藏 / 重命名 / 移动 / 删除
+ * （文件夹除收藏外同样支持）；文件夹可点击进入；隐藏 '.' 开头项。
  *
  * 立即同步不离开本页：扫描进度、变更清单确认与结果均以弹窗展示
  * （与同步页共用 [SyncConfirmDialog] 等组件）；同步配置仍从设置 → 同步进入。
@@ -109,6 +125,7 @@ fun HomeScreen(
     val conflicts by syncViewModel.conflicts.collectAsStateWithLifecycle()
     val syncRunning by viewModel.syncRunning.collectAsStateWithLifecycle()
     val syncCompletedAt by viewModel.syncCompletedAt.collectAsStateWithLifecycle()
+    val searchHistory by viewModel.searchHistory.collectAsStateWithLifecycle()
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -125,6 +142,45 @@ fun HomeScreen(
     var moveSingle by remember { mutableStateOf<String?>(null) }
     var lastBackAt by remember { mutableStateOf(0L) }
     var dragActive by remember { mutableStateOf(false) }
+
+    // 列表滚动状态提升到本层：新建浮层的滚动隐藏 / 出现需在同一列表状态上监听
+    val listState = rememberLazyListState()
+    var fabVisible by remember { mutableStateOf(true) }
+    val fabTriggerPx = with(LocalDensity.current) { 24.dp.roundToPx() }
+    // 新建浮层显隐跟随列表滚动：向下滚动（看后面的内容）累计超过阈值 → 隐藏；
+    // 向上滚动（往回划、看前面的内容）累计超过阈值 → 出现；回到列表顶部恒显示
+    LaunchedEffect(listState) {
+        var prevIndex = listState.firstVisibleItemIndex
+        var prevOffset = listState.firstVisibleItemScrollOffset
+        var accumulated = 0
+        snapshotFlow { listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset }
+            .collect { (index, offset) ->
+                val step = if (index == prevIndex) abs(offset - prevOffset) else fabTriggerPx
+                val forward = index > prevIndex || (index == prevIndex && offset > prevOffset)
+                val backward = index < prevIndex || (index == prevIndex && offset < prevOffset)
+                accumulated = when {
+                    forward -> accumulated + step
+                    backward -> accumulated - step
+                    else -> accumulated
+                }
+                when {
+                    accumulated >= fabTriggerPx -> {
+                        accumulated = 0
+                        fabVisible = false
+                    }
+                    accumulated <= -fabTriggerPx -> {
+                        accumulated = 0
+                        fabVisible = true
+                    }
+                }
+                if (index == 0 && offset == 0) {
+                    accumulated = 0
+                    fabVisible = true
+                }
+                prevIndex = index
+                prevOffset = offset
+            }
+    }
 
     // 首次进入 / 从阅读、编辑页返回时静默重读当前目录，保证修改时间与预览最新
     LaunchedEffect(Unit) { viewModel.onScreenEntered() }
@@ -213,6 +269,8 @@ fun HomeScreen(
 
     // 系统返回：优先退出搜索 / 多选，其次返回上一级目录，根目录下双击返回才退出应用
     BackHandler(enabled = searchActive) {
+        // 退出搜索前记录历史（非空才入历史，去重后置顶）
+        viewModel.recordSearchQuery(state.searchQuery)
         searchActive = false
         viewModel.clearSearch()
     }
@@ -286,6 +344,8 @@ fun HomeScreen(
                     onNavigateUp = { viewModel.navigateUp() },
                     onSearchOpen = { searchActive = true },
                     onSearchClose = {
+                        // 退出搜索前记录历史（非空才入历史，去重后置顶）
+                        viewModel.recordSearchQuery(state.searchQuery)
                         searchActive = false
                         viewModel.clearSearch()
                     },
@@ -309,68 +369,26 @@ fun HomeScreen(
                 )
             },
             floatingActionButton = {
-                Box {
-                    // 点击执行设置中的默认行为（新建笔记 / 新建文件夹 / 弹出菜单），长按始终弹出菜单；
-                    // 由 combinedClickable 全权处理两者，无内部 onClick 以防重复触发
-                    Surface(
-                        modifier = Modifier
-                            .size(56.dp)
-                            .combinedClickable(
-                                onClick = {
-                                    when (state.fabAction) {
-                                        FabAction.NEW_NOTE -> viewModel.createNote { path ->
-                                            onOpenEditor(path, true, false)
-                                        }
-                                        FabAction.NEW_TASK -> viewModel.createTaskNote { path ->
-                                            // 新建待办直接进入待办预览页（而非文本编辑页）
-                                            onOpenTask(path)
-                                        }
-                                        FabAction.NEW_FOLDER -> newFolderDialog = true
-                                        FabAction.SHOW_MENU -> fabMenuOpen = true
-                                    }
-                                },
-                                onLongClick = { fabMenuOpen = true }
-                            ),
-                        shape = RoundedCornerShape(16.dp),
-                        color = MaterialTheme.colorScheme.primary,
-                        contentColor = MaterialTheme.colorScheme.onPrimary,
-                        shadowElevation = 6.dp
-                    ) {
-                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            Icon(Icons.Filled.Add, stringResource(R.string.home_new_note))
-                        }
-                    }
-                    // FAB 菜单：新建笔记 / 新建待办 / 新建文件夹（底部空间不足时自动向上展开）
-                    DropdownMenu(
-                        expanded = fabMenuOpen,
-                        onDismissRequest = { fabMenuOpen = false }
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text(stringResource(R.string.home_new_note)) },
-                            leadingIcon = { Icon(Icons.Outlined.Edit, null) },
-                            onClick = {
-                                fabMenuOpen = false
-                                viewModel.createNote { path -> onOpenEditor(path, true, false) }
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text(stringResource(R.string.home_new_task)) },
-                            leadingIcon = { Icon(Icons.Filled.Checklist, null) },
-                            onClick = {
-                                fabMenuOpen = false
-                                // 新建待办直接进入待办预览页（而非文本编辑页）
-                                viewModel.createTaskNote { path -> onOpenTask(path) }
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text(stringResource(R.string.home_new_folder)) },
-                            leadingIcon = { Icon(Icons.Outlined.CreateNewFolder, null) },
-                            onClick = {
-                                fabMenuOpen = false
-                                newFolderDialog = true
-                            }
-                        )
-                    }
+                // 新建浮层（替代原右下圆钮 + 长按菜单）：三个快捷动作 + 加号横条；
+                // 列表向下滚动时隐藏、往回划时出现（加号点击仍执行设置中的默认行为）
+                AnimatedVisibility(
+                    visible = fabVisible,
+                    enter = fadeIn() + slideInVertically(),
+                    exit = fadeOut() + slideOutVertically()
+                ) {
+                    NewFabBar(
+                        fabAction = state.fabAction,
+                        menuOpen = fabMenuOpen,
+                        onMenuOpenChange = { fabMenuOpen = it },
+                        onCreateNote = {
+                            viewModel.createNote { path -> onOpenEditor(path, true, false) }
+                        },
+                        onCreateTask = {
+                            // 新建待办直接进入待办预览页（而非文本编辑页）
+                            viewModel.createTaskNote { path -> onOpenTask(path) }
+                        },
+                        onCreateFolder = { newFolderDialog = true }
+                    )
                 }
             },
             snackbarHost = { SnackbarHost(snackbarHostState) }
@@ -379,6 +397,8 @@ fun HomeScreen(
                 NotesListContent(
                     state = state,
                     searchActive = searchActive,
+                    listState = listState,
+                    searchHistory = searchHistory,
                     modifier = Modifier
                         .fillMaxSize()
                         .dragAndDropTarget(
@@ -388,6 +408,8 @@ fun HomeScreen(
                             target = dragTarget
                         ),
                     onOpen = { item ->
+                        // 打开搜索结果即视为一次有效搜索：记录历史并置顶
+                        viewModel.recordSearchQuery(state.searchQuery)
                         if (item.node.isDirectory) {
                             viewModel.enterDir(item.node)
                         } else {
@@ -405,6 +427,9 @@ fun HomeScreen(
                         moveSingle = item.node.absolutePath
                     },
                     onDuplicate = { item -> viewModel.copyNote(item.node) },
+                    onSearchHistorySelect = { query -> viewModel.onSearchQueryChange(query) },
+                    onSearchHistoryRemove = { query -> viewModel.removeSearchHistory(query) },
+                    onSearchHistoryClear = { viewModel.clearSearchHistory() },
                     onLoadMore = { viewModel.loadMore() }
                 )
                 // 拖拽悬停提示：松开即把内容保存为新笔记
@@ -524,3 +549,97 @@ private const val DOUBLE_BACK_EXIT_MS = 2000L
 
 /** 可撤销横幅（删除/收藏等）的显示时长（毫秒）：超时视为放弃撤销。 */
 private const val UNDO_BANNER_MS = 5_000L
+
+/**
+ * 新建浮层（替代原右下圆钮 + 长按菜单）：一条横向底座展示「新建笔记 / 新建待办 /
+ * 新建文件夹」三个快捷动作与加号；加号点击执行设置中的默认行为（默认行为为
+ * 「弹出选项菜单」时在加号旁展开菜单）。
+ */
+@Composable
+private fun NewFabBar(
+    fabAction: FabAction,
+    menuOpen: Boolean,
+    onMenuOpenChange: (Boolean) -> Unit,
+    onCreateNote: () -> Unit,
+    onCreateTask: () -> Unit,
+    onCreateFolder: () -> Unit
+) {
+    Surface(
+        shape = RoundedCornerShape(28.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        shadowElevation = 6.dp
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp)
+        ) {
+            FabMiniAction(Icons.Outlined.Edit, stringResource(R.string.home_new_note), onCreateNote)
+            FabMiniAction(Icons.Filled.Checklist, stringResource(R.string.home_new_task), onCreateTask)
+            FabMiniAction(
+                Icons.Outlined.CreateNewFolder,
+                stringResource(R.string.home_new_folder),
+                onCreateFolder
+            )
+            Spacer(Modifier.width(4.dp))
+            Box {
+                SmallFloatingActionButton(
+                    onClick = {
+                        when (fabAction) {
+                            FabAction.NEW_NOTE -> onCreateNote()
+                            FabAction.NEW_TASK -> onCreateTask()
+                            FabAction.NEW_FOLDER -> onCreateFolder()
+                            FabAction.SHOW_MENU -> onMenuOpenChange(true)
+                        }
+                    },
+                    shape = CircleShape,
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary
+                ) {
+                    Icon(Icons.Filled.Add, stringResource(R.string.home_new_note))
+                }
+                // 默认行为为「弹出选项菜单」时：加号旁展开三项菜单
+                DropdownMenu(
+                    expanded = menuOpen,
+                    onDismissRequest = { onMenuOpenChange(false) }
+                ) {
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.home_new_note)) },
+                        leadingIcon = { Icon(Icons.Outlined.Edit, null) },
+                        onClick = {
+                            onMenuOpenChange(false)
+                            onCreateNote()
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.home_new_task)) },
+                        leadingIcon = { Icon(Icons.Filled.Checklist, null) },
+                        onClick = {
+                            onMenuOpenChange(false)
+                            onCreateTask()
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.home_new_folder)) },
+                        leadingIcon = { Icon(Icons.Outlined.CreateNewFolder, null) },
+                        onClick = {
+                            onMenuOpenChange(false)
+                            onCreateFolder()
+                        }
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** 浮层内单个快捷动作按钮（图标 + 无障碍标签）。 */
+@Composable
+private fun FabMiniAction(icon: ImageVector, label: String, onClick: () -> Unit) {
+    IconButton(onClick = onClick) {
+        Icon(
+            imageVector = icon,
+            contentDescription = label,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}

@@ -28,6 +28,7 @@ private val Context.aiDataStore: DataStore<Preferences> by preferencesDataStore(
  * AI 供应商配置仓库（B1 配置底座）：全部供应商序列化为 JSON 数组存 DataStore「providers」键，
  * 保持插入顺序；API Key 不在此处，按供应商 id 走 [AiKeyStore] 加密存储（§11）。
  * 宽松解析：未知字段容忍、损坏回退空列表（对齐 SyncConfigRepository 容错范式）。
+ * 另存全局「上次选中的供应商 + 模型」（对话页进入时优先恢复，跨供应商记忆）。
  */
 @Singleton
 class AiProviderRepository @Inject constructor(
@@ -42,6 +43,23 @@ class AiProviderRepository @Inject constructor(
         .catch { e -> if (e is IOException) emit(emptyPreferences()) else throw e }
         .map { prefs -> ProviderCodec.decode(json, prefs[PROVIDERS_KEY]) }
         .distinctUntilChanged()
+
+    /** 上次选中的「供应商 + 模型」（对话页进入时优先恢复；任一 id 缺失 = 无记忆）。 */
+    val lastSelection: Flow<LastChatSelection?> = dataStore.data
+        .catch { e -> if (e is IOException) emit(emptyPreferences()) else throw e }
+        .map { prefs ->
+            val providerId = prefs[LAST_PROVIDER_KEY]
+            val modelId = prefs[LAST_MODEL_KEY]
+            if (providerId.isNullOrBlank() || modelId.isNullOrBlank()) null
+            else LastChatSelection(providerId, modelId)
+        }
+        .distinctUntilChanged()
+
+    /** 记住对话页当前选择（每次切换模型时写回）。 */
+    suspend fun setLastSelection(providerId: String, modelId: String) = dataStore.edit { prefs ->
+        prefs[LAST_PROVIDER_KEY] = providerId
+        prefs[LAST_MODEL_KEY] = modelId
+    }
 
     /** 新增供应商（[AiProvider.id] 为空时自动生成），返回最终落库的 id。 */
     suspend fun add(provider: AiProvider): String {
@@ -100,8 +118,13 @@ class AiProviderRepository @Inject constructor(
 
     private companion object {
         val PROVIDERS_KEY = stringPreferencesKey("providers")
+        val LAST_PROVIDER_KEY = stringPreferencesKey("last_provider_id")
+        val LAST_MODEL_KEY = stringPreferencesKey("last_model_id")
     }
 }
+
+/** 全局「上次选中的供应商 + 模型」（对话页跨供应商记忆；与供应商级 lastModelId 并存）。 */
+data class LastChatSelection(val providerId: String, val modelId: String)
 
 /**
  * 供应商列表 JSON 编解码（纯函数，供单测直接覆盖）：

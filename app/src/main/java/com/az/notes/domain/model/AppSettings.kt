@@ -9,8 +9,11 @@ enum class FontFamilyPreference { SANS, SERIF, MONO }
 /** 笔记列表排序方式（主页右上角可切换） */
 enum class NoteSortOrder { MODIFIED_DESC, MODIFIED_ASC, NAME_ASC, NAME_DESC }
 
-/** 右下角加号：点击时执行的默认行为（长按始终弹出全部选项）；顺序与加号弹出菜单一致。 */
+/** 右下角加号：新建浮层中加号点击时执行的默认行为；顺序与浮层动作一致。 */
 enum class FabAction { NEW_NOTE, NEW_TASK, NEW_FOLDER, SHOW_MENU }
+
+/** 打开笔记的默认落点（设置 → 编辑器和查看器）：查看页（阅读器）/ 编辑页。 */
+enum class DefaultNoteMode { VIEW, EDIT }
 
 /** 应用语言：跟随系统 / 简体中文 / English；[tag] 为 Locale 标签（null = 跟随系统）。 */
 enum class AppLanguage(val tag: String?) { SYSTEM(null), ZH("zh"), EN("en") }
@@ -35,9 +38,9 @@ data class AppSettings(
     val sortOrder: NoteSortOrder = NoteSortOrder.MODIFIED_DESC,
     /** 新建笔记时使用的默认文件名（不含扩展名，重名自动追加序号） */
     val defaultNoteName: String = "新建笔记",
-    /** 回收站自动清理天数（0 = 永不清理）；同步启动前执行 */
+    /** 回收站自动清理天数（0 = 永不清理；上限 90）；同步启动前执行 */
     val trashRetentionDays: Int = 30,
-    /** 右下角加号点击的默认行为（长按始终弹出全部选项） */
+    /** 右下角加号点击的默认行为（浮层展示全部动作，点击按此执行） */
     val fabAction: FabAction = FabAction.NEW_NOTE,
     /** 应用语言（切换后由设置页重建 Activity 生效） */
     val language: AppLanguage = AppLanguage.SYSTEM,
@@ -47,6 +50,8 @@ data class AppSettings(
     val editorToolOrder: List<String> = EditorTool.defaultOrder,
     /** 编辑器工具栏中被禁用的工具 id 集合 */
     val editorToolDisabled: Set<String> = emptySet(),
+    /** 打开笔记时的默认落点：查看页（阅读器）或编辑页 */
+    val defaultNoteMode: DefaultNoteMode = DefaultNoteMode.VIEW,
     /** 收藏的笔记相对路径集合（相对当前仓库根；仅本地，不参与同步） */
     val favoritePaths: Set<String> = emptySet(),
     /** 分享进入的笔记默认保存文件夹（相对当前仓库根；null = 跟随当前目录） */
@@ -77,8 +82,8 @@ data class AppSettings(
         const val DEFAULT_REMOTE_IMAGE_MAX_MB = 10
         const val DEFAULT_REMOTE_IMAGE_TIMEOUT_SECONDS = 5
 
-        /** 网络图片体积上限输入最大值（MB）：避免误输入天数字。 */
-        const val REMOTE_IMAGE_MAX_MB_LIMIT = 1024
+        /** 网络图片体积上限输入最大值（MB）：50 已覆盖常见网络图片，避免误设天数字。 */
+        const val REMOTE_IMAGE_MAX_MB_LIMIT = 50
 
         /** 超时允许区间（秒）。 */
         val REMOTE_IMAGE_TIMEOUT_RANGE = 1..30

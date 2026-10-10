@@ -62,11 +62,9 @@ fun AzNotesTheme(
     // 状态栏图标深浅由 MainActivity 统一处理（配合 edge-to-edge）；
     // 此处仅根据 darkTheme 决定配色方案，不在组合期改动窗口属性。
 
-    val readingStyle = ReadingStyle(
-        fontFamily = settings.fontFamily.toComposeFontFamily(),
-        fontSizeSp = settings.fontSizeSp,
-        lineHeightRatio = settings.lineHeightRatio
-    )
+    // 阅读 / 编辑文本样式固定为内置默认值（设置页不再提供字体族 / 字号 / 行高入口）；
+    // AppSettings 保留对应字段仅为旧备份导入兼容，不再参与渲染
+    val readingStyle = ReadingStyle()
 
     CompositionLocalProvider(LocalReadingStyle provides readingStyle) {
         MaterialTheme(

@@ -12,6 +12,7 @@ import com.az.notes.data.ai.ConversationCompressor
 import com.az.notes.data.ai.ConversationExporter
 import com.az.notes.data.ai.ImagePrepFailure
 import com.az.notes.data.ai.ImagePrepResult
+import com.az.notes.data.ai.LastChatSelection
 import com.az.notes.data.media.AttachmentRepository
 import com.az.notes.data.settings.SettingsRepository
 import com.az.notes.data.storage.VaultRepository
@@ -85,7 +86,8 @@ data class ExportFolderPickerState(val vaultPath: String, val targets: List<File
  * - 导出（§8）：[ConversationExporter] 写所选目录（默认仓库根）+ 调度保存同步 + Snackbar「查看」跳预览
  * - 工具循环：ToolCallStarted → toolStatus 状态行；ToolCallCompleted → 轨迹 / 传输态回写消息
  * - 历史组装由 ChatEngine 完成（仅 COMPLETE / CANCELED 参与，ERROR 排除）
- * - 模型选择：默认按供应商 lastModelId 恢复；切换即写回记忆（repository.update）
+ * - 模型选择：优先恢复全局记忆（上次选中的供应商 + 模型，跨供应商）；
+ *   记忆失效（供应商 / 模型被删）→ 回退首个有模型的供应商；切换即写回记忆
  */
 @HiltViewModel
 class AiChatViewModel @Inject constructor(
@@ -246,7 +248,7 @@ class AiChatViewModel @Inject constructor(
     init {
         viewModelScope.launch {
             val list = repository.providers.first()
-            _selection.value = defaultSelection(list)
+            _selection.value = resolveSelection(list, repository.lastSelection.first())
             _loaded.value = true
             // 重进恢复：末尾为 ERROR 消息时用通用文案恢复错误条（保留重试能力）
             val last = session.messages.value.lastOrNull()
@@ -819,13 +821,14 @@ class AiChatViewModel @Inject constructor(
         _showNewSessionConfirm.value = false
     }
 
-    /** 切换模型：更新选择并写回供应商 lastModelId（下次进入恢复）。 */
+    /** 切换模型：更新选择并写回全局记忆与供应商 lastModelId（下次进入恢复）。 */
     fun switchModel(providerId: String, modelId: String) {
         val provider = providers.value.firstOrNull { it.id == providerId } ?: return
         if (provider.models.none { it.id == modelId }) return
         _selection.value = ChatSelection(providerId, modelId)
         viewModelScope.launch {
             repository.update(providerId) { it.copy(lastModelId = modelId) }
+            repository.setLastSelection(providerId, modelId)
         }
     }
 
@@ -1005,6 +1008,19 @@ class AiChatViewModel @Inject constructor(
         val model = provider.models.firstOrNull { it.id == provider.lastModelId }
             ?: provider.models.first()
         return ChatSelection(provider.id, model.id)
+    }
+
+    /**
+     * 进入页面时的选择解析：优先恢复全局记忆（上次选中的供应商 + 模型）；
+     * 记忆缺失，或所指供应商 / 模型已被删除 → 回退默认（首个有模型的供应商）。
+     */
+    private fun resolveSelection(list: List<AiProvider>, last: LastChatSelection?): ChatSelection? {
+        if (last != null) {
+            val provider = list.firstOrNull { it.id == last.providerId }
+            val model = provider?.models?.firstOrNull { it.id == last.modelId }
+            if (provider != null && model != null) return ChatSelection(provider.id, model.id)
+        }
+        return defaultSelection(list)
     }
 
     private fun currentProvider(): AiProvider? {

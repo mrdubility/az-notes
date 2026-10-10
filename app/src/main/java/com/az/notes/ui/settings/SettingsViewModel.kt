@@ -6,9 +6,9 @@ import com.az.notes.data.settings.SettingsRepository
 import com.az.notes.data.storage.VaultRepository
 import com.az.notes.domain.model.AppLanguage
 import com.az.notes.domain.model.AppSettings
+import com.az.notes.domain.model.DefaultNoteMode
 import com.az.notes.domain.model.FabAction
 import com.az.notes.domain.model.FileNode
-import com.az.notes.domain.model.FontFamilyPreference
 import com.az.notes.domain.model.NoteSortOrder
 import com.az.notes.domain.model.ThemeMode
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -61,10 +61,6 @@ class SettingsViewModel @Inject constructor(
     }
 
     fun setThemeMode(mode: ThemeMode) = viewModelScope.launch { settingsRepository.setThemeMode(mode) }
-    fun setFontFamily(family: FontFamilyPreference) =
-        viewModelScope.launch { settingsRepository.setFontFamily(family) }
-    fun setFontSize(sp: Float) = viewModelScope.launch { settingsRepository.setFontSize(sp) }
-    fun setLineHeight(ratio: Float) = viewModelScope.launch { settingsRepository.setLineHeight(ratio) }
     fun setDynamicColor(enabled: Boolean) =
         viewModelScope.launch { settingsRepository.setDynamicColor(enabled) }
 
@@ -83,6 +79,10 @@ class SettingsViewModel @Inject constructor(
     /** 回收站自动清理天数（0 = 永不清理）。 */
     fun setTrashRetentionDays(days: Int) =
         viewModelScope.launch { settingsRepository.setTrashRetentionDays(days) }
+
+    /** 打开笔记的默认落点（查看页 / 编辑页）。 */
+    fun setDefaultNoteMode(mode: DefaultNoteMode) =
+        viewModelScope.launch { settingsRepository.setDefaultNoteMode(mode) }
 
     /** 右下角加号点击的默认行为。 */
     fun setFabAction(action: FabAction) =

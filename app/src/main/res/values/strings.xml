@@ -22,6 +22,9 @@
     <string name="home_search_hint">搜索全部笔记</string>
     <string name="home_search_empty">未找到匹配的笔记</string>
     <string name="home_search_tip">输入关键字，跨目录搜索全部笔记</string>
+    <string name="home_search_history">搜索历史</string>
+    <string name="home_search_history_clear">清空</string>
+    <string name="home_search_history_remove">删除该条历史</string>
     <string name="home_new_note">新建笔记</string>
     <string name="home_new_folder">新建文件夹</string>
     <string name="home_new_task">新建待办</string>
@@ -173,6 +176,9 @@
     <string name="settings_language_en">English</string>
     <string name="settings_editor_viewer">编辑器和查看器</string>
     <string name="settings_editor_viewer_subtitle">字体大小 / 行间距</string>
+    <string name="settings_default_note_mode">默认模式</string>
+    <string name="settings_default_note_mode_view">查看页</string>
+    <string name="settings_default_note_mode_edit">编辑页</string>
     <string name="settings_font_size_value">%1$d sp</string>
     <string name="settings_line_height_value">%.1f 倍</string>
     <string name="settings_editor_toolbar">编辑器工具栏</string>
@@ -196,7 +202,7 @@
     <string name="settings_fab_action_new_folder">新建文件夹</string>
     <string name="settings_fab_action_menu">弹出选项菜单</string>
     <string name="settings_fab_action_new_task">新建待办</string>
-    <string name="settings_share_folder">接收分享的笔记位置</string>
+    <string name="settings_share_folder">接收分享笔记的位置</string>
     <string name="settings_share_folder_current">当前：%1$s</string>
     <string name="settings_share_folder_root">默认：仓库根目录</string>
     <string name="settings_trash_retention">回收站自动清理</string>
@@ -224,7 +230,7 @@
     <string name="settings_image_compress_subtitle">固定参数：长边 1568 · JPEG 质量 80</string>
     <string name="settings_image_attachment_prompt">删除/移动时提示图片</string>
     <string name="settings_image_attachment_prompt_subtitle">删除或移动笔记时统计其引用的图片</string>
-    <string name="settings_image_remote_max">远端图片大小上限（MB）</string>
+    <string name="settings_image_remote_max">加载网络图片大小上限</string>
     <string name="settings_image_remote_max_zero">已关闭（不加载网络图片）</string>
     <string name="settings_image_remote_max_value">%1$d MB</string>
     <string name="settings_image_remote_max_hint">设为 0 则不加载网络图片</string>
@@ -446,7 +452,7 @@
     <string name="sync_filter_reset">恢复默认</string>
     <string name="sync_section_auto">自动同步</string>
     <string name="sync_auto_on_start">启动后自动同步</string>
-    <string name="sync_auto_on_start_desc">启动约 10 秒后自动同步一次</string>
+    <string name="sync_auto_on_start_desc">打开应用后立即自动同步一次</string>
     <string name="sync_auto_periodic">周期同步</string>
     <string name="sync_auto_after_save">保存后自动同步</string>
     <string name="sync_auto_after_save_desc">编辑保存约 30 秒后自动同步（防抖）</string>

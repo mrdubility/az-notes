@@ -15,6 +15,7 @@ import androidx.datastore.preferences.preferencesDataStore
 import com.az.notes.R
 import com.az.notes.domain.model.AppLanguage
 import com.az.notes.domain.model.AppSettings
+import com.az.notes.domain.model.DefaultNoteMode
 import com.az.notes.domain.model.EditorTool
 import com.az.notes.domain.model.FabAction
 import com.az.notes.domain.model.FontFamilyPreference
@@ -29,6 +30,7 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.decodeFromString
@@ -72,6 +74,8 @@ class SettingsRepository @Inject constructor(
         val TRASH_ENABLED = booleanPreferencesKey("trash_enabled")
         val TOOL_ORDER = stringPreferencesKey("editor_tool_order")
         val TOOL_DISABLED = stringPreferencesKey("editor_tool_disabled")
+        val DEFAULT_NOTE_MODE = stringPreferencesKey("default_note_mode")
+        val SEARCH_HISTORY = stringPreferencesKey("search_history")
         val IMAGE_COMPRESS = booleanPreferencesKey("image_compress_enabled")
         val ATTACHMENT_PROMPT = booleanPreferencesKey("attachment_prompt_enabled")
         val REMOTE_IMAGE_MAX_MB = intPreferencesKey("remote_image_max_mb")
@@ -120,7 +124,7 @@ class SettingsRepository @Inject constructor(
                 ?: NoteSortOrder.MODIFIED_DESC,
             defaultNoteName = prefs[Keys.DEFAULT_NOTE_NAME]?.takeIf { it.isNotBlank() }
                 ?: "新建笔记",
-            trashRetentionDays = prefs[Keys.TRASH_RETENTION] ?: 30,
+            trashRetentionDays = (prefs[Keys.TRASH_RETENTION] ?: 30).coerceIn(0, TRASH_RETENTION_LIMIT_DAYS),
             fabAction = prefs[Keys.FAB_ACTION]
                 ?.let { runCatching { FabAction.valueOf(it) }.getOrNull() }
                 ?: FabAction.NEW_NOTE,
@@ -138,6 +142,9 @@ class SettingsRepository @Inject constructor(
                 ?.filter { EditorTool.fromId(it) != null }
                 ?.toSet()
                 ?: emptySet(),
+            defaultNoteMode = prefs[Keys.DEFAULT_NOTE_MODE]
+                ?.let { runCatching { DefaultNoteMode.valueOf(it) }.getOrNull() }
+                ?: DefaultNoteMode.VIEW,
             favoritePaths = prefs[favoritesKey(currentId)] ?: emptySet(),
             shareFolder = prefs[shareFolderKey(currentId)]?.takeIf { it.isNotBlank() },
             imageCompressEnabled = prefs[Keys.IMAGE_COMPRESS] ?: true,
@@ -298,10 +305,13 @@ class SettingsRepository @Inject constructor(
         it[Keys.DEFAULT_NOTE_NAME] = cleaned.ifBlank { "新建笔记" }
     }
 
-    /** 回收站自动清理天数（0 = 永不清理；上限 180 天）。 */
+    /** 回收站自动清理天数（0 = 永不清理；上限 90 天）。 */
     suspend fun setTrashRetentionDays(days: Int) = edit {
-        it[Keys.TRASH_RETENTION] = days.coerceIn(0, 180)
+        it[Keys.TRASH_RETENTION] = days.coerceIn(0, TRASH_RETENTION_LIMIT_DAYS)
     }
+
+    /** 打开笔记的默认落点（查看页 / 编辑页）。 */
+    suspend fun setDefaultNoteMode(mode: DefaultNoteMode) = edit { it[Keys.DEFAULT_NOTE_MODE] = mode.name }
 
     /** 右下角加号点击的默认行为。 */
     suspend fun setFabAction(action: FabAction) = edit { it[Keys.FAB_ACTION] = action.name }
@@ -330,6 +340,41 @@ class SettingsRepository @Inject constructor(
         val key = shareFolderKey(currentVaultIdOf(prefs))
         if (relativePath.isNullOrBlank()) prefs.remove(key) else prefs[key] = relativePath
     }
+
+    // ---------------------------------------------------------------- 搜索历史（全局）
+
+    /** 搜索历史（最近优先；上限 [SEARCH_HISTORY_LIMIT] 条）。 */
+    val searchHistory: Flow<List<String>> = dataStore.data
+        .catch { e -> if (e is IOException) emit(emptyPreferences()) else throw e }
+        .map { prefs -> decodeSearchHistory(prefs[Keys.SEARCH_HISTORY]) }
+        .distinctUntilChanged()
+
+    /** 记录一次搜索：去除首尾空白，去重后插入头部，超上限截断。 */
+    suspend fun addSearchHistory(query: String) = edit { prefs ->
+        val cleaned = query.trim()
+        if (cleaned.isEmpty()) return@edit
+        val current = decodeSearchHistory(prefs[Keys.SEARCH_HISTORY])
+        val next = (listOf(cleaned) + current.filterNot { it == cleaned })
+            .take(SEARCH_HISTORY_LIMIT)
+        prefs[Keys.SEARCH_HISTORY] = json.encodeToString(next)
+    }
+
+    /** 移除一条搜索历史。 */
+    suspend fun removeSearchHistory(query: String) = edit { prefs ->
+        val current = decodeSearchHistory(prefs[Keys.SEARCH_HISTORY])
+        val next = current.filterNot { it == query }
+        if (next.isEmpty()) prefs.remove(Keys.SEARCH_HISTORY)
+        else prefs[Keys.SEARCH_HISTORY] = json.encodeToString(next)
+    }
+
+    /** 清空全部搜索历史。 */
+    suspend fun clearSearchHistory() = edit { prefs -> prefs.remove(Keys.SEARCH_HISTORY) }
+
+    /** 历史记录解码（损坏回退空列表；过滤空白项）。 */
+    private fun decodeSearchHistory(raw: String?): List<String> =
+        raw?.let { runCatching { json.decodeFromString<List<String>>(it) }.getOrNull() }
+            ?.filter { it.isNotBlank() }
+            .orEmpty()
 
     // ---------------------------------------------------------------- 图片（本批新增）
 
@@ -468,6 +513,12 @@ class SettingsRepository @Inject constructor(
     companion object {
         /** 内置默认仓库的固定 id（不满足 newId 的 "v"+8 位十六进制格式，不会冲突）。 */
         const val DEFAULT_VAULT_ID = "default"
+
+        /** 回收站自动清理天数允许的最大值（天）。 */
+        const val TRASH_RETENTION_LIMIT_DAYS = 90
+
+        /** 搜索历史上限（条）：行业常规的最近记录长度。 */
+        const val SEARCH_HISTORY_LIMIT = 10
 
         /** 内置默认仓库位于 App 私有目录下的子目录名。 */
         private const val DEFAULT_VAULT_DIR = "vault"

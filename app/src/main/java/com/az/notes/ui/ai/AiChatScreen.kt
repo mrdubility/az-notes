@@ -140,9 +140,8 @@ fun AiChatScreen(
     )
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
-    // 空态「直接提问」/「让 AI 浏览仓库」快捷动作的焦点目标
+    // 输入卡焦点目标（错误条 / 外部入口聚焦复用）
     val inputFocusRequester = remember { FocusRequester() }
-    val browsePrompt = stringResource(R.string.ai_chat_quick_browse_prompt)
     val context = LocalContext.current
     val keyboard = LocalSoftwareKeyboardController.current
     var modelMenuExpanded by remember { mutableStateOf(false) }
@@ -448,13 +447,7 @@ fun AiChatScreen(
                     EmptyState(
                         loaded = loaded,
                         hasSelection = selectionLabel != null,
-                        onOpenProviders = onOpenProviders,
-                        onPickDocument = viewModel::openDocumentPicker,
-                        onBrowseRepository = {
-                            viewModel.setInput(browsePrompt)
-                            inputFocusRequester.requestFocus()
-                        },
-                        onAskDirectly = { inputFocusRequester.requestFocus() }
+                        onOpenProviders = onOpenProviders
                     )
                 } else {
                     // 普通布局：最早在上、最新在下。底部最新消息流式增长由顶部锚定自然

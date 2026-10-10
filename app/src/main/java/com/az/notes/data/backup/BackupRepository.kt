@@ -10,6 +10,7 @@ import com.az.notes.domain.ai.AiProvider
 import com.az.notes.domain.model.AppLanguage
 import com.az.notes.domain.model.AppSettings
 import com.az.notes.domain.model.ConflictStrategy
+import com.az.notes.domain.model.DefaultNoteMode
 import com.az.notes.domain.model.FabAction
 import com.az.notes.domain.model.FontFamilyPreference
 import com.az.notes.domain.model.NoteSortOrder
@@ -205,6 +206,7 @@ class BackupRepository @Inject constructor(
         trashEnabled = trashEnabled,
         editorToolOrder = editorToolOrder,
         editorToolDisabled = editorToolDisabled.sorted(),
+        defaultNoteMode = defaultNoteMode.name,
         imageCompressEnabled = imageCompressEnabled,
         attachmentPromptEnabled = attachmentPromptEnabled,
         remoteImageMaxMb = remoteImageMaxMb,
@@ -265,6 +267,9 @@ class BackupRepository @Inject constructor(
         s.trashEnabled?.let { settingsRepository.setTrashEnabled(it); applied = true }
         s.editorToolOrder?.let { settingsRepository.setEditorToolOrder(it); applied = true }
         s.editorToolDisabled?.let { settingsRepository.setEditorToolDisabled(it.toSet()); applied = true }
+        enumOf<DefaultNoteMode>(s.defaultNoteMode)?.let {
+            settingsRepository.setDefaultNoteMode(it); applied = true
+        }
         s.imageCompressEnabled?.let { settingsRepository.setImageCompressEnabled(it); applied = true }
         s.attachmentPromptEnabled?.let { settingsRepository.setAttachmentPromptEnabled(it); applied = true }
         // 数值越界由 setter 内部 coerceIn 回落合法区间（0 = 不加载网络图片，保留 0）

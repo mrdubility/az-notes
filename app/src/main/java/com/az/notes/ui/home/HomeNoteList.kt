@@ -2,6 +2,7 @@ package com.az.notes.ui.home
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -16,17 +17,19 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.DriveFileMove
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Folder
+import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Star
 import androidx.compose.material3.CircularProgressIndicator
@@ -37,6 +40,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -63,13 +67,17 @@ import com.az.notes.ui.notes.NotesUiState
 
 /**
  * 主页笔记列表内容：下拉刷新 + 卡片列表（文件夹在前，笔记随后）；
- * 滚动接近末尾自动加载下一批。自 HomeScreen 拆分独立文件（纯 UI，逻辑不变）。
+ * 滚动接近末尾自动加载下一批；搜索输入为空时展示搜索历史（可单条删除 / 全部清空）。
+ * 自 HomeScreen 拆分独立文件（纯 UI，逻辑不变）；列表滚动状态由调用方持有
+ * （[listState] 提升至 HomeScreen，供新建浮层的滚动隐藏 / 出现监听复用）。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun NotesListContent(
     state: NotesUiState,
     searchActive: Boolean,
+    listState: LazyListState,
+    searchHistory: List<String>,
     modifier: Modifier = Modifier,
     onOpen: (NoteListItem) -> Unit,
     onRename: (NoteListItem) -> Unit,
@@ -80,10 +88,12 @@ internal fun NotesListContent(
     onToggleFavorite: (NoteListItem) -> Unit,
     onMove: (NoteListItem) -> Unit,
     onDuplicate: (NoteListItem) -> Unit,
+    onSearchHistorySelect: (String) -> Unit,
+    onSearchHistoryRemove: (String) -> Unit,
+    onSearchHistoryClear: () -> Unit,
     onLoadMore: () -> Unit
 ) {
     val visible = if (searchActive) state.searchResults else state.items
-    val listState = rememberLazyListState()
     // 滚动接近末尾（距底 5 项）且有未装载批次时自动加载下一批；快照闭包经
     // rememberUpdatedState 读取最新值，避免捕获旧状态；搜索结果一次性返回、不分页
     val currentHasMore by rememberUpdatedState(state.hasMore)
@@ -144,9 +154,20 @@ internal fun NotesListContent(
                                     }
                                 }
                             }
-                            searchActive && state.searchQuery.isBlank() -> {
-                                item { ListHint(stringResource(R.string.home_search_tip)) }
+                            // 搜索输入为空：展示搜索历史（可单条删除 / 全部清空）；无历史时不占位
+                            searchActive && state.searchQuery.isBlank() && searchHistory.isNotEmpty() -> {
+                                item(key = "search_history_header") {
+                                    SearchHistoryHeader(onClear = onSearchHistoryClear)
+                                }
+                                items(searchHistory, key = { "search_history_item_$it" }) { query ->
+                                    SearchHistoryRow(
+                                        query = query,
+                                        onClick = { onSearchHistorySelect(query) },
+                                        onRemove = { onSearchHistoryRemove(query) }
+                                    )
+                                }
                             }
+                            searchActive && state.searchQuery.isBlank() -> Unit
                             searchActive && visible.isEmpty() -> {
                                 item { ListHint(stringResource(R.string.home_search_empty)) }
                             }
@@ -206,6 +227,62 @@ private fun ListHint(text: String) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center
         )
+    }
+}
+
+/** 搜索历史分组头：标题 + 「清空」（仅在搜索输入为空且存在历史时展示）。 */
+@Composable
+private fun SearchHistoryHeader(onClear: () -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 20.dp, end = 8.dp, top = 8.dp)
+    ) {
+        Text(
+            text = stringResource(R.string.home_search_history),
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f)
+        )
+        TextButton(onClick = onClear) {
+            Text(stringResource(R.string.home_search_history_clear))
+        }
+    }
+}
+
+/** 单条搜索历史：点击重新搜索；右侧 × 删除该条。 */
+@Composable
+private fun SearchHistoryRow(query: String, onClick: () -> Unit, onRemove: () -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(start = 20.dp, end = 4.dp, top = 2.dp, bottom = 2.dp)
+    ) {
+        Icon(
+            imageVector = Icons.Outlined.History,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(18.dp)
+        )
+        Spacer(Modifier.width(12.dp))
+        Text(
+            text = query,
+            style = MaterialTheme.typography.bodyLarge,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f)
+        )
+        IconButton(onClick = onRemove) {
+            Icon(
+                imageVector = Icons.Outlined.Close,
+                contentDescription = stringResource(R.string.home_search_history_remove),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(18.dp)
+            )
+        }
     }
 }
 

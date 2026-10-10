@@ -44,6 +44,8 @@ data class BackupSettings(
     val trashEnabled: Boolean? = null,
     val editorToolOrder: List<String>? = null,
     val editorToolDisabled: List<String>? = null,
+    /** 打开笔记的默认落点（查看页 / 编辑页；缺失回落查看页） */
+    val defaultNoteMode: String? = null,
     /** 图片相关配置（本批新增；缺失 / 无效均回落默认，逐字段容错） */
     val imageCompressEnabled: Boolean? = null,
     val attachmentPromptEnabled: Boolean? = null,

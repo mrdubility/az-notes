@@ -26,7 +26,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.outlined.AddPhotoAlternate
-import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Collections
@@ -37,7 +36,6 @@ import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.ExpandLess
 import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.FileDownload
-import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Lightbulb
 import androidx.compose.material.icons.outlined.PhotoLibrary
@@ -49,7 +47,6 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -113,7 +110,7 @@ import org.intellij.markdown.parser.MarkdownParser
  * - [PendingAttachmentRow] 待发附件卡片行（文档 + 图片缩略图 + 移除）
  * - [ChatInputCard] 多行自增输入卡片（生成中发送变停止）
  * - [ChatFeatureRow] 输入卡下方功能行（选择文档 / 压缩上下文 / 添加图片 / 文档取图，§9.1）
- * - [EmptyState] 欢迎语 + §9.3 三快捷动作；无供应商 / 无模型时替换为配置引导
+ * - [EmptyState] 欢迎语；无供应商 / 无模型时替换为配置引导
  * - [ErrorBar] 红条 + 重试（401/404 附「去设置」）
  */
 
@@ -1115,17 +1112,14 @@ private fun SourceMenuItem(icon: ImageVector, label: String, onClick: () -> Unit
 }
 
 /**
- * 空态：欢迎语 + §9.3 三快捷动作（选择文档提问 / 让 AI 浏览仓库 / 直接提问）；
- * 无供应商 / 无模型（[hasSelection] = false 且已回流完成）时替换为配置引导（直达供应商管理页）。
+ * 空态：欢迎语；无供应商 / 无模型（[hasSelection] = false 且已回流完成）时替换为配置引导
+ * （直达供应商管理页）。
  */
 @Composable
 internal fun EmptyState(
     loaded: Boolean,
     hasSelection: Boolean,
-    onOpenProviders: () -> Unit,
-    onPickDocument: () -> Unit,
-    onBrowseRepository: () -> Unit,
-    onAskDirectly: () -> Unit
+    onOpenProviders: () -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -1157,37 +1151,6 @@ internal fun EmptyState(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center
             )
-            // §9.3 三快捷动作：选择文档提问 / 让 AI 浏览仓库 / 直接提问
-            Spacer(Modifier.height(24.dp))
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = onPickDocument) {
-                    Icon(
-                        imageVector = Icons.Outlined.Description,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(Modifier.width(6.dp))
-                    Text(stringResource(R.string.ai_chat_quick_attach))
-                }
-                OutlinedButton(onClick = onBrowseRepository) {
-                    Icon(
-                        imageVector = Icons.Outlined.FolderOpen,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(Modifier.width(6.dp))
-                    Text(stringResource(R.string.ai_chat_quick_browse))
-                }
-                OutlinedButton(onClick = onAskDirectly) {
-                    Icon(
-                        imageVector = Icons.Outlined.ChatBubbleOutline,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(Modifier.width(6.dp))
-                    Text(stringResource(R.string.ai_chat_quick_ask))
-                }
-            }
         }
     }
 }

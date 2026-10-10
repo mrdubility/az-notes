@@ -22,6 +22,9 @@
     <string name="home_search_hint">Search all notes</string>
     <string name="home_search_empty">No matching notes</string>
     <string name="home_search_tip">Type keywords to search all notes across folders</string>
+    <string name="home_search_history">Search history</string>
+    <string name="home_search_history_clear">Clear</string>
+    <string name="home_search_history_remove">Remove this item</string>
     <string name="home_new_note">New note</string>
     <string name="home_new_folder">New folder</string>
     <string name="home_new_task">New task</string>
@@ -173,6 +176,9 @@
     <string name="settings_language_en">English</string>
     <string name="settings_editor_viewer">Editor &amp; viewer</string>
     <string name="settings_editor_viewer_subtitle">Font size / line spacing</string>
+    <string name="settings_default_note_mode">Default mode</string>
+    <string name="settings_default_note_mode_view">View page</string>
+    <string name="settings_default_note_mode_edit">Edit page</string>
     <string name="settings_font_size_value">%1$d sp</string>
     <string name="settings_line_height_value">%.1fx</string>
     <string name="settings_editor_toolbar">Editor toolbar</string>
@@ -224,7 +230,7 @@
     <string name="settings_image_compress_subtitle">Fixed: longest edge 1568 · JPEG quality 80</string>
     <string name="settings_image_attachment_prompt">Prompt about images on delete/move</string>
     <string name="settings_image_attachment_prompt_subtitle">Count referenced images when deleting or moving a note</string>
-    <string name="settings_image_remote_max">Remote image size limit (MB)</string>
+    <string name="settings_image_remote_max">Max size for online images</string>
     <string name="settings_image_remote_max_zero">Disabled (network images not loaded)</string>
     <string name="settings_image_remote_max_value">%1$d MB</string>
     <string name="settings_image_remote_max_hint">Set to 0 to stop loading network images</string>
@@ -446,7 +452,7 @@
     <string name="sync_filter_reset">Reset to default</string>
     <string name="sync_section_auto">Auto sync</string>
     <string name="sync_auto_on_start">Sync on start</string>
-    <string name="sync_auto_on_start_desc">Automatically sync once about 10 seconds after launch</string>
+    <string name="sync_auto_on_start_desc">Automatically sync once right after the app opens</string>
     <string name="sync_auto_periodic">Periodic sync</string>
     <string name="sync_auto_after_save">Sync after save</string>
     <string name="sync_auto_after_save_desc">Automatically sync about 30 seconds after saving (debounced)</string>
