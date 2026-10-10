@@ -26,7 +26,8 @@ import kotlinx.coroutines.withContext
  *   `> 已压缩/已丢弃 N 条早期消息`（工具轨迹与思考过程永不导出，§9.3）
  * - 图片：复制到 `<仓库根>/assets/ai-<uuid8>.<ext>` 后正文写相对链接（Obsidian 惯例），
  *   复制失败降级 `[图片: 原名]` 占位（链接相对仓库根，与导出位置无关）
- * - 命名 `AI对话 $yyyyMMdd-HHmmss$.md`（复用日期变量机制），重名自动追加序号；
+ * - 命名：取导出对话框文件名栏（初始为设置中的 AI 导出默认名模板解析值），
+ *   留空时回落设置模板；重名自动追加序号；
  *   写盘成功后的 `scheduleSaveSync` 由调用方（VM）负责（Vault 变更纪律）
  *
  * 纯拼装逻辑抽为顶层 [buildMarkdown] / [selectForExport]（图片链接经回调注入）供单测。
@@ -50,14 +51,17 @@ class ConversationExporter @Inject constructor(
      * @param messages 完整会话列表（勾选过滤后保持会话顺序）
      * @param selectedIds 勾选的消息 id 集合（对话框入口决定初始选中）
      * @param targetDir 目标目录绝对路径（null / 等于仓库根 = 写入仓库根；选择器只提供仓库内已存在目录）
+     * @param fileName 导出文件名（不含扩展名；留空 / 全空白则用设置中的 AI 导出默认名模板解析）
      * @return null = 无勾选 / 无当前仓库 / 写盘失败
      */
     suspend fun export(
         messages: List<ChatMessage>,
         selectedIds: Set<String>,
-        targetDir: String? = null
+        targetDir: String? = null,
+        fileName: String? = null
     ): ExportResult? = withContext(Dispatchers.IO) {
-        val root = settingsRepository.settings.first().vaultPath ?: return@withContext null
+        val settings = settingsRepository.settings.first()
+        val root = settings.vaultPath ?: return@withContext null
         val selected = selectForExport(messages, selectedIds)
         if (selected.isEmpty()) return@withContext null
 
@@ -75,7 +79,10 @@ class ConversationExporter @Inject constructor(
             timestamp = System.currentTimeMillis()
         ) { image -> links[image.localPath] }
 
-        val baseName = VaultRepository.resolveDateName(EXPORT_NAME_PATTERN)
+        val baseName = fileName.orEmpty().trim()
+            .let { if (it.endsWith(".md", ignoreCase = true)) it.dropLast(3) else it }
+            .takeIf { it.isNotEmpty() }
+            ?: VaultRepository.resolveDateName(settings.aiExportNoteName)
         val absolutePath = vaultRepository.uniqueNotePath(targetDir ?: root, baseName)
         runCatching { vaultRepository.writeTextAtomically(absolutePath, markdown) }
             .getOrNull() ?: return@withContext null
@@ -116,11 +123,6 @@ class ConversationExporter @Inject constructor(
         "image/png" -> "png"
         "image/webp" -> "webp"
         else -> "jpg"
-    }
-
-    private companion object {
-        /** 文件名模式（§8.2，复用 `$日期变量$` 机制；重名由 uniqueNotePath 追加序号）。 */
-        const val EXPORT_NAME_PATTERN = "AI对话 \$yyyyMMdd-HHmmss\$"
     }
 }
 

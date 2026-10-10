@@ -75,6 +75,7 @@ fun SettingsScreen(
     onSync: () -> Unit,
     onOpenVaults: () -> Unit,
     onOpenToolbarSettings: () -> Unit,
+    onOpenDefaultNames: () -> Unit,
     onOpenAiProviders: () -> Unit,
     onOpenBackup: () -> Unit,
     onOpenDebugLogs: () -> Unit
@@ -82,7 +83,6 @@ fun SettingsScreen(
     val settings by viewModel.settings.collectAsStateWithLifecycle()
 
     var previewDialog by remember { mutableStateOf(false) }
-    var noteNameDialog by remember { mutableStateOf(false) }
     var trashDisableConfirm by remember { mutableStateOf(false) }
     var retentionDialog by remember { mutableStateOf(false) }
     var shareFolderDialog by remember { mutableStateOf(false) }
@@ -187,11 +187,8 @@ fun SettingsScreen(
                 SettingsRow(
                     icon = Icons.Outlined.Edit,
                     title = stringResource(R.string.settings_default_note_name),
-                    subtitle = stringResource(
-                        R.string.settings_default_note_name_subtitle,
-                        settings.defaultNoteName
-                    ),
-                    onClick = { noteNameDialog = true }
+                    subtitle = stringResource(R.string.settings_default_note_names_subtitle),
+                    onClick = onOpenDefaultNames
                 )
             }
             item {
@@ -384,20 +381,6 @@ fun SettingsScreen(
                 previewDialog = false
             },
             onDismiss = { previewDialog = false }
-        )
-    }
-
-    if (noteNameDialog) {
-        TextInputDialog(
-            title = stringResource(R.string.settings_default_note_name),
-            initial = settings.defaultNoteName,
-            label = stringResource(R.string.dialog_note_name_label),
-            hint = stringResource(R.string.settings_default_note_name_hint),
-            onConfirm = {
-                viewModel.setDefaultNoteName(it)
-                noteNameDialog = false
-            },
-            onDismiss = { noteNameDialog = false }
         )
     }
 

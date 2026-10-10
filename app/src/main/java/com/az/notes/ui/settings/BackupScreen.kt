@@ -33,6 +33,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.az.notes.R
 import com.az.notes.ui.common.resolve
+import com.az.notes.ui.common.showTimedSnackbar
 import kotlinx.coroutines.delay
 
 /**
@@ -68,7 +69,7 @@ fun BackupScreen(
     // 一次性提示（导出结果 / 导入统计）
     LaunchedEffect(state.message) {
         val msg = state.message ?: return@LaunchedEffect
-        snackbarHostState.showSnackbar(msg.resolve(context))
+        snackbarHostState.showTimedSnackbar(msg.resolve(context))
         viewModel.consumeMessage()
     }
 

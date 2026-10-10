@@ -33,6 +33,7 @@ import com.az.notes.ui.home.HomeScreen
 import com.az.notes.ui.reader.ReaderScreen
 import com.az.notes.ui.recent.RecentScreen
 import com.az.notes.ui.settings.BackupScreen
+import com.az.notes.ui.settings.DefaultNamesScreen
 import com.az.notes.ui.settings.SettingsScreen
 import com.az.notes.ui.settings.ToolbarSettingsScreen
 import com.az.notes.ui.sync.SyncConflictScreen
@@ -168,9 +169,16 @@ fun AzNotesNavHost(
                 onSync = { navController.navigate(Routes.SYNC) },
                 onOpenVaults = { navController.navigate(Routes.VAULTS) },
                 onOpenToolbarSettings = { navController.navigate(Routes.TOOLBAR_SETTINGS) },
+                onOpenDefaultNames = { navController.navigate(Routes.DEFAULT_NAMES) },
                 onOpenAiProviders = { navController.navigate(Routes.AI_PROVIDERS) },
                 onOpenBackup = { navController.navigate(Routes.BACKUP) },
                 onOpenDebugLogs = { navController.navigate(Routes.DEBUG_LOGS) }
+            )
+        }
+
+        composable(Routes.DEFAULT_NAMES) { entry ->
+            DefaultNamesScreen(
+                onBack = { navController.popBackStackSafely(entry) }
             )
         }
 

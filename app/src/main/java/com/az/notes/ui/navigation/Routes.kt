@@ -10,6 +10,9 @@ object Routes {
     /** 编辑器工具栏设置页（工具开关 / 顺序 / 恢复默认）；从设置页进入。 */
     const val TOOLBAR_SETTINGS = "toolbar_settings"
 
+    /** 默认文件名设置页（新建 / 接收分享 / AI 对话导出三种模板）；从设置页进入。 */
+    const val DEFAULT_NAMES = "default_names"
+
     /** 同步设置页（服务器 / 账号 / 策略 / 手动同步）；从设置 → 同步进入。 */
     const val SYNC = "sync"
 

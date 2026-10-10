@@ -432,8 +432,8 @@ class NotesViewModel @Inject constructor(
     }
 
     /**
-     * 从系统分享 / 内容传送门传入的文本新建笔记：文件名为默认新建笔记名
-     * （与新建笔记同规则，支持 `$日期变量$`），存入当前目录，成功后回调路径供直接进入编辑页。
+     * 从系统分享 / 内容传送门传入的文本新建笔记：文件名为分享笔记默认名
+     * （设置页可配，支持 `$日期变量$`），存入当前目录，成功后回调路径供直接进入编辑页。
      */
     fun createNoteFromShare(content: String, onCreated: (String) -> Unit) {
         viewModelScope.launch {
@@ -452,7 +452,7 @@ class NotesViewModel @Inject constructor(
             val createdPath = runCatching {
                 withContext(Dispatchers.IO) {
                     val baseName = VaultRepository.resolveDateName(
-                        snapshot?.defaultNoteName ?: currentSettings.defaultNoteName
+                        snapshot?.shareNoteName ?: currentSettings.shareNoteName
                     )
                     val path = vaultRepository.uniqueNotePath(dir, baseName)
                     if (vaultRepository.createFile(path, content)) path else null
@@ -487,7 +487,7 @@ class NotesViewModel @Inject constructor(
             val dir = if (!shareRel.isNullOrBlank()) File(vault, shareRel).absolutePath
             else (_state.value.currentDir ?: vault)
             val baseName = VaultRepository.resolveDateName(
-                snapshot?.defaultNoteName ?: currentSettings.defaultNoteName
+                snapshot?.shareNoteName ?: currentSettings.shareNoteName
             )
             val noteFile = File(vaultRepository.uniqueNotePath(dir, baseName))
             val compress = snapshot?.imageCompressEnabled ?: currentSettings.imageCompressEnabled

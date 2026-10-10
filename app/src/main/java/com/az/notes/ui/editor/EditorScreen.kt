@@ -35,7 +35,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
@@ -65,6 +64,7 @@ import com.az.notes.data.media.ImportedMedia
 import com.az.notes.domain.markdown.ImageReference
 import com.az.notes.ui.common.formatSize
 import com.az.notes.ui.common.resolve
+import com.az.notes.ui.common.showTimedSnackbar
 import com.az.notes.ui.components.InsertImageDialog
 import com.az.notes.ui.components.MoveTargetDialog
 import com.az.notes.ui.components.RenameDialog
@@ -139,9 +139,9 @@ fun EditorScreen(
             viewModel.importImage(uri) { media ->
                 if (media != null) {
                     insertImageMarkdown(media.link, true)
-                    scope.launch { snackbarHostState.showSnackbar(importedMessage(context, media)) }
+                    scope.launch { snackbarHostState.showTimedSnackbar(importedMessage(context, media)) }
                 } else {
-                    scope.launch { snackbarHostState.showSnackbar(context.getString(R.string.editor_image_import_failed)) }
+                    scope.launch { snackbarHostState.showTimedSnackbar(context.getString(R.string.editor_image_import_failed)) }
                 }
             }
         }
@@ -213,7 +213,7 @@ fun EditorScreen(
     val stateMessage = state.message?.resolve()
     LaunchedEffect(state.message) {
         stateMessage?.let {
-            snackbarHostState.showSnackbar(it)
+            snackbarHostState.showTimedSnackbar(it)
             viewModel.consumeMessage()
         }
     }
@@ -228,10 +228,9 @@ fun EditorScreen(
         // 加载失败不提示；加载成功即“第一次保存成功”时刻（分享创建时内容已落盘）
         if (state.loading || state.error != null) return@LaunchedEffect
         shareBannerShown = true
-        val result = snackbarHostState.showSnackbar(
+        val result = snackbarHostState.showTimedSnackbar(
             message = savedLabel,
-            actionLabel = backToHomeLabel,
-            duration = SnackbarDuration.Long
+            actionLabel = backToHomeLabel
         )
         if (result == SnackbarResult.ActionPerformed) exitToList()
     }

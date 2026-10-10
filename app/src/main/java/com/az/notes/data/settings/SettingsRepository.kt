@@ -68,6 +68,8 @@ class SettingsRepository @Inject constructor(
         val PREVIEW_CHARS = intPreferencesKey("preview_chars")
         val SORT_ORDER = stringPreferencesKey("note_sort_order")
         val DEFAULT_NOTE_NAME = stringPreferencesKey("default_note_name")
+        val SHARE_NOTE_NAME = stringPreferencesKey("share_note_name")
+        val AI_EXPORT_NOTE_NAME = stringPreferencesKey("ai_export_note_name")
         val TRASH_RETENTION = intPreferencesKey("trash_retention_days")
         val LANGUAGE = stringPreferencesKey("language")
         val TRASH_ENABLED = booleanPreferencesKey("trash_enabled")
@@ -122,7 +124,11 @@ class SettingsRepository @Inject constructor(
                 ?.let { runCatching { NoteSortOrder.valueOf(it) }.getOrNull() }
                 ?: NoteSortOrder.MODIFIED_DESC,
             defaultNoteName = prefs[Keys.DEFAULT_NOTE_NAME]?.takeIf { it.isNotBlank() }
-                ?: "新建笔记",
+                ?: DEFAULT_NOTE_NAME_TEMPLATE,
+            shareNoteName = prefs[Keys.SHARE_NOTE_NAME]?.takeIf { it.isNotBlank() }
+                ?: DEFAULT_SHARE_NOTE_NAME_TEMPLATE,
+            aiExportNoteName = prefs[Keys.AI_EXPORT_NOTE_NAME]?.takeIf { it.isNotBlank() }
+                ?: DEFAULT_AI_EXPORT_NOTE_NAME_TEMPLATE,
             trashRetentionDays = (prefs[Keys.TRASH_RETENTION] ?: 30).coerceIn(0, TRASH_RETENTION_LIMIT_DAYS),
             language = prefs[Keys.LANGUAGE]
                 ?.let { runCatching { AppLanguage.valueOf(it) }.getOrNull() }
@@ -297,10 +303,19 @@ class SettingsRepository @Inject constructor(
     suspend fun setPreviewChars(chars: Int) = edit { it[Keys.PREVIEW_CHARS] = chars.coerceIn(20, 300) }
     suspend fun setSortOrder(order: NoteSortOrder) = edit { it[Keys.SORT_ORDER] = order.name }
 
-    /** 默认新建笔记名（清洗非法字符；空则回退默认值）。 */
+    /** 默认新建笔记名模板（支持 `$日期变量$`；空则回退默认值）。 */
     suspend fun setDefaultNoteName(name: String) = edit {
-        val cleaned = name.trim().take(60)
-        it[Keys.DEFAULT_NOTE_NAME] = cleaned.ifBlank { "新建笔记" }
+        it[Keys.DEFAULT_NOTE_NAME] = name.trim().take(60).ifBlank { DEFAULT_NOTE_NAME_TEMPLATE }
+    }
+
+    /** 接收分享笔记默认名模板（支持 `$日期变量$`；空则回退默认值）。 */
+    suspend fun setShareNoteName(name: String) = edit {
+        it[Keys.SHARE_NOTE_NAME] = name.trim().take(60).ifBlank { DEFAULT_SHARE_NOTE_NAME_TEMPLATE }
+    }
+
+    /** AI 对话导出笔记默认名模板（支持 `$日期变量$`；空则回退默认值）。 */
+    suspend fun setAiExportNoteName(name: String) = edit {
+        it[Keys.AI_EXPORT_NOTE_NAME] = name.trim().take(60).ifBlank { DEFAULT_AI_EXPORT_NOTE_NAME_TEMPLATE }
     }
 
     /** 回收站自动清理天数（0 = 永不清理；上限 90 天）。 */
@@ -559,6 +574,15 @@ class SettingsRepository @Inject constructor(
 
         /** 最近查看记录上限（条）：超出后淘汰最旧（滚动存储）。 */
         const val RECENT_LIMIT = 50
+
+        /** 新建笔记默认名模板：`$日期变量$` 包裹片段按 SimpleDateFormat 解析（默认时间戳）。 */
+        const val DEFAULT_NOTE_NAME_TEMPLATE = "\$yyyyMMdd-HHmmss\$"
+
+        /** 接收分享笔记默认名模板（同上；前缀「分享笔记」）。 */
+        const val DEFAULT_SHARE_NOTE_NAME_TEMPLATE = "分享笔记 \$yyyyMMdd-HHmmss\$"
+
+        /** AI 对话导出笔记默认名模板（同上；前缀「AI对话」）。 */
+        const val DEFAULT_AI_EXPORT_NOTE_NAME_TEMPLATE = "AI对话 \$yyyyMMdd-HHmmss\$"
 
         /** 内置默认仓库位于 App 私有目录下的子目录名。 */
         private const val DEFAULT_VAULT_DIR = "vault"

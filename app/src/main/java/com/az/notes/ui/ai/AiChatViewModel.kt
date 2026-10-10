@@ -204,6 +204,10 @@ class AiChatViewModel @Inject constructor(
     private val _exportDefaultSelected = MutableStateFlow<String?>(null)
     val exportDefaultSelected: StateFlow<String?> = _exportDefaultSelected.asStateFlow()
 
+    /** 导出对话框文件名栏初始值：AI 导出默认名模板（`$日期变量$` 按当前时间解析）。 */
+    private val _exportDefaultName = MutableStateFlow("")
+    val exportDefaultName: StateFlow<String> = _exportDefaultName.asStateFlow()
+
     /** 导出目标文件夹选择器（null = 未打开；打开后先扫描目录再填充）。 */
     private val _exportFolderPicker = MutableStateFlow<ExportFolderPickerState?>(null)
     val exportFolderPicker: StateFlow<ExportFolderPickerState?> = _exportFolderPicker.asStateFlow()
@@ -717,13 +721,21 @@ class AiChatViewModel @Inject constructor(
 
     /** 打开导出对话框；[defaultSelectedId] null = 顶栏入口（默认不选），非空 = 操作行入口（默认选中该条）。 */
     fun openExport(defaultSelectedId: String? = null) {
-        _exportDefaultSelected.value = defaultSelectedId
-        _exportVisible.value = true
+        viewModelScope.launch {
+            // 文件名栏初始值：设置中的 AI 导出默认名模板（日期变量已解析）；读取失败回落空串
+            _exportDefaultName.value = runCatching {
+                val s = settingsRepository.settings.first()
+                VaultRepository.resolveDateName(s.aiExportNoteName)
+            }.getOrDefault("")
+            _exportDefaultSelected.value = defaultSelectedId
+            _exportVisible.value = true
+        }
     }
 
     fun closeExport() {
         _exportVisible.value = false
         _exportDefaultSelected.value = null
+        _exportDefaultName.value = ""
         // 导出目标每次打开重置为仓库根（可预期）；选择器一并收起
         exportTargetDir = null
         _exportTargetLabel.value = null
@@ -767,13 +779,13 @@ class AiChatViewModel @Inject constructor(
         _exportFolderPicker.value = null
     }
 
-    /** 导出勾选消息：写入所选目录（null = 仓库根）+ 调度保存同步 + 完成后弹「查看」入口（§8.2）。 */
-    fun exportSelected(selectedIds: Set<String>) {
+    /** 导出勾选消息：按文件名栏名称（空则回落设置模板）写入所选目录（null = 仓库根）+ 调度保存同步 + 完成后弹「查看」入口（§8.2）。 */
+    fun exportSelected(selectedIds: Set<String>, fileName: String) {
         if (exporting || selectedIds.isEmpty()) return
         exporting = true
         viewModelScope.launch {
             try {
-                val result = exporter.export(session.messages.value, selectedIds, exportTargetDir)
+                val result = exporter.export(session.messages.value, selectedIds, exportTargetDir, fileName)
                 if (result == null) {
                     _message.value = UiText.of(R.string.ai_chat_export_failed)
                 } else {

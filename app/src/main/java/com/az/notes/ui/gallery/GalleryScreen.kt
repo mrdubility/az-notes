@@ -64,6 +64,7 @@ import coil3.compose.AsyncImage
 import com.az.notes.R
 import com.az.notes.ui.common.formatSize
 import com.az.notes.ui.common.resolve
+import com.az.notes.ui.common.showTimedSnackbar
 import com.az.notes.ui.reader.ImagePreviewDialog
 import java.io.File
 
@@ -89,7 +90,7 @@ fun GalleryScreen(
 
     LaunchedEffect(state.message) {
         val msg = state.message ?: return@LaunchedEffect
-        snackbarHostState.showSnackbar(msg.text.resolve(context))
+        snackbarHostState.showTimedSnackbar(msg.text.resolve(context))
         viewModel.consumeMessage()
     }
 

@@ -65,6 +65,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.az.notes.R
 import com.az.notes.domain.model.VaultInfo
+import com.az.notes.ui.common.showTimedSnackbar
 import com.az.notes.util.SafPathUtils
 import com.az.notes.util.StoragePermission
 import kotlinx.coroutines.launch
@@ -98,7 +99,7 @@ fun VaultScreen(
         scope.launch {
             // addVault 在 IO 线程校验目录可用性（外部路径 stat 可能毫秒级）；无效时提示目录不可用
             if (path == null || !viewModel.addVault(path)) {
-                snackbarHostState.showSnackbar(context.getString(R.string.vault_dir_invalid, path ?: ""))
+                snackbarHostState.showTimedSnackbar(context.getString(R.string.vault_dir_invalid, path ?: ""))
             }
         }
     }
@@ -167,7 +168,7 @@ fun VaultScreen(
                                 when {
                                     vault.hidden -> viewModel.setVaultHidden(vault.id, false)
                                     vault.id == settings.currentVaultId -> scope.launch {
-                                        snackbarHostState.showSnackbar(
+                                        snackbarHostState.showTimedSnackbar(
                                             context.getString(R.string.vault_hide_current)
                                         )
                                     }

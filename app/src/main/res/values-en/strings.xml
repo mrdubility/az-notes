@@ -104,6 +104,8 @@
     <string name="recents_clear">Clear</string>
     <string name="recents_empty">Nothing viewed yet</string>
     <string name="recents_empty_hint">Notes you view or edit will show up here, up to 50 kept.</string>
+    <string name="msg_recent_removed">Removed \"%1$s\" from recents</string>
+    <string name="msg_recents_cleared">Recents cleared</string>
 
     <!-- Multiple vaults (management / top-bar switcher / label) -->
     <string name="vault_switch">Switch vault</string>
@@ -198,8 +200,11 @@
     <string name="settings_preview_chars">Preview characters</string>
     <string name="settings_preview_chars_value">%1$d chars</string>
     <string name="settings_preview_range_hint">Preview length in the list (20–300)</string>
-    <string name="settings_default_note_name">Default new note name</string>
-    <string name="settings_default_note_name_subtitle">Current: %1$s</string>
+    <string name="settings_default_note_name">Default file names</string>
+    <string name="settings_default_note_names_subtitle">New note / Shared / AI chat export</string>
+    <string name="default_names_new_note">New note</string>
+    <string name="default_names_share">Shared note</string>
+    <string name="default_names_ai_export">AI chat export</string>
     <string name="settings_default_note_name_hint">Wrap date variables in $: yyyy (year) MM (month) dd (day) HH (hour) mm (minute) ss (second), e.g. Diary$yyyyMMdd$ → Diary20261005; characters outside $ are kept as-is</string>
     <string name="dialog_note_name_label">Note name</string>
     <string name="settings_sort_order">Default sort order</string>
@@ -385,6 +390,7 @@
     <string name="ai_chat_export">Export chat</string>
     <string name="ai_chat_export_select">Select to export</string>
     <string name="ai_chat_export_title">Export chat</string>
+    <string name="ai_chat_export_file_name">File name</string>
     <string name="ai_chat_export_select_all">Select all</string>
     <string name="ai_chat_export_invert">Invert</string>
     <string name="ai_chat_export_location">Export location</string>

@@ -30,7 +30,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
@@ -58,7 +57,7 @@ import com.az.notes.data.storage.TrashItem
 import com.az.notes.ui.common.formatDateTime
 import com.az.notes.ui.common.formatSize
 import com.az.notes.ui.common.resolve
-import kotlinx.coroutines.withTimeoutOrNull
+import com.az.notes.ui.common.showTimedSnackbar
 
 /**
  * 回收站页（§6.5-3）：按同步批次列出被远端删除波及的本地文件，
@@ -77,17 +76,14 @@ fun TrashScreen(
     val context = LocalContext.current
 
     // 一次性提示（恢复/永久删除/清空结果）；可撤销操作显示横幅与「撤销」按钮，
-    // 限时 [UNDO_BANNER_MS] 后自动消失（超时视为放弃撤销）
+    // 统一限时 5 秒后自动消失（超时视为放弃撤销）
     val undoLabel = stringResource(R.string.action_undo)
     LaunchedEffect(state.message) {
         val msg = state.message ?: return@LaunchedEffect
-        val result = withTimeoutOrNull(UNDO_BANNER_MS) {
-            snackbarHostState.showSnackbar(
-                message = msg.text.resolve(context),
-                actionLabel = if (msg.undo != null) undoLabel else null,
-                duration = if (msg.undo != null) SnackbarDuration.Indefinite else SnackbarDuration.Short
-            )
-        }
+        val result = snackbarHostState.showTimedSnackbar(
+            message = msg.text.resolve(context),
+            actionLabel = if (msg.undo != null) undoLabel else null
+        )
         if (result == SnackbarResult.ActionPerformed) msg.undo?.invoke()
         viewModel.consumeMessage()
     }
@@ -296,6 +292,3 @@ private fun EmptyTrash() {
         )
     }
 }
-
-/** 可撤销横幅（恢复/永久删除/清空等）的显示时长（毫秒）：超时视为放弃撤销。 */
-private const val UNDO_BANNER_MS = 5_000L

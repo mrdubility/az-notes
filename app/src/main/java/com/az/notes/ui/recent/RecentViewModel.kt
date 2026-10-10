@@ -2,9 +2,12 @@ package com.az.notes.ui.recent
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.az.notes.R
 import com.az.notes.data.settings.SettingsRepository
 import com.az.notes.data.storage.VaultRepository
 import com.az.notes.domain.model.FileNode
+import com.az.notes.ui.common.UiMessage
+import com.az.notes.ui.common.UiText
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -12,6 +15,7 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -26,7 +30,9 @@ data class RecentUiState(
     /** 当前仓库展示名（页面标题下标注「仓库：xxx」） */
     val vaultName: String? = null,
     /** 最近查看列表（最近优先，保持记录顺序；跨文件夹、不区分层级；含正文预览） */
-    val items: List<RecentItem> = emptyList()
+    val items: List<RecentItem> = emptyList(),
+    /** 一次性提示（Snackbar）：移除 / 清空记录，携带撤销动作 */
+    val message: UiMessage? = null
 )
 
 /**
@@ -94,14 +100,44 @@ class RecentViewModel @Inject constructor(
         }
     }
 
-    /** 移除一条记录（列表中直接操作）；再次打开该笔记会重新记录。 */
+    /** 移除一条记录（列表中直接操作）；横幅可撤销（恢复移除前的完整记录列表）。 */
     fun remove(item: RecentItem) {
-        viewModelScope.launch { settingsRepository.removeRecent(item.node.relativePath) }
+        viewModelScope.launch {
+            val snapshot = runCatching { settingsRepository.settings.first().recentPaths }
+                .getOrDefault(emptyList())
+            settingsRepository.removeRecent(item.node.relativePath)
+            _state.update {
+                it.copy(
+                    message = UiMessage(
+                        text = UiText.of(R.string.msg_recent_removed, item.node.name),
+                        undo = { viewModelScope.launch { settingsRepository.setRecentPaths(snapshot) } }
+                    )
+                )
+            }
+        }
     }
 
-    /** 清空当前仓库的全部记录。 */
+    /** 清空当前仓库的全部记录；横幅可撤销（恢复清空前的完整记录列表）。 */
     fun clearAll() {
-        viewModelScope.launch { settingsRepository.clearRecent() }
+        viewModelScope.launch {
+            val snapshot = runCatching { settingsRepository.settings.first().recentPaths }
+                .getOrDefault(emptyList())
+            if (snapshot.isEmpty()) return@launch
+            settingsRepository.clearRecent()
+            _state.update {
+                it.copy(
+                    message = UiMessage(
+                        text = UiText.of(R.string.msg_recents_cleared),
+                        undo = { viewModelScope.launch { settingsRepository.setRecentPaths(snapshot) } }
+                    )
+                )
+            }
+        }
+    }
+
+    /** 清除已展示的一次性提示。 */
+    fun consumeMessage() {
+        _state.update { it.copy(message = null) }
     }
 
     /** 相对路径 → 实体文件节点；文件不存在 / 不可读时返回 null（视为失效）。 */

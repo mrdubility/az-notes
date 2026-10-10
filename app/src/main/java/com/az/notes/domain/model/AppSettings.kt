@@ -33,8 +33,12 @@ data class AppSettings(
     val previewChars: Int = 100,
     /** 列表默认排序方式 */
     val sortOrder: NoteSortOrder = NoteSortOrder.MODIFIED_DESC,
-    /** 新建笔记时使用的默认文件名（不含扩展名，重名自动追加序号） */
-    val defaultNoteName: String = "新建笔记",
+    /** 新建笔记默认名模板（`$...$` 包裹片段按日期变量解析；默认当前时间戳） */
+    val defaultNoteName: String = "\$yyyyMMdd-HHmmss\$",
+    /** 接收分享笔记默认名模板（同上；默认「分享笔记 + 时间戳」） */
+    val shareNoteName: String = "分享笔记 \$yyyyMMdd-HHmmss\$",
+    /** AI 对话导出笔记默认名模板（同上；默认「AI对话 + 时间戳」） */
+    val aiExportNoteName: String = "AI对话 \$yyyyMMdd-HHmmss\$",
     /** 回收站自动清理天数（0 = 永不清理；上限 90）；同步启动前执行 */
     val trashRetentionDays: Int = 30,
     /** 应用语言（切换后由设置页重建 Activity 生效） */

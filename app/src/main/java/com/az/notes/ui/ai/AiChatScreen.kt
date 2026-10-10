@@ -42,7 +42,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SmallFloatingActionButton
-import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
@@ -76,6 +75,7 @@ import com.az.notes.data.ai.AiDiag
 import com.az.notes.domain.ai.ChatRole
 import com.az.notes.domain.ai.MessageStatus
 import com.az.notes.ui.common.resolve
+import com.az.notes.ui.common.showTimedSnackbar
 import com.az.notes.ui.components.MoveTargetDialog
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -125,6 +125,7 @@ fun AiChatScreen(
     val imagePickSource by viewModel.imagePickSource.collectAsStateWithLifecycle()
     val exportVisible by viewModel.exportVisible.collectAsStateWithLifecycle()
     val exportDefaultSelected by viewModel.exportDefaultSelected.collectAsStateWithLifecycle()
+    val exportDefaultName by viewModel.exportDefaultName.collectAsStateWithLifecycle()
     val exportTargetLabel by viewModel.exportTargetLabel.collectAsStateWithLifecycle()
     val exportFolderPicker by viewModel.exportFolderPicker.collectAsStateWithLifecycle()
     val privacyDialog by viewModel.privacyDialog.collectAsStateWithLifecycle()
@@ -322,7 +323,7 @@ fun AiChatScreen(
     val copyToClipboard: (String) -> Unit = { text ->
         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
         clipboard?.setPrimaryClip(ClipData.newPlainText("az-notes-ai-chat", text))
-        scope.launch { snackbarHostState.showSnackbar(context.getString(R.string.ai_chat_copied)) }
+        scope.launch { snackbarHostState.showTimedSnackbar(context.getString(R.string.ai_chat_copied)) }
     }
 
     // 系统图片选择器（相册）：选中后交 VM 预处理（压缩 + 临时落盘，§7）
@@ -336,7 +337,7 @@ fun AiChatScreen(
     val snackbarText = snackbarMessage?.resolve()
     LaunchedEffect(snackbarText) {
         if (snackbarText != null) {
-            snackbarHostState.showSnackbar(snackbarText)
+            snackbarHostState.showTimedSnackbar(snackbarText)
             viewModel.consumeMessage()
         }
     }
@@ -345,11 +346,10 @@ fun AiChatScreen(
     LaunchedEffect(exportDone) {
         val done = exportDone ?: return@LaunchedEffect
         val location = done.locationLabel ?: context.getString(R.string.ai_chat_export_root)
-        val result = snackbarHostState.showSnackbar(
+        val result = snackbarHostState.showTimedSnackbar(
             message = context.getString(R.string.ai_chat_export_done, location),
             actionLabel = context.getString(R.string.ai_chat_export_view),
-            withDismissAction = true,
-            duration = SnackbarDuration.Long
+            withDismissAction = true
         )
         if (result == SnackbarResult.ActionPerformed) onOpenNote(done.absolutePath)
         viewModel.consumeExportDone()
@@ -634,6 +634,7 @@ fun AiChatScreen(
         visible = exportVisible,
         messages = messages,
         defaultSelectedId = exportDefaultSelected,
+        initialFileName = exportDefaultName,
         targetFolderLabel = exportTargetLabel ?: stringResource(R.string.ai_chat_export_root),
         onPickFolder = viewModel::openExportFolderPicker,
         onConfirm = viewModel::exportSelected,

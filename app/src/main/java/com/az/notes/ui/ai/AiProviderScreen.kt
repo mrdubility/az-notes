@@ -47,6 +47,7 @@ import com.az.notes.R
 import com.az.notes.data.ai.AiTestResult
 import com.az.notes.domain.ai.AiProvider
 import com.az.notes.ui.common.resolve
+import com.az.notes.ui.common.showTimedSnackbar
 
 /**
  * AI 供应商管理页（B1 配置底座）：列表 ⇄ 表单单页内切换（用户已确认交互）。
@@ -81,7 +82,7 @@ fun AiProviderScreen(
     // 一次性提示 → Snackbar
     LaunchedEffect(message) {
         val current = message ?: return@LaunchedEffect
-        snackbarHostState.showSnackbar(current.resolve(context))
+        snackbarHostState.showTimedSnackbar(current.resolve(context))
         viewModel.consumeMessage()
     }
 

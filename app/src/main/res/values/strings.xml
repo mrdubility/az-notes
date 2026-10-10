@@ -104,6 +104,8 @@
     <string name="recents_clear">清空</string>
     <string name="recents_empty">暂无最近查看</string>
     <string name="recents_empty_hint">查看或编辑过的笔记会出现在这里，最多保留 50 条。</string>
+    <string name="msg_recent_removed">已移除「%1$s」的最近记录</string>
+    <string name="msg_recents_cleared">已清空最近查看</string>
 
     <!-- 多仓库（仓库管理 / 顶栏切换 / 标注） -->
     <string name="vault_switch">切换仓库</string>
@@ -198,8 +200,11 @@
     <string name="settings_preview_chars">预览字符数</string>
     <string name="settings_preview_chars_value">%1$d 字符</string>
     <string name="settings_preview_range_hint">正文预览在列表中的截取长度（20～300）</string>
-    <string name="settings_default_note_name">默认新建笔记名</string>
-    <string name="settings_default_note_name_subtitle">当前：%1$s</string>
+    <string name="settings_default_note_name">默认文件名</string>
+    <string name="settings_default_note_names_subtitle">新建笔记 / 接收分享 / AI 对话导出</string>
+    <string name="default_names_new_note">新建笔记</string>
+    <string name="default_names_share">接收分享笔记</string>
+    <string name="default_names_ai_export">AI 对话导出</string>
     <string name="settings_default_note_name_hint">用 $ 包裹日期变量：yyyy（年）MM（月）dd（日）HH（时）mm（分）ss（秒），如 日记$yyyyMMdd$ 生成 日记20261005；$ 之外的字符（含英文字母）原样保留</string>
     <string name="dialog_note_name_label">笔记名称</string>
     <string name="settings_sort_order">默认排序方式</string>
@@ -385,6 +390,7 @@
     <string name="ai_chat_export">导出对话</string>
     <string name="ai_chat_export_select">选择导出</string>
     <string name="ai_chat_export_title">导出对话</string>
+    <string name="ai_chat_export_file_name">文件名</string>
     <string name="ai_chat_export_select_all">全选</string>
     <string name="ai_chat_export_invert">反选</string>
     <string name="ai_chat_export_location">导出位置</string>

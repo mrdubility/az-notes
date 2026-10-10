@@ -27,13 +27,19 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -42,12 +48,15 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.az.notes.R
 import com.az.notes.domain.model.FileNode
 import com.az.notes.ui.common.formatDateTime
+import com.az.notes.ui.common.resolve
+import com.az.notes.ui.common.showTimedSnackbar
 
 /**
  * 最近查看页：跨文件夹展示最近打开（查看 / 编辑）过的笔记（相对路径解析，
  * 移动 / 改名后仍对应原始文档）；点击按默认模式进入预览页 / 编辑页，
- * 右侧 × 移除单条记录，右上角「清空」清空全部。记录仅本地有效、按仓库隔离，
- * 上限 50 条滚动存储（超出淘汰最旧）。条目含正文预览（列表页同款头部小字节读取）。
+ * 右侧 × 移除单条记录（横幅可撤销），右上角「清空」清空全部（横幅可撤销）。
+ * 记录仅本地有效、按仓库隔离，上限 50 条滚动存储（超出淘汰最旧）。
+ * 条目含正文预览（列表页同款头部小字节读取）。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -57,6 +66,21 @@ fun RecentScreen(
     onOpen: (String) -> Unit
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val snackbarHostState = remember { SnackbarHostState() }
+    val context = LocalContext.current
+
+    // 一次性提示（移除 / 清空记录）；携带撤销动作时显示横幅与「撤销」按钮，
+    // 统一限时 5 秒后自动消失（超时视为放弃撤销）
+    val undoLabel = stringResource(R.string.action_undo)
+    LaunchedEffect(state.message) {
+        val msg = state.message ?: return@LaunchedEffect
+        val result = snackbarHostState.showTimedSnackbar(
+            message = msg.text.resolve(context),
+            actionLabel = if (msg.undo != null) undoLabel else null
+        )
+        if (result == SnackbarResult.ActionPerformed) msg.undo?.invoke()
+        viewModel.consumeMessage()
+    }
 
     Scaffold(
         topBar = {
@@ -88,7 +112,8 @@ fun RecentScreen(
                     }
                 }
             )
-        }
+        },
+        snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { inner ->
         when {
             state.loading -> Box(

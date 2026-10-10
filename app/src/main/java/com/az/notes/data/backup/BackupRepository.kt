@@ -203,6 +203,8 @@ class BackupRepository @Inject constructor(
         previewChars = previewChars,
         sortOrder = sortOrder.name,
         defaultNoteName = defaultNoteName,
+        shareNoteName = shareNoteName,
+        aiExportNoteName = aiExportNoteName,
         trashRetentionDays = trashRetentionDays,
         language = language.name,
         trashEnabled = trashEnabled,
@@ -262,6 +264,12 @@ class BackupRepository @Inject constructor(
         enumOf<NoteSortOrder>(s.sortOrder)?.let { settingsRepository.setSortOrder(it); applied = true }
         s.defaultNoteName?.takeIf { it.isNotBlank() }?.let {
             settingsRepository.setDefaultNoteName(it); applied = true
+        }
+        s.shareNoteName?.takeIf { it.isNotBlank() }?.let {
+            settingsRepository.setShareNoteName(it); applied = true
+        }
+        s.aiExportNoteName?.takeIf { it.isNotBlank() }?.let {
+            settingsRepository.setAiExportNoteName(it); applied = true
         }
         s.trashRetentionDays?.let { settingsRepository.setTrashRetentionDays(it); applied = true }
         enumOf<AppLanguage>(s.language)?.let { settingsRepository.setLanguage(it); applied = true }

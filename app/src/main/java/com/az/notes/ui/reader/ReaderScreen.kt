@@ -45,6 +45,7 @@ import coil3.size.Size as CoilSize
 import com.az.notes.R
 import com.az.notes.ui.common.azNotesMarkdownTypography
 import com.az.notes.ui.common.resolve
+import com.az.notes.ui.common.showTimedSnackbar
 import com.mikepenz.markdown.compose.MarkdownElement
 import com.mikepenz.markdown.m3.Markdown
 import com.mikepenz.markdown.model.DefaultMarkdownAnimation
@@ -106,7 +107,7 @@ fun ReaderScreen(
     val toastMessage = state.message?.let { it.resolve() }
     LaunchedEffect(toastMessage) {
         if (toastMessage != null) {
-            snackbarHostState.showSnackbar(toastMessage)
+            snackbarHostState.showTimedSnackbar(toastMessage)
             viewModel.consumeMessage()
         }
     }

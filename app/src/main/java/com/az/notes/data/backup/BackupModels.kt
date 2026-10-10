@@ -37,7 +37,12 @@ data class BackupSettings(
     val dynamicColor: Boolean? = null,
     val previewChars: Int? = null,
     val sortOrder: String? = null,
+    /** 新建笔记默认名模板（`$日期变量$` 语法） */
     val defaultNoteName: String? = null,
+    /** 接收分享笔记默认名模板（同上） */
+    val shareNoteName: String? = null,
+    /** AI 对话导出笔记默认名模板（同上） */
+    val aiExportNoteName: String? = null,
     val trashRetentionDays: Int? = null,
     val language: String? = null,
     val trashEnabled: Boolean? = null,

@@ -424,28 +424,32 @@ private fun DocPickerRow(
 }
 
 /**
- * 导出选择对话框（§8.1，全屏）：勾选要导出的消息（导出按会话顺序）+「导出位置」
- * （默认仓库根目录，可切换），底部「导出为文档（N）」（空选禁用）。初始选中由入口
- * 决定（顶栏 = 不选、消息操作行 = 该条）；进行中的流式消息不列入。
+ * 导出选择对话框（§8.1，全屏）：顶部文件名栏（初始为设置的 AI 导出默认名，可编辑）
+ * + 勾选要导出的消息（导出按会话顺序）+「导出位置」（默认仓库根目录，可切换），
+ * 底部「导出为文档（N）」（空选禁用）。初始选中由入口决定（顶栏 = 不选、消息操作行 = 该条）；
+ * 进行中的流式消息不列入。
  */
 @Composable
 internal fun ExportDialog(
     visible: Boolean,
     messages: List<ChatMessage>,
     defaultSelectedId: String?,
+    /** 文件名栏初始值（设置的 AI 导出默认名模板解析值；对话框打开时读取一次） */
+    initialFileName: String,
     /** 当前导出位置的展示名（「仓库根目录」或相对目录路径） */
     targetFolderLabel: String,
     onPickFolder: () -> Unit,
-    onConfirm: (Set<String>) -> Unit,
+    onConfirm: (Set<String>, String) -> Unit,
     onDismiss: () -> Unit
 ) {
     if (!visible) return
     // 不设 key：关闭（visible=false，提前 return）时状态离开组合槽位自动重置；
-    // 每次打开读取当时的 defaultSelectedId
+    // 每次打开读取当时的 defaultSelectedId 与 initialFileName
     val shown = messages.filterNot { it.status == MessageStatus.STREAMING }
     var selected by remember {
         mutableStateOf(defaultSelectedId?.let { setOf(it) } ?: emptySet<String>())
     }
+    var fileName by remember { mutableStateOf(initialFileName) }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -475,6 +479,18 @@ internal fun ExportDialog(
                         )
                     }
                 }
+                // 文件名栏：初始为设置的 AI 导出默认名（日期变量已解析），可编辑；
+                // 留空导出时回落设置模板（由导出器兜底）
+                OutlinedTextField(
+                    value = fileName,
+                    onValueChange = { fileName = it },
+                    singleLine = true,
+                    label = { Text(stringResource(R.string.ai_chat_export_file_name)) },
+                    textStyle = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp)
+                )
                 // 快捷行：全选 / 反选 + 导出位置（默认仓库根目录，点击切换目标文件夹）
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -549,7 +565,7 @@ internal fun ExportDialog(
                     }
                     Spacer(Modifier.width(8.dp))
                     Button(
-                        onClick = { onConfirm(selected) },
+                        onClick = { onConfirm(selected, fileName) },
                         enabled = selected.isNotEmpty()
                     ) {
                         Text(stringResource(R.string.ai_chat_export_confirm, selected.size))

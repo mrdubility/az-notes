@@ -70,6 +70,7 @@ import com.az.notes.data.debug.DebugLogStatus
 import com.az.notes.data.debug.DebugLogType
 import com.az.notes.ui.common.UiText
 import com.az.notes.ui.common.resolve
+import com.az.notes.ui.common.showTimedSnackbar
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.SharingStarted
@@ -175,7 +176,7 @@ fun DebugLogScreen(
     val messageText = viewModel.message?.resolve()
     LaunchedEffect(messageText) {
         if (messageText != null) {
-            snackbarHostState.showSnackbar(messageText)
+            snackbarHostState.showTimedSnackbar(messageText)
             viewModel.consumeMessage()
         }
     }

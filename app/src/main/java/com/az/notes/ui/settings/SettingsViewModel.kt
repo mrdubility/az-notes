@@ -71,9 +71,17 @@ class SettingsViewModel @Inject constructor(
     fun setSortOrder(order: NoteSortOrder) =
         viewModelScope.launch { settingsRepository.setSortOrder(order) }
 
-    /** 默认新建笔记名。 */
+    /** 默认新建笔记名模板。 */
     fun setDefaultNoteName(name: String) =
         viewModelScope.launch { settingsRepository.setDefaultNoteName(name) }
+
+    /** 接收分享笔记默认名模板。 */
+    fun setShareNoteName(name: String) =
+        viewModelScope.launch { settingsRepository.setShareNoteName(name) }
+
+    /** AI 对话导出笔记默认名模板。 */
+    fun setAiExportNoteName(name: String) =
+        viewModelScope.launch { settingsRepository.setAiExportNoteName(name) }
 
     /** 回收站自动清理天数（0 = 永不清理）。 */
     fun setTrashRetentionDays(days: Int) =

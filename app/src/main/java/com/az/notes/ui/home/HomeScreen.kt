@@ -10,8 +10,10 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.draganddrop.dragAndDropTarget
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -19,6 +21,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Checklist
@@ -27,12 +30,10 @@ import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
@@ -51,6 +52,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.draganddrop.DragAndDropEvent
 import androidx.compose.ui.draganddrop.DragAndDropTarget
 import androidx.compose.ui.draganddrop.mimeTypes
@@ -65,6 +68,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.az.notes.R
 import com.az.notes.data.media.AttachmentRepository
 import com.az.notes.ui.common.resolve
+import com.az.notes.ui.common.showTimedSnackbar
 import com.az.notes.ui.components.MoveTargetDialog
 import com.az.notes.ui.components.RenameDialog
 import com.az.notes.ui.components.SyncConfirmDialog
@@ -76,7 +80,6 @@ import com.az.notes.ui.sync.SyncPhase
 import com.az.notes.ui.sync.SyncViewModel
 import kotlin.math.abs
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * 主界面（§5.1 重设计）：抽屉菜单 + 笔记卡片列表。
@@ -186,17 +189,14 @@ fun HomeScreen(
     }
 
     // 一次性提示（重命名/删除/收藏等结果）；携带撤销动作时显示横幅与「撤销」按钮，
-    // 限时 [UNDO_BANNER_MS] 后自动消失（超时视为放弃撤销）
+    // 统一限时 5 秒后自动消失（超时视为放弃撤销）
     val undoLabel = stringResource(R.string.action_undo)
     LaunchedEffect(state.message) {
         val msg = state.message ?: return@LaunchedEffect
-        val result = withTimeoutOrNull(UNDO_BANNER_MS) {
-            snackbarHostState.showSnackbar(
-                message = msg.text.resolve(context),
-                actionLabel = if (msg.undo != null) undoLabel else null,
-                duration = if (msg.undo != null) SnackbarDuration.Indefinite else SnackbarDuration.Short
-            )
-        }
+        val result = snackbarHostState.showTimedSnackbar(
+            message = msg.text.resolve(context),
+            actionLabel = if (msg.undo != null) undoLabel else null
+        )
         if (result == SnackbarResult.ActionPerformed) msg.undo?.invoke()
         viewModel.consumeMessage()
     }
@@ -541,12 +541,9 @@ fun HomeScreen(
 /** 双击返回退出的时间窗口（毫秒）。 */
 private const val DOUBLE_BACK_EXIT_MS = 2000L
 
-/** 可撤销横幅（删除/收藏等）的显示时长（毫秒）：超时视为放弃撤销。 */
-private const val UNDO_BANNER_MS = 5_000L
-
 /**
- * 新建浮层：一条横向底座展示「新建笔记 / 新建待办 / 新建文件夹」三个快捷动作
- * （主题色背景，与旧加号同色；尺寸略大于普通图标按钮）。
+ * 新建浮层：三个独立圆形按钮「新建笔记 / 新建待办 / 新建文件夹」
+ * （主题色底 + 阴影，点击区 56dp、图标 26dp，略大于普通图标按钮）。
  */
 @Composable
 private fun NewFabBar(
@@ -554,34 +551,36 @@ private fun NewFabBar(
     onCreateTask: () -> Unit,
     onCreateFolder: () -> Unit
 ) {
-    Surface(
-        shape = RoundedCornerShape(28.dp),
-        color = MaterialTheme.colorScheme.primary,
-        contentColor = MaterialTheme.colorScheme.onPrimary,
-        shadowElevation = 6.dp
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.padding(horizontal = 6.dp, vertical = 6.dp)
-        ) {
-            FabMiniAction(Icons.Outlined.Edit, stringResource(R.string.home_new_note), onCreateNote)
-            FabMiniAction(Icons.Filled.Checklist, stringResource(R.string.home_new_task), onCreateTask)
-            FabMiniAction(
-                Icons.Outlined.CreateNewFolder,
-                stringResource(R.string.home_new_folder),
-                onCreateFolder
-            )
-        }
+        FabCircle(Icons.Outlined.Edit, stringResource(R.string.home_new_note), onCreateNote)
+        FabCircle(Icons.Filled.Checklist, stringResource(R.string.home_new_task), onCreateTask)
+        FabCircle(
+            Icons.Outlined.CreateNewFolder,
+            stringResource(R.string.home_new_folder),
+            onCreateFolder
+        )
     }
 }
 
-/** 浮层内单个快捷动作按钮（图标 + 无障碍标签；随浮层主题色着色）。 */
+/** 浮层内单个圆形动作按钮（主题色底 + 阴影；图标随 onPrimary 着色）。 */
 @Composable
-private fun FabMiniAction(icon: ImageVector, label: String, onClick: () -> Unit) {
-    IconButton(onClick = onClick, modifier = Modifier.size(56.dp)) {
+private fun FabCircle(icon: ImageVector, label: String, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .size(56.dp)
+            .shadow(6.dp, CircleShape)
+            .clip(CircleShape)
+            .background(MaterialTheme.colorScheme.primary)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
         Icon(
             imageVector = icon,
             contentDescription = label,
+            tint = MaterialTheme.colorScheme.onPrimary,
             modifier = Modifier.size(26.dp)
         )
     }
