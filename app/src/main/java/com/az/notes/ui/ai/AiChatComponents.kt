@@ -95,8 +95,11 @@ import com.mikepenz.markdown.model.MarkdownTypography
 import com.mikepenz.markdown.model.ReferenceLinkHandler
 import com.mikepenz.markdown.model.ReferenceLinkHandlerImpl
 import com.mikepenz.markdown.model.State
-import com.mikepenz.markdown.utils.lookupLinkDefinition
+import com.mikepenz.markdown.utils.getUnescapedTextInNode
 import java.io.File
+import org.intellij.markdown.MarkdownElementTypes
+import org.intellij.markdown.ast.ASTNode
+import org.intellij.markdown.ast.findChildOfType
 import org.intellij.markdown.flavours.gfm.GFMFlavourDescriptor
 import org.intellij.markdown.parser.MarkdownParser
 
@@ -616,6 +619,7 @@ private fun StreamingMarkdownBlocks(
  * 成本 <1ms）并直接构造 [State.Success]，首帧即就绪，消除 mikepenz 默认路径
  * 「重建 state → Loading 空帧 → 异步解析完成」的周期性高度塌陷（流式跳动根因）；
  * 内容不变时 remember 命中，重组零解析开销。解析异常兜底渲染纯文本（保内容可见）。
+ * 引用式链接定义经 [collectLinkDefinitions] 同步收集后交由渲染期解析。
  * 超长单块（罕见）若出现主线程卡顿，再降级为大块异步策略。
  */
 @Composable
@@ -629,9 +633,7 @@ private fun MarkdownBlock(
     val state = remember(block) {
         runCatching {
             val ast = parser.buildMarkdownTreeFromString(block)
-            val links = mutableMapOf<String, String?>()
-            lookupLinkDefinition(links, ast, block, recursive = true)
-            links.forEach { (key, value) -> linkHandler.store(key, value) }
+            collectLinkDefinitions(ast, block) { label, destination -> linkHandler.store(label, destination) }
             State.Success(ast, block, linksLookedUp = true, referenceLinkHandler = linkHandler)
         }.getOrNull()
     }
@@ -645,6 +647,27 @@ private fun MarkdownBlock(
         typography = typography,
         animations = animations
     )
+}
+
+/**
+ * 递归收集块内引用式链接定义（`[label]: url`）并写入 [ReferenceLinkHandler]。
+ *
+ * 库内 lookupLinkDefinition（parseBlocking 的实现）在 v0.35.0 为 internal 函数，外部模块
+ * 不可访问（CI 编译报 "it is internal in file"）；此处以公开 API（[MarkdownElementTypes] +
+ * [findChildOfType] + [getUnescapedTextInNode]）复刻其 LINK_DEFINITION 分支，label / destination
+ * 的提取与转义处理与库实现一致。配合 linksLookedUp=true：渲染期跳过定义节点（skipLinkDefinition，
+ * 定义本身不可见），引用式链接由 annotator 在标注期经 ReferenceLinkHandler.find(label) 解析——
+ * 即使定义位于引用之后（文末）也能正确解析。
+ */
+private fun collectLinkDefinitions(node: ASTNode, content: String, store: (String, String?) -> Unit) {
+    if (node.type == MarkdownElementTypes.LINK_DEFINITION) {
+        val label = node.findChildOfType(MarkdownElementTypes.LINK_LABEL)?.getUnescapedTextInNode(content)
+        if (label != null) {
+            val destination = node.findChildOfType(MarkdownElementTypes.LINK_DESTINATION)?.getUnescapedTextInNode(content)
+            store(label, destination)
+        }
+    }
+    node.children.forEach { collectLinkDefinitions(it, content, store) }
 }
 
 /** 流式块切分结果：稳定块列表与活跃尾块（拼接无损）。 */
