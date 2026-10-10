@@ -227,12 +227,13 @@ fun AiChatScreen(
     }
 
     // 高度观测：监听布局信息中最新消息（index 0）的实时高度，供漂移补偿使用
-    // （item 0 不可见时以 -1 哨兵跳过；高度写由指纹流吸收后触发补偿）
+    // （item 0 不可见时以 -1 哨兵跳过；LazyListItemInfo.size 即主轴上像素尺寸；
+    //   高度写由指纹流吸收后触发补偿）
     LaunchedEffect(listState) {
         snapshotFlow {
             val item0: LazyListItemInfo? =
                 listState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == 0 }
-            item0?.size?.height ?: -1
+            item0?.size ?: -1
         }
             .distinctUntilChanged()
             .collect { height ->
