@@ -65,6 +65,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
@@ -221,6 +222,12 @@ fun AiChatScreen(
     // 「顶部对齐」，末项高于一屏时停在正文第一行在顶部而非贴底）。手势进行中不抢滚动锁
     // （贴底收口由位置观察的手势结束复核补齐）。翻看上文（非跟随态）时不滚动——底部
     // 增长由顶部锚定自然吸收，画面静止
+
+    // 近底收口窗口（仅 settle 负侧生效）：末项底边差视口底不超过该距离时精确收口到底——
+    // 覆盖「输出中划回贴底惯性停在差几行处」（内容增长使边界下移、惯性停在旧边界）的
+    // 场景；判定仍严格「完全可见」（正侧不吸附），窗口远小于翻看距离，不会重蹈弹回覆辙
+    val bottomSnapThresholdPx = with(LocalDensity.current) { 64.dp.toPx() }
+
     LaunchedEffect(listState) {
         snapshotFlow {
             val last = messagesState.value.lastOrNull()
@@ -251,8 +258,8 @@ fun AiChatScreen(
     // 位置观察：用户手势（拖拽/惯性）期间实时判定「贴底才跟随」——贴底 = 末项完全可见
     // （视口坐标系下末项底边在视口底之内，等价「滚到列表尽头」；末项高于一屏时滚到
     // 尽头同样成立）。上滑离开尽头立即暂停（画面停在哪就在哪，绝不拉回），滑回尽头
-    // 自动恢复；手势结束仅在真贴底时恢复跟随并快照收口。程序动画自身引起的位置变化
-    // 不属于用户手势，抑制
+    // 自动恢复；手势结束仅在真贴底（或停在贴底附近负侧小窗口——惯性停在差几行处）
+    // 时恢复跟随并快照收口。程序动画自身引起的位置变化不属于用户手势，抑制
     LaunchedEffect(listState) {
         var wasInProgress = false
         snapshotFlow {
@@ -294,9 +301,10 @@ fun AiChatScreen(
                         )
                     }
                 } else if (wasInProgress) {
-                    // 手势结束：真贴底恢复跟随并快照收口（手势期间增长未滚部分）；
-                    // 未贴底则暂停跟随——画面停在用户松手位置，绝不吸附拉回
-                    if (atBottom) {
+                    // 手势结束：真贴底，或停在贴底附近负侧小窗口内（惯性停在差几行处
+                    // ——输出中内容增长使滚动边界下移，惯性停在旧边界）→ 恢复跟随并
+                    // 快照收口；否则暂停跟随——画面停在用户松手位置，绝不吸附拉回
+                    if (atBottom || gap in -(bottomSnapThresholdPx.toInt())..0) {
                         following = true
                         if (messagesState.value.isNotEmpty()) {
                             listState.scrollToItem(messagesState.value.lastIndex, BOTTOM_OVERSHOOT)
