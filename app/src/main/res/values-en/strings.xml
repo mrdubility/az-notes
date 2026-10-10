@@ -353,7 +353,11 @@
     <string name="ai_chat_trimmed">%1$d earlier messages dropped</string>
     <string name="ai_chat_auto_compressed">Context was long and has been compressed automatically</string>
     <string name="ai_chat_add_image">Add image</string>
-    <string name="ai_chat_doc_image">From docs</string>
+    <string name="ai_chat_pick_from_doc">Pick from documents</string>
+    <string name="ai_chat_pick_from_album">From local album</string>
+    <string name="ai_chat_pick_from_gallery">From app gallery</string>
+    <string name="ai_chat_gallery_image_title">Pick images from the gallery</string>
+    <string name="ai_chat_gallery_image_empty">No available images in the gallery</string>
     <string name="ai_chat_doc_image_title">Pick an image from documents</string>
     <string name="ai_chat_doc_image_empty">No addable images found in the documents of this conversation</string>
     <string name="ai_chat_doc_image_add">Add (%1$d)</string>
@@ -387,11 +391,11 @@
     <string name="backup_export_subtitle">Export all settings and vault configuration to a JSON file</string>
     <string name="backup_import">Import configuration</string>
     <string name="backup_import_subtitle">Restore settings from a backup file (existing values are overwritten)</string>
-    <string name="backup_hint">Includes appearance, editor, note list, vault registry, favorites and share location, and WebDAV sync settings (passwords excluded). Import merges by vault; invalid or missing entries are ignored automatically.</string>
+    <string name="backup_hint">Includes appearance, editor, note list, vault registry, favorites and share location, WebDAV sync settings (passwords excluded), and AI provider configuration (API keys excluded). Import merges by vault and provider; invalid or missing entries are ignored automatically.</string>
     <string name="backup_export_done">Configuration exported</string>
     <string name="backup_export_failed">Export failed</string>
-    <string name="backup_import_done">Restored configuration for %1$d vault(s)</string>
-    <string name="backup_import_done_partial">Restored %1$d vault(s); ignored %2$d invalid entries</string>
+    <string name="backup_import_done">Restored configuration for %1$d vault(s) and %2$d AI provider(s)</string>
+    <string name="backup_import_done_partial">Restored %1$d vault(s) and %2$d AI provider(s); ignored %3$d invalid entries</string>
     <string name="backup_import_invalid">Invalid backup file; nothing was changed</string>
 
     <!-- Sync (WebDAV) -->

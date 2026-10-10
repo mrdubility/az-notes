@@ -120,9 +120,15 @@ class BackupViewModel @Inject constructor(
                             busy = false,
                             languageChanged = before != null && after != null && before != after,
                             message = if (r.vaultsSkipped > 0) {
-                                UiText.of(R.string.backup_import_done_partial, r.vaultsRestored, r.vaultsSkipped)
+                                UiText.of(
+                                    R.string.backup_import_done_partial,
+                                    r.vaultsRestored, r.providersRestored, r.vaultsSkipped
+                                )
                             } else {
-                                UiText.of(R.string.backup_import_done, r.vaultsRestored)
+                                UiText.of(
+                                    R.string.backup_import_done,
+                                    r.vaultsRestored, r.providersRestored
+                                )
                             }
                         )
                     }

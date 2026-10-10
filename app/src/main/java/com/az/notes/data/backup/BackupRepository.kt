@@ -1,8 +1,12 @@
 package com.az.notes.data.backup
 
+import com.az.notes.data.ai.AiProviderRepository
 import com.az.notes.data.settings.SettingsRepository
 import com.az.notes.data.settings.VaultPerVault
 import com.az.notes.data.sync.SyncConfigRepository
+import com.az.notes.domain.ai.AiModel
+import com.az.notes.domain.ai.AiProtocol
+import com.az.notes.domain.ai.AiProvider
 import com.az.notes.domain.model.AppLanguage
 import com.az.notes.domain.model.AppSettings
 import com.az.notes.domain.model.ConflictStrategy
@@ -42,7 +46,8 @@ import kotlinx.serialization.json.Json
 @Singleton
 class BackupRepository @Inject constructor(
     private val settingsRepository: SettingsRepository,
-    private val syncConfigRepository: SyncConfigRepository
+    private val syncConfigRepository: SyncConfigRepository,
+    private val aiProviderRepository: AiProviderRepository
 ) {
 
     private val json = Json { prettyPrint = true; encodeDefaults = true }
@@ -76,6 +81,9 @@ class BackupRepository @Inject constructor(
             exportedAt = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date()),
             settings = settings.toBackup(),
             vaults = vaults,
+            aiProviders = runCatching { aiProviderRepository.providers.first() }
+                .getOrDefault(emptyList())
+                .map { it.toBackup() },
             currentVaultId = settings.currentVaultId
         )
     }
@@ -148,6 +156,10 @@ class BackupRepository @Inject constructor(
 
         val settingsRestored = payload.settings?.let { applyGlobalSettings(it) } ?: false
 
+        // AI 供应商：逐条容错映射（id 缺失 / 协议无法识别跳过）后合并恢复（不含 Key——安全红线）
+        val providers = payload.aiProviders.orEmpty().mapNotNull { it.toAiProviderOrNull() }
+        val providersRestored = runCatching { aiProviderRepository.mergeAll(providers) }.getOrDefault(0)
+
         if (restored.isNotEmpty()) {
             settingsRepository.restoreVaultRegistry(
                 imported = restored,
@@ -162,10 +174,21 @@ class BackupRepository @Inject constructor(
                 }
             }
         }
-        return BackupImportResult(restored.size, skipped, settingsRestored)
+        return BackupImportResult(restored.size, skipped, settingsRestored, providersRestored)
     }
 
     // ---------------------------------------------------------------- 映射
+
+    /** AI 供应商导出映射（不含 Key——密钥由 AiKeyStore 加密独立存储，永不入备份）。 */
+    private fun AiProvider.toBackup(): BackupAiProvider = BackupAiProvider(
+        id = id,
+        name = name,
+        protocol = protocol.name,
+        baseUrl = baseUrl,
+        headers = headers,
+        models = models.map { BackupAiModel(it.id, it.label, it.contextWindow, it.vision) },
+        lastModelId = lastModelId
+    )
 
     private fun AppSettings.toBackup(): BackupSettings = BackupSettings(
         themeMode = themeMode.name,
@@ -260,4 +283,35 @@ class BackupRepository @Inject constructor(
         /** 当前备份格式版本。 */
         const val BACKUP_VERSION = 1
     }
+}
+
+/**
+ * 备份条目 → 供应商映射（纯函数，供单测直接覆盖）：id 缺失 / 协议无法识别 → null 跳过；
+ * name 缺省回落 id；模型逐条容错（id 缺失跳过）。不含 API Key——安全红线：密钥永不导入。
+ */
+internal fun BackupAiProvider.toAiProviderOrNull(): AiProvider? {
+    val pid = id?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+    val protocolValue = protocol?.trim()
+        ?.let { runCatching { enumValueOf<AiProtocol>(it) }.getOrNull() }
+        ?: return null
+    return AiProvider(
+        id = pid,
+        name = name?.trim()?.takeIf { it.isNotEmpty() } ?: pid,
+        protocol = protocolValue,
+        baseUrl = baseUrl?.trim().orEmpty(),
+        headers = headers.orEmpty(),
+        models = models.orEmpty().mapNotNull { it.toAiModelOrNull() },
+        lastModelId = lastModelId?.trim()?.takeIf { it.isNotEmpty() }
+    )
+}
+
+/** 备份模型条目 → 模型映射（纯函数）：id 缺失 → null 跳过；label 缺省回落 id。 */
+internal fun BackupAiModel.toAiModelOrNull(): AiModel? {
+    val mid = id?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+    return AiModel(
+        id = mid,
+        label = label?.trim()?.takeIf { it.isNotEmpty() } ?: mid,
+        contextWindow = contextWindow?.takeIf { it > 0 },
+        vision = vision == true
+    )
 }

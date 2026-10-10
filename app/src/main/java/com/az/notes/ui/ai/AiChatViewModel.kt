@@ -12,6 +12,7 @@ import com.az.notes.data.ai.ConversationCompressor
 import com.az.notes.data.ai.ConversationExporter
 import com.az.notes.data.ai.ImagePrepFailure
 import com.az.notes.data.ai.ImagePrepResult
+import com.az.notes.data.media.AttachmentRepository
 import com.az.notes.data.settings.SettingsRepository
 import com.az.notes.data.storage.VaultRepository
 import com.az.notes.domain.ai.AiError
@@ -61,8 +62,11 @@ data class ChatErrorState(val messageId: String, val text: UiText, val showSetti
 /** 文档选择器条目：节点 + 正文预览（列表页同款结构；预览分批并行读取）。 */
 data class DocPickerItem(val node: FileNode, val preview: String = "")
 
-/** 文档取图条目：来源文档（展示用名）+ 解析出的本地图片文件 + 体积。 */
-data class DocImageItem(val sourceDoc: String, val file: File, val name: String, val sizeBytes: Long)
+/** 图片选择条目（文档取图 / 软件图库共用）：来源标签（文档名或仓库相对路径）+ 文件 + 体积。 */
+data class DocImageItem(val sourceLabel: String, val file: File, val name: String, val sizeBytes: Long)
+
+/** 图片选择对话框来源：文档取图（解析会话文档图片引用）/ 软件图库（仓库全部图片）。 */
+enum class ImagePickSource { DOCUMENT, GALLERY }
 
 /** 导出完成数据（Snackbar「已导出到仓库根目录」+「查看」动作跳预览页）。 */
 data class ExportDone(val fileName: String, val absolutePath: String)
@@ -90,6 +94,7 @@ class AiChatViewModel @Inject constructor(
     private val imagePreparer: AiImagePreparer,
     private val syncScheduler: SyncScheduler,
     private val vaultRepository: VaultRepository,
+    private val attachmentRepository: AttachmentRepository,
     private val settingsRepository: SettingsRepository
 ) : ViewModel() {
 
@@ -172,9 +177,13 @@ class AiChatViewModel @Inject constructor(
             !busy && !compressingNow && compressor.compressibleCount(list) > 0
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
 
-    /** 文档取图条目（null = 未打开；打开期间先置空列表再 IO 填充）。 */
+    /** 图片选择条目（null = 未打开；打开期间先置空列表再 IO 填充）。 */
     private val _docImageItems = MutableStateFlow<List<DocImageItem>?>(null)
     val docImageItems: StateFlow<List<DocImageItem>?> = _docImageItems.asStateFlow()
+
+    /** 图片选择对话框来源（null = 未打开；控制标题 / 空态 / 来源行文案）。 */
+    private val _imagePickSource = MutableStateFlow<ImagePickSource?>(null)
+    val imagePickSource: StateFlow<ImagePickSource?> = _imagePickSource.asStateFlow()
 
     /** 文档取图装载中（空列表时区分「加载中」与「无可选图片」）。 */
     private val _docImageLoading = MutableStateFlow(false)
@@ -482,6 +491,7 @@ class AiChatViewModel @Inject constructor(
     /** 打开「文档取图」：解析会话涉及文档（待发附件 + 已发送消息）中的本地白名单图片。 */
     fun openDocImagePicker() {
         if (_docImageItems.value != null) return
+        _imagePickSource.value = ImagePickSource.DOCUMENT
         _docImageItems.value = emptyList()
         _docImageLoading.value = true
         viewModelScope.launch {
@@ -491,8 +501,22 @@ class AiChatViewModel @Inject constructor(
         }
     }
 
+    /** 打开「从软件图库选取」：列出当前仓库全部白名单图片（按修改时间倒序，对齐图库页）。 */
+    fun openGalleryPicker() {
+        if (_docImageItems.value != null) return
+        _imagePickSource.value = ImagePickSource.GALLERY
+        _docImageItems.value = emptyList()
+        _docImageLoading.value = true
+        viewModelScope.launch {
+            val items = withContext(Dispatchers.IO) { resolveGalleryImages() }
+            _docImageItems.value = items
+            _docImageLoading.value = false
+        }
+    }
+
     fun closeDocImagePicker() {
         _docImageItems.value = null
+        _imagePickSource.value = null
         _docImageLoading.value = false
     }
 
@@ -521,6 +545,25 @@ class AiChatViewModel @Inject constructor(
             failure?.let { _message.value = imageFailureText(it) }
             if (limitHit) _message.value = UiText.of(R.string.ai_chat_image_limit)
         }
+    }
+
+    /**
+     * 列出仓库全部可用图片（IO 调用）：[AttachmentRepository.listAttachments] 全库扫描 →
+     * 白名单过滤（gif 等不列出，与文档取图一致）→ 按修改时间倒序（新图在前，对齐图库页）。
+     * 来源标签取仓库相对路径。
+     */
+    private suspend fun resolveGalleryImages(): List<DocImageItem> {
+        val vaultPath = runCatching { settingsRepository.settings.first().vaultPath }.getOrNull()
+            ?: return emptyList()
+        val root = File(vaultPath).normalize()
+        val rootPath = root.absolutePath
+        return attachmentRepository.listAttachments(root)
+            .filter { AiImagePreparer.isSupportedExtension(it.extension) }
+            .sortedByDescending { it.lastModified() }
+            .map { file ->
+                val rel = file.absolutePath.removePrefix(rootPath).trimStart(File.separatorChar)
+                DocImageItem(sourceLabel = rel, file = file, name = file.name, sizeBytes = file.length())
+            }
     }
 
     /**
@@ -553,7 +596,7 @@ class AiChatViewModel @Inject constructor(
                 if (!AiImagePreparer.isSupportedExtension(file.extension)) return@forEach
                 if (!seen.add(file.absolutePath)) return@forEach
                 items += DocImageItem(
-                    sourceDoc = doc.name,
+                    sourceLabel = doc.name,
                     file = file,
                     name = file.name,
                     sizeBytes = file.length()

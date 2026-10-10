@@ -27,8 +27,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.FileDownload
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
-import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -108,6 +108,7 @@ fun AiChatScreen(
     val visionEnabled by viewModel.visionEnabled.collectAsStateWithLifecycle()
     val docImageItems by viewModel.docImageItems.collectAsStateWithLifecycle()
     val docImageLoading by viewModel.docImageLoading.collectAsStateWithLifecycle()
+    val imagePickSource by viewModel.imagePickSource.collectAsStateWithLifecycle()
     val exportVisible by viewModel.exportVisible.collectAsStateWithLifecycle()
     val exportDefaultSelected by viewModel.exportDefaultSelected.collectAsStateWithLifecycle()
     val privacyDialog by viewModel.privacyDialog.collectAsStateWithLifecycle()
@@ -139,16 +140,24 @@ fun AiChatScreen(
     // 程序滚动守卫：平滑滚动的动画期间抑制位置观察，防动画中间态互夺跟随状态
     var programmaticScroll by remember { mutableStateOf(false) }
 
-    // 唯一滚动出口：平滑滚到最新（已贴底则跳过零成本）
+    // 唯一滚动出口：平滑滚到最新。
+    // - 防重入：追赶滚动进行中时直接返回——高频内容变化不打断进行中的动画
+    //   （反复 cancel 重启动画是「顿挫感」的来源）；
+    // - 追赶循环：动画完成后若仍跟随且未贴底（期间内容又增长），自动续滚直至贴底。
+    var scrollInFlight by remember { mutableStateOf(false) }
     val scrollToLatest: suspend () -> Unit = {
-        if (!listState.isAtLatest()) {
+        if (!scrollInFlight) {
+            scrollInFlight = true
             programmaticScroll = true
             try {
-                listState.animateScrollToItem(0)
+                while (following && !listState.isAtLatest()) {
+                    listState.animateScrollToItem(0)
+                }
             } catch (_: CancellationException) {
                 // 用户手势抢占程序滚动：本次作废，跟随状态交还位置观察接管
             } finally {
                 programmaticScroll = false
+                scrollInFlight = false
             }
         }
     }
@@ -287,7 +296,7 @@ fun AiChatScreen(
                         enabled = messages.isNotEmpty()
                     ) {
                         Icon(
-                            Icons.Outlined.Share,
+                            Icons.Outlined.FileDownload,
                             stringResource(R.string.ai_chat_export)
                         )
                     }
@@ -419,19 +428,20 @@ fun AiChatScreen(
                     .fillMaxWidth()
                     .padding(horizontal = 12.dp, vertical = 8.dp)
             )
-            // 功能行（§9.1）：选择文档 / 压缩上下文 / 添加图片 / 文档取图
+            // 功能行（§9.1）：选择文档 / 添加图片（弹出文档·相册·图库三来源）/ 压缩上下文
             ChatFeatureRow(
                 canCompress = canCompress,
                 compressing = compressing,
                 imageEnabled = visionEnabled,
                 onPickDocument = viewModel::openDocumentPicker,
                 onCompress = viewModel::compressContext,
-                onPickImage = {
+                onPickImageFromDoc = viewModel::openDocImagePicker,
+                onPickImageFromAlbum = {
                     imagePicker.launch(
                         PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
                     )
                 },
-                onPickDocImage = viewModel::openDocImagePicker,
+                onPickImageFromGallery = viewModel::openGalleryPicker,
                 modifier = Modifier.fillMaxWidth()
             )
             // 常驻甄别行
@@ -476,6 +486,8 @@ fun AiChatScreen(
     DocImagePickerDialog(
         items = docImageItems,
         loading = docImageLoading,
+        // 与 items 同步置位（VM 内先 source 后 items）；null 兜底仅满足类型，不参与实际渲染
+        source = imagePickSource ?: ImagePickSource.DOCUMENT,
         onConfirm = viewModel::confirmDocImageSelection,
         onDismiss = viewModel::closeDocImagePicker
     )

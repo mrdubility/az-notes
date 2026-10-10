@@ -43,6 +43,7 @@ import coil3.compose.LocalPlatformContext
 import coil3.request.ImageRequest
 import coil3.size.Size as CoilSize
 import com.az.notes.R
+import com.az.notes.ui.common.azNotesMarkdownTypography
 import com.az.notes.ui.common.resolve
 import com.mikepenz.markdown.compose.MarkdownElement
 import com.mikepenz.markdown.m3.Markdown
@@ -255,6 +256,7 @@ fun ReaderScreen(
                     Markdown(
                         markdownState = markdownState,
                         modifier = Modifier.fillMaxSize(),
+                        typography = azNotesMarkdownTypography(),
                         imageTransformer = imageTransformer,
                         annotator = annotator,
                         animations = staticAnimations,

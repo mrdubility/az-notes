@@ -606,14 +606,16 @@ private fun exportSummary(message: ChatMessage): String {
 }
 
 /**
- * 文档取图对话框（§7.2，全屏）：列出会话涉及文档中的本地图片（缩略图 + 名称 + 体积 +
- * 来源文档），勾选后「添加」（逐张复用 [AiImagePreparer] 压缩管线；3 张上限由 VM 守卫）。
- * [items] = null 表示未打开；打开后先置空列表（[loading] 转圈）再 IO 填充。
+ * 图片选择对话框（§7.2，全屏；文档取图 / 软件图库双来源共用）：列出候选本地图片（缩略图 +
+ * 名称 + 体积 + 来源标签），勾选后「添加」（逐张复用 [AiImagePreparer] 压缩管线；3 张上限
+ * 由 VM 守卫）。[items] = null 表示未打开；打开后先置空列表（[loading] 转圈）再 IO 填充；
+ * [source] 决定标题 / 空态文案与条目来源行含义。
  */
 @Composable
 internal fun DocImagePickerDialog(
     items: List<DocImageItem>?,
     loading: Boolean,
+    source: ImagePickSource,
     onConfirm: (List<String>) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -637,7 +639,13 @@ internal fun DocImagePickerDialog(
                         .padding(start = 16.dp, end = 4.dp, top = 4.dp)
                 ) {
                     Text(
-                        text = stringResource(R.string.ai_chat_doc_image_title),
+                        text = stringResource(
+                            if (source == ImagePickSource.GALLERY) {
+                                R.string.ai_chat_gallery_image_title
+                            } else {
+                                R.string.ai_chat_doc_image_title
+                            }
+                        ),
                         style = MaterialTheme.typography.titleMedium,
                         modifier = Modifier.weight(1f)
                     )
@@ -665,7 +673,13 @@ internal fun DocImagePickerDialog(
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = stringResource(R.string.ai_chat_doc_image_empty),
+                            text = stringResource(
+                                if (source == ImagePickSource.GALLERY) {
+                                    R.string.ai_chat_gallery_image_empty
+                                } else {
+                                    R.string.ai_chat_doc_image_empty
+                                }
+                            ),
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -712,7 +726,7 @@ internal fun DocImagePickerDialog(
     }
 }
 
-/** 取图条目：缩略图 + 图片名 + 体积 · 来源文档 + 勾选。 */
+/** 图片条目：缩略图 + 图片名 + 体积 · 来源（文档名 / 仓库相对路径）+ 勾选。 */
 @Composable
 private fun DocImageRow(
     item: DocImageItem,
@@ -744,7 +758,7 @@ private fun DocImageRow(
             )
             Text(
                 text = formatSize(item.sizeBytes) + " · " +
-                    stringResource(R.string.ai_chat_doc_image_source, item.sourceDoc),
+                    stringResource(R.string.ai_chat_doc_image_source, item.sourceLabel),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,

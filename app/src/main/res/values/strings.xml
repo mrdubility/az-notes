@@ -353,7 +353,11 @@
     <string name="ai_chat_trimmed">已丢弃 %1$d 条早期消息</string>
     <string name="ai_chat_auto_compressed">上下文较长，已自动压缩</string>
     <string name="ai_chat_add_image">添加图片</string>
-    <string name="ai_chat_doc_image">文档取图</string>
+    <string name="ai_chat_pick_from_doc">从文档中选取添加</string>
+    <string name="ai_chat_pick_from_album">从本地相册添加</string>
+    <string name="ai_chat_pick_from_gallery">从本软件图库添加</string>
+    <string name="ai_chat_gallery_image_title">从图库中选择图片</string>
+    <string name="ai_chat_gallery_image_empty">图库中暂无可用图片</string>
     <string name="ai_chat_doc_image_title">从文档中选择图片</string>
     <string name="ai_chat_doc_image_empty">未在会话涉及的文档中找到可添加的图片</string>
     <string name="ai_chat_doc_image_add">添加（%1$d）</string>
@@ -387,11 +391,11 @@
     <string name="backup_export_subtitle">将全部设置与仓库配置导出为 JSON 文件</string>
     <string name="backup_import">导入配置</string>
     <string name="backup_import_subtitle">从备份文件恢复设置（同项以备份为准覆盖）</string>
-    <string name="backup_hint">导出内容：外观 / 编辑器 / 笔记列表 / 仓库配置 / 收藏与分享位置 / WebDAV 同步设置（不含密码）。导入按仓库合并恢复，无效或缺失的条目自动忽略。</string>
+    <string name="backup_hint">导出内容：外观 / 编辑器 / 笔记列表 / 仓库配置 / 收藏与分享位置 / WebDAV 同步设置（不含密码）/ AI 供应商配置（不含 API Key）。导入按仓库与供应商合并恢复，无效或缺失的条目自动忽略。</string>
     <string name="backup_export_done">配置已导出</string>
     <string name="backup_export_failed">导出失败</string>
-    <string name="backup_import_done">已恢复 %1$d 个仓库的配置</string>
-    <string name="backup_import_done_partial">已恢复 %1$d 个仓库配置，忽略 %2$d 个无效条目</string>
+    <string name="backup_import_done">已恢复 %1$d 个仓库、%2$d 个 AI 供应商的配置</string>
+    <string name="backup_import_done_partial">已恢复 %1$d 个仓库、%2$d 个 AI 供应商配置，忽略 %3$d 个无效条目</string>
     <string name="backup_import_invalid">备份文件无效，未做任何修改</string>
 
     <!-- 同步（M3：坚果云 / 通用 WebDAV） -->

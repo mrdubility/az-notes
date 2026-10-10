@@ -21,6 +21,8 @@ data class BackupPayload(
     val exportedAt: String? = null,
     val settings: BackupSettings? = null,
     val vaults: List<BackupVault>? = null,
+    /** AI 供应商配置（不含 API Key：密钥由 AiKeyStore 加密独立存储，永不入备份） */
+    val aiProviders: List<BackupAiProvider>? = null,
     /** 导出时的当前仓库 id（导入后若仍有效则恢复为当前仓库） */
     val currentVaultId: String? = null
 )
@@ -81,6 +83,28 @@ data class BackupSyncConfig(
     val syncAfterSave: Boolean? = null
 )
 
+/** AI 供应商配置快照（不含 API Key——安全红线：密钥永不导出、永不导入）。 */
+@Serializable
+data class BackupAiProvider(
+    val id: String? = null,
+    val name: String? = null,
+    /** 协议（AiProtocol.name；无法识别的值导入时跳过该条） */
+    val protocol: String? = null,
+    val baseUrl: String? = null,
+    val headers: Map<String, String>? = null,
+    val models: List<BackupAiModel>? = null,
+    val lastModelId: String? = null
+)
+
+/** 供应商下的单个模型快照（逐字段容错：缺失 / 无效项忽略）。 */
+@Serializable
+data class BackupAiModel(
+    val id: String? = null,
+    val label: String? = null,
+    val contextWindow: Int? = null,
+    val vision: Boolean? = null
+)
+
 /** 导入结果统计（UI 提示用）。 */
 data class BackupImportResult(
     /** 成功恢复（新增或覆盖）的仓库数 */
@@ -88,5 +112,7 @@ data class BackupImportResult(
     /** 因路径无效 / 重复而跳过的仓库数 */
     val vaultsSkipped: Int,
     /** 是否恢复了全局设置（备份中包含 settings 且至少一项有效） */
-    val settingsRestored: Boolean
+    val settingsRestored: Boolean,
+    /** 成功恢复（新增或覆盖）的 AI 供应商数 */
+    val providersRestored: Int = 0
 )

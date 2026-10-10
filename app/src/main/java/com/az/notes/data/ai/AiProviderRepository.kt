@@ -85,6 +85,19 @@ class AiProviderRepository @Inject constructor(
     suspend fun getById(id: String): AiProvider? =
         providers.first().firstOrNull { it.id == id }
 
+    /**
+     * 备份导入：合并供应商列表（同 id 覆盖、新 id 追加、不删除现有），返回恢复条数。
+     * 仅合并配置本体；API Key 由 [keyStore] 加密独立存储，不参与导入（安全红线）。
+     */
+    suspend fun mergeAll(imported: List<AiProvider>): Int {
+        if (imported.isEmpty()) return 0
+        dataStore.edit { prefs ->
+            val current = ProviderCodec.decode(json, prefs[PROVIDERS_KEY])
+            prefs[PROVIDERS_KEY] = ProviderCodec.encode(json, mergeProviders(current, imported))
+        }
+        return imported.size
+    }
+
     private companion object {
         val PROVIDERS_KEY = stringPreferencesKey("providers")
     }
@@ -103,4 +116,16 @@ internal object ProviderCodec {
         return runCatching { json.decodeFromString<List<AiProvider>>(raw) }
             .getOrDefault(emptyList())
     }
+}
+
+/**
+ * 备份导入合并（纯函数，供单测直接覆盖）：同 id 覆盖、新 id 按导入顺序追加、不删除现有。
+ */
+internal fun mergeProviders(current: List<AiProvider>, imported: List<AiProvider>): List<AiProvider> {
+    val merged = current.toMutableList()
+    imported.forEach { item ->
+        val index = merged.indexOfFirst { it.id == item.id }
+        if (index >= 0) merged[index] = item else merged += item
+    }
+    return merged
 }

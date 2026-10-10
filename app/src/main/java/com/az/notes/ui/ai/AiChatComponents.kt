@@ -3,6 +3,7 @@ package com.az.notes.ui.ai
 import android.net.Uri
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -28,20 +29,23 @@ import androidx.compose.material.icons.outlined.AddPhotoAlternate
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Collections
 import androidx.compose.material.icons.outlined.Compress
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.ExpandLess
 import androidx.compose.material.icons.outlined.ExpandMore
+import androidx.compose.material.icons.outlined.FileDownload
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Lightbulb
 import androidx.compose.material.icons.outlined.PhotoLibrary
 import androidx.compose.material.icons.outlined.Refresh
-import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -80,9 +84,14 @@ import com.az.notes.domain.ai.SystemNoteMode
 import com.az.notes.domain.ai.ToolCallRecord
 import com.az.notes.domain.ai.ToolSpecs
 import com.az.notes.ui.common.UiText
+import com.az.notes.ui.common.azNotesMarkdownTypography
 import com.az.notes.ui.common.resolve
 import com.mikepenz.markdown.m3.Markdown
 import com.mikepenz.markdown.model.DefaultMarkdownAnimation
+import com.mikepenz.markdown.model.MarkdownAnimations
+import com.mikepenz.markdown.model.MarkdownFlavourDescriptor
+import com.mikepenz.markdown.model.MarkdownTypography
+import com.mikepenz.markdown.model.ReferenceLinkHandler
 import com.mikepenz.markdown.model.ReferenceLinkHandlerImpl
 import com.mikepenz.markdown.model.rememberMarkdownState
 import java.io.File
@@ -165,7 +174,7 @@ internal fun UserBubble(
                 }
                 add(
                     ChatAction(
-                        Icons.Outlined.Share,
+                        Icons.Outlined.FileDownload,
                         stringResource(R.string.ai_chat_export_select),
                         onExportSelect
                     )
@@ -312,7 +321,7 @@ internal fun AssistantBlock(
                     }
                     add(
                         ChatAction(
-                            Icons.Outlined.Share,
+                            Icons.Outlined.FileDownload,
                             stringResource(R.string.ai_chat_export_select),
                             onExportSelect
                         )
@@ -542,18 +551,17 @@ private fun ImageAttachmentCard(image: ChatPart.Image, onRemove: (() -> Unit)? =
 }
 
 /**
- * 正文渲染：流式中用纯文本（未闭合的 Markdown 标记令解析结构反复突变，底部锚定下
- * 表现为屏幕持续跳动），流结束后一次性切换完整 Markdown 渲染（行业成熟做法）。
+ * 正文渲染：
+ * - 流式（streaming=true）：分块增量渲染（[StreamingMarkdownBlocks]）——已完成段落块
+ *   逐块渲染并缓存（块文本不变则零重解析），仅活跃尾块随增量刷新，且对未闭合代码围栏
+ *   做渲染补全。消除「解析结构突变 + 每批全量重解析」导致的屏幕跳动与卡顿——即业界
+ *   streaming parser「增量 append、避免每 chunk 全量重解析」思路在 mikepenz 上的等价实现；
+ * - 终态：整条一次性渲染，布局最终正确。
  */
 @Composable
 private fun ChatMarkdown(text: String, streaming: Boolean) {
     if (streaming) {
-        // 流式期间纯文本：高度单调增长，反转布局底部锚定下画面稳定不跳
-        Text(
-            text = text,
-            style = MaterialTheme.typography.bodyLarge,
-            modifier = Modifier.fillMaxWidth()
-        )
+        StreamingMarkdownBlocks(text)
         return
     }
     // 解析链实例显式稳定化：默认参数在重组时会新建实例导致反复重新解析（对齐预览页先例）
@@ -570,8 +578,128 @@ private fun ChatMarkdown(text: String, streaming: Boolean) {
     Markdown(
         markdownState = markdownState,
         modifier = Modifier.fillMaxWidth(),
+        typography = azNotesMarkdownTypography(),
         animations = staticAnimations
     )
+}
+
+/**
+ * 流式分块增量渲染：稳定块列表 + 活跃尾块（[splitStreamingBlocks]）。
+ * 解析链实例与排版样式在外层创建一次并传参——稳定块文本不变时 [rememberMarkdownState]
+ * 命中缓存不重解析，配合 Compose 跳过机制实现零成本复用；仅尾块（长度≈1 段落）
+ * 随节流增量重渲染。
+ */
+@Composable
+private fun StreamingMarkdownBlocks(text: String) {
+    val flavour = remember { GFMFlavourDescriptor() }
+    val parser = remember(flavour) { MarkdownParser(flavour) }
+    val linkHandler = remember { ReferenceLinkHandlerImpl() }
+    val staticAnimations = remember { DefaultMarkdownAnimation(animateTextSize = { this }) }
+    val typography = azNotesMarkdownTypography()
+    val blocks = remember(text) { splitStreamingBlocks(text) }
+    Column(modifier = Modifier.fillMaxWidth()) {
+        blocks.blocks.forEach { block ->
+            StableMarkdownBlock(block, flavour, parser, linkHandler, typography, staticAnimations)
+        }
+        val closedTail = autocloseTail(blocks.tail)
+        if (closedTail.isNotBlank()) {
+            StableMarkdownBlock(closedTail, flavour, parser, linkHandler, typography, staticAnimations)
+        }
+    }
+}
+
+/** 单个块渲染：块文本不变 → rememberMarkdownState 命中缓存，零重解析。 */
+@Composable
+private fun StableMarkdownBlock(
+    block: String,
+    flavour: MarkdownFlavourDescriptor,
+    parser: MarkdownParser,
+    linkHandler: ReferenceLinkHandler,
+    typography: MarkdownTypography,
+    animations: MarkdownAnimations
+) {
+    val markdownState = rememberMarkdownState(
+        content = block,
+        flavour = flavour,
+        parser = parser,
+        referenceLinkHandler = linkHandler
+    )
+    Markdown(
+        markdownState = markdownState,
+        modifier = Modifier.fillMaxWidth(),
+        typography = typography,
+        animations = animations
+    )
+}
+
+/** 流式块切分结果：稳定块列表与活跃尾块（拼接无损）。 */
+internal data class StreamingBlocks(val blocks: List<String>, val tail: String)
+
+/** 流式结构扫描结果：安全空行切点偏移 + 未闭合围栏标记（切分与补全共用同一语义）。 */
+internal data class StreamingStructure(val cutOffsets: List<Int>, val openFence: String?)
+
+/**
+ * 扫描流式文本结构（纯函数）：逐行识别 ``` / ~~~ 围栏（仅同符可闭合，异符视为围栏内
+ * 内容），收集「安全空行切点」——不在围栏内、以换行结束、且其后仍有内容的空行行的结束偏移。
+ */
+internal fun scanStreamingStructure(text: String): StreamingStructure {
+    val cuts = mutableListOf<Int>()
+    var open: String? = null
+    var idx = 0
+    while (idx < text.length) {
+        val nl = text.indexOf('\n', idx)
+        val end = if (nl < 0) text.length else nl + 1
+        val line = text.substring(idx, end)
+        val marker = fenceMarkerOf(line)
+        if (marker != null) {
+            open = if (open == null) marker else if (open == marker) null else open
+        } else if (open == null && nl >= 0 && line.isBlank() && end < text.length) {
+            cuts += end
+        }
+        idx = end
+    }
+    return StreamingStructure(cuts, open)
+}
+
+/** 行首（允许缩进）以 ``` 或 ~~~ 开头 → 围栏标记；否则 null。 */
+private fun fenceMarkerOf(line: String): String? {
+    val trimmed = line.trimStart()
+    return when {
+        trimmed.startsWith("```") -> "```"
+        trimmed.startsWith("~~~") -> "~~~"
+        else -> null
+    }
+}
+
+/**
+ * 按「安全空行切点」切分流式文本：切点之前的片段为稳定块（纯空行片段并入前块，
+ * 避免连续空行产生空块），最后片段为活跃尾块。
+ * 不变量：blocks 顺序拼接 + tail 与原文无损（单测覆盖）。
+ */
+internal fun splitStreamingBlocks(text: String): StreamingBlocks {
+    val structure = scanStreamingStructure(text)
+    if (structure.cutOffsets.isEmpty()) return StreamingBlocks(emptyList(), text)
+    val blocks = mutableListOf<String>()
+    var start = 0
+    structure.cutOffsets.forEach { cut ->
+        val piece = text.substring(start, cut)
+        if (piece.isNotBlank() || blocks.isEmpty()) {
+            blocks += piece
+        } else {
+            blocks[blocks.lastIndex] = blocks[blocks.lastIndex] + piece
+        }
+        start = cut
+    }
+    return StreamingBlocks(blocks, text.substring(start))
+}
+
+/**
+ * 尾块渲染补全：存在未闭合围栏时临时补一个同符闭合行——避免「未闭合→闭合」瞬间
+ * 正文从代码块样式突变回段落样式造成的高度非单调跳变（仅影响渲染，不改数据）。
+ */
+internal fun autocloseTail(tail: String): String {
+    val open = scanStreamingStructure(tail).openFence ?: return tail
+    return tail + "\n" + open
 }
 
 /**
@@ -785,10 +913,12 @@ internal fun ChatInputCard(
 }
 
 /**
- * 功能行（§9.1，输入卡下方一行四按钮）：[选择文档][压缩上下文][添加图片][文档取图]。
+ * 功能行（§9.1，输入卡下方一行三按钮）：[选择文档][添加图片][压缩上下文]。
+ * - 「添加图片」：紧邻「选择文档」（用户确认版式），点击弹出三来源菜单
+ *   （从文档中选取 / 从本地相册 / 从本软件图库）
  * - 「压缩上下文」：空闲且有可压缩区（[canCompress]）才可点；[compressing] 时文案变
  *   「正在压缩…」并禁用（手动压缩防重入，§6.4）
- * - 「添加图片 / 文档取图」：当前模型不支持图片（vision=false）时置灰，行下小字提示（§7.3）
+ * - 「添加图片」：当前模型不支持图片（vision=false）时整钮置灰，行下小字提示（§7.3）
  */
 @Composable
 internal fun ChatFeatureRow(
@@ -797,8 +927,9 @@ internal fun ChatFeatureRow(
     imageEnabled: Boolean,
     onPickDocument: () -> Unit,
     onCompress: () -> Unit,
-    onPickImage: () -> Unit,
-    onPickDocImage: () -> Unit,
+    onPickImageFromDoc: () -> Unit,
+    onPickImageFromAlbum: () -> Unit,
+    onPickImageFromGallery: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Column(modifier = modifier.fillMaxWidth()) {
@@ -815,6 +946,13 @@ internal fun ChatFeatureRow(
                 onClick = onPickDocument,
                 modifier = Modifier.weight(1f)
             )
+            ImageSourceMenuButton(
+                enabled = imageEnabled,
+                onPickFromDoc = onPickImageFromDoc,
+                onPickFromAlbum = onPickImageFromAlbum,
+                onPickFromGallery = onPickImageFromGallery,
+                modifier = Modifier.weight(1f)
+            )
             FeatureButton(
                 icon = Icons.Outlined.Compress,
                 label = if (compressing) {
@@ -824,20 +962,6 @@ internal fun ChatFeatureRow(
                 },
                 enabled = canCompress,
                 onClick = onCompress,
-                modifier = Modifier.weight(1f)
-            )
-            FeatureButton(
-                icon = Icons.Outlined.AddPhotoAlternate,
-                label = stringResource(R.string.ai_chat_add_image),
-                enabled = imageEnabled,
-                onClick = onPickImage,
-                modifier = Modifier.weight(1f)
-            )
-            FeatureButton(
-                icon = Icons.Outlined.PhotoLibrary,
-                label = stringResource(R.string.ai_chat_doc_image),
-                enabled = imageEnabled,
-                onClick = onPickDocImage,
                 modifier = Modifier.weight(1f)
             )
         }
@@ -883,6 +1007,61 @@ private fun FeatureButton(
             overflow = TextOverflow.Ellipsis
         )
     }
+}
+
+/**
+ * 「添加图片」入口：点击弹出三来源菜单（从文档中选取 / 从本地相册 / 从本软件图库）。
+ * 与 [FeatureButton] 同宽均分（外层 Row 的 weight 由 [modifier] 传入并落在 Box 上）。
+ */
+@Composable
+private fun ImageSourceMenuButton(
+    enabled: Boolean,
+    onPickFromDoc: () -> Unit,
+    onPickFromAlbum: () -> Unit,
+    onPickFromGallery: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box(modifier = modifier) {
+        FeatureButton(
+            icon = Icons.Outlined.AddPhotoAlternate,
+            label = stringResource(R.string.ai_chat_add_image),
+            enabled = enabled,
+            onClick = { expanded = true },
+            modifier = Modifier.fillMaxWidth()
+        )
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            SourceMenuItem(Icons.Outlined.Description, stringResource(R.string.ai_chat_pick_from_doc)) {
+                expanded = false
+                onPickFromDoc()
+            }
+            SourceMenuItem(Icons.Outlined.PhotoLibrary, stringResource(R.string.ai_chat_pick_from_album)) {
+                expanded = false
+                onPickFromAlbum()
+            }
+            SourceMenuItem(Icons.Outlined.Collections, stringResource(R.string.ai_chat_pick_from_gallery)) {
+                expanded = false
+                onPickFromGallery()
+            }
+        }
+    }
+}
+
+/** 来源菜单项：图标 + 文案（点击后关闭菜单并执行）。 */
+@Composable
+private fun SourceMenuItem(icon: ImageVector, label: String, onClick: () -> Unit) {
+    DropdownMenuItem(
+        text = { Text(label, style = MaterialTheme.typography.bodyMedium) },
+        leadingIcon = {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        },
+        onClick = onClick
+    )
 }
 
 /**
