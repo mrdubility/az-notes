@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListItemInfo
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -212,7 +213,9 @@ fun AiChatScreen(
                         compensatedHeight = latestItemHeight
                     } else {
                         try {
-                            listState.scrollBy(delta.toFloat())
+                            // LazyListState 无 scrollBy 成员：走 ScrollableState.scroll
+                            // + ScrollScope.scrollBy 增量滚动（正值 = 向历史方向）
+                            listState.scroll { scrollBy(delta.toFloat()) }
                             compensatedHeight = latestItemHeight
                         } catch (_: CancellationException) {
                             // 滚动被用户手势抢占：本次作废，基线保持待静止发射兑底
@@ -224,14 +227,16 @@ fun AiChatScreen(
     }
 
     // 高度观测：监听布局信息中最新消息（index 0）的实时高度，供漂移补偿使用
-    // （item 0 不可见时不更新，漂移补偿跳过；高度写由指纹流吸收后触发补偿）
+    // （item 0 不可见时以 -1 哨兵跳过；高度写由指纹流吸收后触发补偿）
     LaunchedEffect(listState) {
         snapshotFlow {
-            listState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == 0 }?.size?.height
+            val item0: LazyListItemInfo? =
+                listState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == 0 }
+            item0?.size?.height ?: -1
         }
             .distinctUntilChanged()
             .collect { height ->
-                if (height != null) latestItemHeight = height
+                if (height >= 0) latestItemHeight = height
             }
     }
 
