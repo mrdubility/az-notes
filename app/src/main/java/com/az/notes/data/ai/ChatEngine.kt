@@ -142,13 +142,14 @@ class ChatEngine @Inject constructor(
                 val stats = TurnStats()
                 adapter.stream(request, apiKey).pumpTurn(this, stats)
                 if (stats.producedAnyText) producedAnyText = true
-                // 线路诊断：每轮事件统计（正文长度 / 工具调用数 / 是否失败）
+                // 线路诊断：每轮事件统计（正文长度 / 思考长度 / 工具调用数 / 是否失败）
                 AiDiag.emit(
                     "ai_round",
                     mapOf(
                         "round" to rounds,
                         "tools" to toolsEnabled,
                         "textChars" to stats.turnText.length,
+                        "reasoningChars" to stats.turnReasoning.length,
                         "calls" to (stats.requestedCalls?.size ?: 0),
                         "failed" to stats.failed
                     )
@@ -158,8 +159,10 @@ class ChatEngine @Inject constructor(
                 if (calls.isNullOrEmpty()) {
                     // 无工具请求：本轮正常结束。全程零正文 = 流被提前掐断 / 工具分片被剥离 /
                     // 模型空响应的典型形态（工具结果已展示但回答缺失），转 Failure 让用户可重试，
-                    // 绝不静默空收尾
-                    if (stats.turnText.isBlank() && !producedAnyText) {
+                    // 绝不静默空收尾；有思考但零正文不算空（思考为有效产出，正常收尾展示）
+                    if (stats.turnText.isBlank() && stats.turnReasoning.isBlank() &&
+                        !producedAnyText
+                    ) {
                         AiDiag.emit("ai_end", mapOf("reason" to "empty_as_failure"))
                         emit(StreamEvent.Failure(AiError.Unknown))
                     } else {
@@ -277,8 +280,9 @@ class ChatEngine @Inject constructor(
     }
 
     private companion object {
-        /** 输出上限（§4.1：Anthropic max_tokens 必填，默认 4096）。 */
-        const val DEFAULT_MAX_OUTPUT_TOKENS = 4096
+        /** 输出上限（§4.1：Anthropic max_tokens 必填；含思考与正文共用额度，
+         *  4096 时长思考可耗尽额度致正文零输出，提到 8192 留足正文空间）。 */
+        const val DEFAULT_MAX_OUTPUT_TOKENS = 8192
 
         /** 安全阀：工具循环最大轮数。 */
         const val MAX_TOOL_ROUNDS = 8
@@ -296,11 +300,13 @@ class ChatEngine @Inject constructor(
 }
 
 /**
- * 单轮事件统计（[pumpTurn] 填充）：正文累计 / 本轮是否产出正文 / 工具调用请求 / 是否失败。
+ * 单轮事件统计（[pumpTurn] 填充）：正文累计 / 思考累计 / 本轮是否产出正文 / 工具调用请求 /
+ * 是否失败。思考不计入 [producedAnyText]（零正文判定需同时参考正文与思考）。
  * [producedAnyText] 为单轮语义，调用方汇总到全程「产出过正文」标记。
  */
 internal class TurnStats {
     val turnText = StringBuilder()
+    val turnReasoning = StringBuilder()
     var producedAnyText = false
     var requestedCalls: List<RawToolCall>? = null
     var failed = false
@@ -327,6 +333,7 @@ internal suspend fun Flow<StreamEvent>.pumpTurn(out: FlowCollector<StreamEvent>,
             }
 
             is StreamEvent.ReasoningDelta -> {
+                stats.turnReasoning.append(event.text)
                 emit(event)
                 true
             }
