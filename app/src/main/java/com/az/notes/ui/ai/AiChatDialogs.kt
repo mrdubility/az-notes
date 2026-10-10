@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -19,12 +20,14 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -168,11 +171,12 @@ internal fun ClearSessionConfirm(
 }
 
 /**
- * 文档选择器（§9.1，B3）：全屏 Dialog——搜索（VM 过滤：文件名 / 相对路径）+ 笔记多选
- * + 底部「添加」；条目采用列表页同款结构（日期 / 标题 / 正文预览 / 所在目录），
- * 预览由 VM 分批并行读取（首批就绪即展示，滚动到底加载后续）；
- * 已在待发附件中的条目打勾提示（不可重复选择）。
- * [items] = null 表示未打开；打开后先置空列表（[loading] 转圈）再 IO 填充。
+ * 文档选择器（§9.1，B3）：全屏 Dialog——搜索（VM 过滤：文件名 / 相对路径）+
+ * 「只看收藏夹」开关（本地集合过滤，与搜索叠加）+ 笔记多选 + 底部「添加」；
+ * 条目采用列表页同款结构（日期 / 标题 / 正文预览 / 所在目录），预览由 VM 分批
+ * 并行读取（首批就绪即展示，滚动到底加载后续）；已在待发附件中的条目打勾提示
+ * （不可重复选择）。[items] = null 表示未打开；打开后先置空列表（[loading] 转圈）
+ * 再 IO 填充。
  */
 @Composable
 internal fun DocumentPickerDialog(
@@ -181,7 +185,10 @@ internal fun DocumentPickerDialog(
     loading: Boolean,
     hasMore: Boolean,
     pendingRelPaths: Set<String>,
+    /** 「只看收藏夹」开关（本地过滤，与搜索叠加生效） */
+    favoritesOnly: Boolean,
     onQueryChange: (String) -> Unit,
+    onFavoritesChange: (Boolean) -> Unit,
     onLoadMore: () -> Unit,
     onConfirm: (List<String>) -> Unit,
     onDismiss: () -> Unit
@@ -242,6 +249,13 @@ internal fun DocumentPickerDialog(
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp, vertical = 8.dp)
                 )
+                // 收藏夹过滤：本地集合判断（打开选择器时快照），与搜索叠加生效
+                FilterChip(
+                    selected = favoritesOnly,
+                    onClick = { onFavoritesChange(!favoritesOnly) },
+                    label = { Text(stringResource(R.string.ai_chat_doc_picker_favorites)) },
+                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 8.dp)
+                )
                 when {
                     loading -> Box(
                         modifier = Modifier
@@ -259,7 +273,10 @@ internal fun DocumentPickerDialog(
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = stringResource(R.string.ai_chat_doc_picker_empty),
+                            text = stringResource(
+                                if (favoritesOnly) R.string.ai_chat_doc_picker_empty_favorites
+                                else R.string.ai_chat_doc_picker_empty
+                            ),
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -402,16 +419,19 @@ private fun DocPickerRow(
 }
 
 /**
- * 导出选择对话框（§8.1，全屏）：勾选要导出的消息（导出按会话顺序）+「包含工具轨迹」
- * 开关（默认开），底部「导出为 Markdown 文档（N）」（空选禁用）。初始选中由入口决定
- * （顶栏 = 不选、消息操作行 = 该条）；进行中的流式消息不列入。
+ * 导出选择对话框（§8.1，全屏）：勾选要导出的消息（导出按会话顺序）+「导出位置」
+ * （默认仓库根目录，可切换），底部「导出为文档（N）」（空选禁用）。初始选中由入口
+ * 决定（顶栏 = 不选、消息操作行 = 该条）；进行中的流式消息不列入。
  */
 @Composable
 internal fun ExportDialog(
     visible: Boolean,
     messages: List<ChatMessage>,
     defaultSelectedId: String?,
-    onConfirm: (Set<String>, Boolean) -> Unit,
+    /** 当前导出位置的展示名（「仓库根目录」或相对目录路径） */
+    targetFolderLabel: String,
+    onPickFolder: () -> Unit,
+    onConfirm: (Set<String>) -> Unit,
     onDismiss: () -> Unit
 ) {
     if (!visible) return
@@ -421,7 +441,6 @@ internal fun ExportDialog(
     var selected by remember {
         mutableStateOf(defaultSelectedId?.let { setOf(it) } ?: emptySet<String>())
     }
-    var includeTrail by remember { mutableStateOf(true) }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -451,7 +470,7 @@ internal fun ExportDialog(
                         )
                     }
                 }
-                // 快捷行：全选 / 反选 + 「包含工具轨迹」
+                // 快捷行：全选 / 反选 + 导出位置（默认仓库根目录，点击切换目标文件夹）
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
@@ -473,16 +492,25 @@ internal fun ExportDialog(
                     Spacer(Modifier.weight(1f))
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.clickable { includeTrail = !includeTrail }
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable(onClick = onPickFolder)
+                            .padding(horizontal = 8.dp, vertical = 6.dp)
                     ) {
-                        Text(
-                            text = stringResource(R.string.ai_chat_export_include_trail),
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        Icon(
+                            imageVector = Icons.Outlined.FolderOpen,
+                            contentDescription = stringResource(R.string.ai_chat_export_location),
+                            modifier = Modifier.size(16.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        Checkbox(
-                            checked = includeTrail,
-                            onCheckedChange = { includeTrail = it }
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            text = targetFolderLabel,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.widthIn(max = 150.dp)
                         )
                     }
                 }
@@ -516,7 +544,7 @@ internal fun ExportDialog(
                     }
                     Spacer(Modifier.width(8.dp))
                     Button(
-                        onClick = { onConfirm(selected, includeTrail) },
+                        onClick = { onConfirm(selected) },
                         enabled = selected.isNotEmpty()
                     ) {
                         Text(stringResource(R.string.ai_chat_export_confirm, selected.size))

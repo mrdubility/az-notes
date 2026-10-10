@@ -6,10 +6,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.RestoreFromTrash
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.SmartToy
 import androidx.compose.material.icons.outlined.Star
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -70,7 +70,7 @@ internal fun DrawerContent(
         Spacer(Modifier.height(8.dp))
         NavigationDrawerItem(
             label = { Text(stringResource(R.string.ai_chat_title)) },
-            icon = { Icon(Icons.Outlined.ChatBubbleOutline, null) },
+            icon = { Icon(Icons.Outlined.SmartToy, null) },
             selected = false,
             onClick = onOpenAiChat,
             modifier = Modifier.padding(horizontal = 12.dp)

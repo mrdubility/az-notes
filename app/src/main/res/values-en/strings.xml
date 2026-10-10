@@ -292,7 +292,7 @@
     <!-- AI chat (B3: tool loop + document attachments; drawer entry) -->
     <string name="ai_chat_title">AI Chat</string>
     <string name="ai_chat_new_session">New chat</string>
-    <string name="ai_chat_new_session_message">Starting a new chat will clear the current conversation. This cannot be undone.</string>
+    <string name="ai_chat_new_session_message">Starting a new chat will clear the conversation. Draft text and pending attachments are kept.</string>
     <string name="ai_chat_clear">Clear</string>
     <string name="ai_chat_no_model">No model configured</string>
     <string name="ai_chat_no_provider">No AI provider configured yet. Add a provider and model first.</string>
@@ -306,6 +306,8 @@
     <string name="ai_chat_doc_picker_add">Add (%1$d)</string>
     <string name="ai_chat_doc_picker_selected">Already in chat</string>
     <string name="ai_chat_doc_picker_empty">No notes found</string>
+    <string name="ai_chat_doc_picker_favorites">Favorites only</string>
+    <string name="ai_chat_doc_picker_empty_favorites">No documents in favorites</string>
     <string name="ai_chat_quick_attach">Ask about documents</string>
     <string name="ai_chat_quick_browse">Let AI browse the vault</string>
     <string name="ai_chat_quick_browse_prompt">Please browse my vault structure first, then tell me what topics it covers</string>
@@ -372,11 +374,12 @@
     <string name="ai_chat_export_title">Export chat</string>
     <string name="ai_chat_export_select_all">Select all</string>
     <string name="ai_chat_export_invert">Invert</string>
-    <string name="ai_chat_export_include_trail">Include tool trail</string>
-    <string name="ai_chat_export_confirm">Export as Markdown (%1$d)</string>
+    <string name="ai_chat_export_location">Export location</string>
+    <string name="ai_chat_export_root">Vault root</string>
+    <string name="ai_chat_export_confirm">Export as document (%1$d)</string>
     <string name="ai_chat_export_summary_docs">%1$d document(s) sent</string>
     <string name="ai_chat_export_summary_images">%1$d image(s) sent</string>
-    <string name="ai_chat_export_done">Exported to the vault root</string>
+    <string name="ai_chat_export_done">Exported to %1$s</string>
     <string name="ai_chat_export_view">View</string>
     <string name="ai_chat_export_failed">Export failed. Please retry.</string>
     <string name="ai_chat_role_user">User</string>
@@ -568,6 +571,8 @@
     <string name="gallery_unscanned">%1$d note(s) exceeded the scan limit and were skipped; references may be underestimated</string>
     <string name="gallery_empty">No images yet. Insert images through a note.</string>
     <string name="gallery_empty_unreferenced">No unreferenced images</string>
+    <string name="gallery_view_list">Switch to list</string>
+    <string name="gallery_view_grid">Switch to grid</string>
     <string name="gallery_select">Select</string>
     <string name="gallery_select_all">Select all</string>
     <string name="gallery_cancel_select">Clear selection</string>

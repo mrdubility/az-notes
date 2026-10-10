@@ -79,6 +79,8 @@ internal fun HomeTopBar(
     onSearchClose: () -> Unit,
     onSearchQueryChange: (String) -> Unit,
     onSortSelected: (NoteSortOrder) -> Unit,
+    /** 是否已配置同步账号（地址 / 账号均非空）：未配置时隐藏同步入口。 */
+    syncConfigured: Boolean,
     onSync: () -> Unit,
     /** 未处理的冲突记录数：> 0 时同步图标显示角标（§5.7）。 */
     conflictCount: Int,
@@ -215,21 +217,24 @@ internal fun HomeTopBar(
                     }
                 }
                 else -> {
-                    IconButton(onClick = onSync, enabled = !syncActive) {
-                        BadgedBox(
-                            badge = {
-                                if (conflictCount > 0) {
-                                    Badge { Text(conflictCount.toString()) }
+                    // 未配置同步账号时隐藏同步入口（避免点开才发现未配置）
+                    if (syncConfigured) {
+                        IconButton(onClick = onSync, enabled = !syncActive) {
+                            BadgedBox(
+                                badge = {
+                                    if (conflictCount > 0) {
+                                        Badge { Text(conflictCount.toString()) }
+                                    }
                                 }
-                            }
-                        ) {
-                            if (syncActive) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(20.dp),
-                                    strokeWidth = 2.dp
-                                )
-                            } else {
-                                Icon(Icons.Outlined.Sync, stringResource(R.string.action_sync_now))
+                            ) {
+                                if (syncActive) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(20.dp),
+                                        strokeWidth = 2.dp
+                                    )
+                                } else {
+                                    Icon(Icons.Outlined.Sync, stringResource(R.string.action_sync_now))
+                                }
                             }
                         }
                     }

@@ -9,20 +9,25 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.ViewList
 import androidx.compose.material.icons.outlined.DeleteSweep
+import androidx.compose.material.icons.outlined.GridView
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
@@ -43,6 +48,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -51,6 +57,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
@@ -63,7 +70,8 @@ import java.io.File
 /**
  * 图库页（跟随当前仓库）：网格浏览仓库全部图片，点击全屏预览（捏合缩放）；
  * 长按或顶栏「选择」进入多选，可批量「移入回收站」（回收站关闭时物理删除并二次确认）；
- * 「只显示未被引用的图片」按需扫描引用索引（未被任何笔记引用的图片，供清理）。
+ * 「只显示未被引用的图片」按需扫描引用索引（未被任何笔记引用的图片，供清理）；
+ * 顶栏可切换网格 / 列表视图（列表含缩略图、文件名、体积）。
  */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -76,6 +84,8 @@ fun GalleryScreen(
     val context = LocalContext.current
     var confirmTrash by remember { mutableStateOf(false) }
     var previewFile by remember { mutableStateOf<File?>(null) }
+    // 视图模式：false = 网格（默认），true = 列表（缩略图 + 文件名 + 大小）
+    var listView by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(state.message) {
         val msg = state.message ?: return@LaunchedEffect
@@ -89,6 +99,16 @@ fun GalleryScreen(
     val displayed = state.displayed
     // 仅当展示列表变化时重算（选择 / 预览等状态重组不再触发 O(n) 求和）
     val totalBytes = remember(displayed) { displayed.sumOf { it.size } }
+    // 网格 / 列表双视图共用的点击（预览或选择）与长按（进入选择）行为
+    val onItemClick: (File) -> Unit = { file ->
+        val absolutePath = file.absolutePath
+        if (state.selectMode) viewModel.toggleSelect(absolutePath) else previewFile = file
+    }
+    val onItemLongClick: (File) -> Unit = { file ->
+        val absolutePath = file.absolutePath
+        if (!state.selectMode) viewModel.enterSelectMode()
+        if (absolutePath !in state.selected) viewModel.toggleSelect(absolutePath)
+    }
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -112,6 +132,17 @@ fun GalleryScreen(
                                 Text(stringResource(R.string.gallery_cancel_select))
                             }
                         } else {
+                            // 网格 / 列表视图切换（选择模式下隐藏，避免操作区拥挤）
+                            IconButton(onClick = { listView = !listView }) {
+                                Icon(
+                                    imageVector = if (listView) Icons.Outlined.GridView
+                                    else Icons.AutoMirrored.Outlined.ViewList,
+                                    contentDescription = stringResource(
+                                        if (listView) R.string.gallery_view_grid
+                                        else R.string.gallery_view_list
+                                    )
+                                )
+                            }
                             TextButton(onClick = viewModel::enterSelectMode) {
                                 Text(stringResource(R.string.gallery_select))
                             }
@@ -157,6 +188,23 @@ fun GalleryScreen(
 
                 displayed.isEmpty() -> EmptyHint(stringResource(R.string.gallery_empty_unreferenced))
 
+                listView -> LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 24.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    items(count = displayed.size, key = { displayed[it].file.absolutePath }) { index ->
+                        val image = displayed[index]
+                        GalleryListRow(
+                            image = image,
+                            selectMode = state.selectMode,
+                            selected = image.file.absolutePath in state.selected,
+                            onClick = { onItemClick(image.file) },
+                            onLongClick = { onItemLongClick(image.file) }
+                        )
+                    }
+                }
+
                 else -> LazyVerticalGrid(
                     columns = GridCells.Adaptive(minSize = 100.dp),
                     modifier = Modifier.fillMaxSize(),
@@ -170,14 +218,8 @@ fun GalleryScreen(
                             image = image,
                             selectMode = state.selectMode,
                             selected = absolutePath in state.selected,
-                            onClick = {
-                                if (state.selectMode) viewModel.toggleSelect(absolutePath)
-                                else previewFile = image.file
-                            },
-                            onLongClick = {
-                                if (!state.selectMode) viewModel.enterSelectMode()
-                                if (absolutePath !in state.selected) viewModel.toggleSelect(absolutePath)
-                            }
+                            onClick = { onItemClick(image.file) },
+                            onLongClick = { onItemLongClick(image.file) }
                         )
                     }
                 }
@@ -299,6 +341,54 @@ private fun GalleryCell(
                     .align(Alignment.TopEnd)
                     .padding(2.dp)
             )
+        }
+    }
+}
+
+/** 列表模式行：缩略图 + 文件名 + 体积（选择模式下显示勾选，行为与网格一致）。 */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun GalleryListRow(
+    image: GalleryImage,
+    selectMode: Boolean,
+    selected: Boolean,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.surfaceContainerLow)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+            .padding(horizontal = 10.dp, vertical = 8.dp)
+    ) {
+        AsyncImage(
+            model = Uri.fromFile(image.file),
+            contentDescription = image.relativePath,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier
+                .size(48.dp)
+                .clip(RoundedCornerShape(8.dp))
+        )
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = image.file.name,
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = formatSize(image.size),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        if (selectMode) {
+            Checkbox(checked = selected, onCheckedChange = null)
         }
     }
 }

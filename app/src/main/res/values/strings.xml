@@ -292,7 +292,7 @@
     <!-- AI 对话（B3：工具循环 + 文档附件；抽屉入口） -->
     <string name="ai_chat_title">AI 对话</string>
     <string name="ai_chat_new_session">新会话</string>
-    <string name="ai_chat_new_session_message">开始新会话将清空当前对话内容，此操作不可恢复。</string>
+    <string name="ai_chat_new_session_message">开始新会话将清空当前对话内容，输入框文字与待发附件会保留。此操作不可恢复。</string>
     <string name="ai_chat_clear">清空</string>
     <string name="ai_chat_no_model">未配置模型</string>
     <string name="ai_chat_no_provider">尚未配置 AI 供应商，请先添加供应商与模型</string>
@@ -306,6 +306,8 @@
     <string name="ai_chat_doc_picker_add">添加（%1$d）</string>
     <string name="ai_chat_doc_picker_selected">已在对话中</string>
     <string name="ai_chat_doc_picker_empty">没有找到笔记</string>
+    <string name="ai_chat_doc_picker_favorites">只看收藏夹</string>
+    <string name="ai_chat_doc_picker_empty_favorites">收藏夹中没有文档</string>
     <string name="ai_chat_quick_attach">选择文档提问</string>
     <string name="ai_chat_quick_browse">让 AI 浏览仓库</string>
     <string name="ai_chat_quick_browse_prompt">请先浏览我的仓库结构，然后告诉我有哪些主题</string>
@@ -372,11 +374,12 @@
     <string name="ai_chat_export_title">导出对话</string>
     <string name="ai_chat_export_select_all">全选</string>
     <string name="ai_chat_export_invert">反选</string>
-    <string name="ai_chat_export_include_trail">包含工具轨迹</string>
-    <string name="ai_chat_export_confirm">导出为 Markdown 文档（%1$d）</string>
+    <string name="ai_chat_export_location">导出位置</string>
+    <string name="ai_chat_export_root">仓库根目录</string>
+    <string name="ai_chat_export_confirm">导出为文档（%1$d）</string>
     <string name="ai_chat_export_summary_docs">已发送 %1$d 个文档</string>
     <string name="ai_chat_export_summary_images">已发送 %1$d 张图片</string>
-    <string name="ai_chat_export_done">已导出到仓库根目录</string>
+    <string name="ai_chat_export_done">已导出到 %1$s</string>
     <string name="ai_chat_export_view">查看</string>
     <string name="ai_chat_export_failed">导出失败，请重试</string>
     <string name="ai_chat_role_user">用户</string>
@@ -606,6 +609,8 @@
     <string name="gallery_unscanned">%1$d 篇笔记超出扫描上限未纳入，可能低估引用</string>
     <string name="gallery_empty">仓库中还没有图片，可在笔记中插入图片</string>
     <string name="gallery_empty_unreferenced">没有未被引用的图片</string>
+    <string name="gallery_view_list">切换为列表</string>
+    <string name="gallery_view_grid">切换为网格</string>
     <string name="gallery_select">选择</string>
     <string name="gallery_select_all">全选</string>
     <string name="gallery_cancel_select">取消选择</string>

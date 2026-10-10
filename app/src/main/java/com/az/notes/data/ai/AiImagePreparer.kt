@@ -103,9 +103,16 @@ class AiImagePreparer @Inject constructor(
             TransportImage(image.mime, encoded)
         }
 
-    /** 清空图片缓存目录（新建会话时调用；失败静默——缓存目录可随时重建）。 */
-    suspend fun cleanup() = withContext(Dispatchers.IO) {
-        runCatching { File(context.cacheDir, DIR_NAME).listFiles()?.forEach { it.delete() } }
+    /**
+     * 清理图片缓存目录（新会话时调用；失败静默——缓存目录可随时重建）。
+     * [keep] 中仍被引用的文件（待发图片的 localPath）保留。
+     */
+    suspend fun cleanup(keep: Set<String> = emptySet()) = withContext(Dispatchers.IO) {
+        runCatching {
+            File(context.cacheDir, DIR_NAME).listFiles()?.forEach { file ->
+                if (file.absolutePath !in keep) file.delete()
+            }
+        }
         Unit
     }
 

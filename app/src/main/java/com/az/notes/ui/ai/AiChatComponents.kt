@@ -71,6 +71,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -92,9 +94,9 @@ import com.mikepenz.markdown.model.MarkdownAnimations
 import com.mikepenz.markdown.model.MarkdownTypography
 import com.mikepenz.markdown.model.ReferenceLinkHandler
 import com.mikepenz.markdown.model.ReferenceLinkHandlerImpl
-import com.mikepenz.markdown.model.rememberMarkdownState
+import com.mikepenz.markdown.model.State
+import com.mikepenz.markdown.utils.lookupLinkDefinition
 import java.io.File
-import org.intellij.markdown.flavours.MarkdownFlavourDescriptor
 import org.intellij.markdown.flavours.gfm.GFMFlavourDescriptor
 import org.intellij.markdown.parser.MarkdownParser
 
@@ -452,10 +454,15 @@ internal fun PendingAttachmentRow(
     onRemove: (String) -> Unit,
     onRemoveImage: (String) -> Unit
 ) {
+    // 行高固定（图片卡 5+40+5=50dp 为准，留 2dp 余量）并垂直居中：左右滑动新卡片
+    // 进入视口时，不再因「文档卡矮 / 图片卡高」的高度差瞬间撑起整行
     LazyRow(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         contentPadding = PaddingValues(horizontal = 16.dp),
-        modifier = Modifier.fillMaxWidth()
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(52.dp)
     ) {
         items(items = documents, key = { it.vaultRelPath }) { document ->
             Surface(
@@ -553,79 +560,87 @@ private fun ImageAttachmentCard(image: ChatPart.Image, onRemove: (() -> Unit)? =
 /**
  * 正文渲染：
  * - 流式（streaming=true）：分块增量渲染（[StreamingMarkdownBlocks]）——已完成段落块
- *   逐块渲染并缓存（块文本不变则零重解析），仅活跃尾块随增量刷新，且对未闭合代码围栏
- *   做渲染补全。消除「解析结构突变 + 每批全量重解析」导致的屏幕跳动与卡顿——即业界
- *   streaming parser「增量 append、避免每 chunk 全量重解析」思路在 mikepenz 上的等价实现；
- * - 终态：整条一次性渲染，布局最终正确。
+ *   逐块渲染并缓存（块文本不变零解析），仅活跃尾块随增量刷新，且对未闭合代码围栏
+ *   做渲染补全；
+ * - 终态：整块一次性同步渲染（跨块引用定义等语义与阅读器一致），流式末帧到终态
+ *   同帧切换、无解析空窗。
+ *
+ * 平滑性根因（本次修复）：mikepenz rememberMarkdownState(content) 以 content 为
+ * remember key——内容每次变化都会重建 state，重建后初始为 State.Loading，默认
+ * loading 槽渲染空 Box，出现「高度塌陷 → 异步解析完成恢复」的周期性闪烁（流式
+ * 节流 50ms 一批即每批一次强跳动）。改为块级同步解析（[MarkdownBlock]）：内容
+ * 变化时 remember 重算一次小块解析并直接构造 [State.Success]，首帧即就绪；文本
+ * 不变时 remember 命中零解析。
  */
 @Composable
 private fun ChatMarkdown(text: String, streaming: Boolean) {
-    if (streaming) {
-        StreamingMarkdownBlocks(text)
-        return
-    }
-    // 解析链实例显式稳定化：默认参数在重组时会新建实例导致反复重新解析（对齐预览页先例）
-    val flavour = remember { GFMFlavourDescriptor() }
-    val parser = remember(flavour) { MarkdownParser(flavour) }
-    val linkHandler = remember { ReferenceLinkHandlerImpl() }
-    val staticAnimations = remember { DefaultMarkdownAnimation(animateTextSize = { this }) }
-    val markdownState = rememberMarkdownState(
-        content = text,
-        flavour = flavour,
-        parser = parser,
-        referenceLinkHandler = linkHandler
-    )
-    Markdown(
-        markdownState = markdownState,
-        modifier = Modifier.fillMaxWidth(),
-        typography = azNotesMarkdownTypography(),
-        animations = staticAnimations
-    )
-}
-
-/**
- * 流式分块增量渲染：稳定块列表 + 活跃尾块（[splitStreamingBlocks]）。
- * 解析链实例与排版样式在外层创建一次并传参——稳定块文本不变时 [rememberMarkdownState]
- * 命中缓存不重解析，配合 Compose 跳过机制实现零成本复用；仅尾块（长度≈1 段落）
- * 随节流增量重渲染。
- */
-@Composable
-private fun StreamingMarkdownBlocks(text: String) {
     val flavour = remember { GFMFlavourDescriptor() }
     val parser = remember(flavour) { MarkdownParser(flavour) }
     val linkHandler = remember { ReferenceLinkHandlerImpl() }
     val staticAnimations = remember { DefaultMarkdownAnimation(animateTextSize = { this }) }
     val typography = azNotesMarkdownTypography()
-    val blocks = remember(text) { splitStreamingBlocks(text) }
-    Column(modifier = Modifier.fillMaxWidth()) {
-        blocks.blocks.forEach { block ->
-            StableMarkdownBlock(block, flavour, parser, linkHandler, typography, staticAnimations)
-        }
-        val closedTail = autocloseTail(blocks.tail)
-        if (closedTail.isNotBlank()) {
-            StableMarkdownBlock(closedTail, flavour, parser, linkHandler, typography, staticAnimations)
-        }
+    if (streaming) {
+        StreamingMarkdownBlocks(text, parser, linkHandler, typography, staticAnimations)
+    } else {
+        MarkdownBlock(text, parser, linkHandler, typography, staticAnimations)
     }
 }
 
-/** 单个块渲染：块文本不变 → rememberMarkdownState 命中缓存，零重解析。 */
+/**
+ * 流式分块增量渲染：稳定块列表 + 活跃尾块（[splitStreamingBlocks]）。
+ * 解析链实例与排版样式在外层创建一次并传参——稳定块文本不变时 remember 命中零解析，
+ * 仅尾块（长度≈1 段落）随节流增量重渲染。
+ */
 @Composable
-private fun StableMarkdownBlock(
-    block: String,
-    flavour: MarkdownFlavourDescriptor,
+private fun StreamingMarkdownBlocks(
+    text: String,
     parser: MarkdownParser,
     linkHandler: ReferenceLinkHandler,
     typography: MarkdownTypography,
     animations: MarkdownAnimations
 ) {
-    val markdownState = rememberMarkdownState(
-        content = block,
-        flavour = flavour,
-        parser = parser,
-        referenceLinkHandler = linkHandler
-    )
+    val blocks = remember(text) { splitStreamingBlocks(text) }
+    Column(modifier = Modifier.fillMaxWidth()) {
+        blocks.blocks.forEach { block ->
+            MarkdownBlock(block, parser, linkHandler, typography, animations)
+        }
+        val closedTail = autocloseTail(blocks.tail)
+        if (closedTail.isNotBlank()) {
+            MarkdownBlock(closedTail, parser, linkHandler, typography, animations)
+        }
+    }
+}
+
+/**
+ * 单块渲染（同步解析）：内容变化时 remember 重算——主线程解析小块（尾块 ≈ 1 段落，
+ * 成本 <1ms）并直接构造 [State.Success]，首帧即就绪，消除 mikepenz 默认路径
+ * 「重建 state → Loading 空帧 → 异步解析完成」的周期性高度塌陷（流式跳动根因）；
+ * 内容不变时 remember 命中，重组零解析开销。解析异常兜底渲染纯文本（保内容可见）。
+ * 超长单块（罕见）若出现主线程卡顿，再降级为大块异步策略。
+ */
+@Composable
+private fun MarkdownBlock(
+    block: String,
+    parser: MarkdownParser,
+    linkHandler: ReferenceLinkHandler,
+    typography: MarkdownTypography,
+    animations: MarkdownAnimations
+) {
+    val state = remember(block) {
+        runCatching {
+            val ast = parser.buildMarkdownTreeFromString(block)
+            val links = mutableMapOf<String, String?>()
+            lookupLinkDefinition(links, ast, block, recursive = true)
+            links.forEach { (key, value) -> linkHandler.store(key, value) }
+            State.Success(ast, block, linksLookedUp = true, referenceLinkHandler = linkHandler)
+        }.getOrNull()
+    }
+    if (state == null) {
+        Text(text = block, style = MaterialTheme.typography.bodyLarge)
+        return
+    }
     Markdown(
-        markdownState = markdownState,
+        state = state,
         modifier = Modifier.fillMaxWidth(),
         typography = typography,
         animations = animations
@@ -867,6 +882,15 @@ internal fun ChatInputCard(
     onStop: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    // 内部以 TextFieldValue 承载以控制选区：外部程序性写入（快捷插入 / 编辑重发回填 /
+    // 发送后清空）→ 光标移至文本末尾；用户输入（fieldValue.text == value）不重置选区、
+    // 不打断 IME 组合态
+    var fieldValue by remember { mutableStateOf(TextFieldValue(value, TextRange(value.length))) }
+    LaunchedEffect(value) {
+        if (fieldValue.text != value) {
+            fieldValue = TextFieldValue(value, TextRange(value.length))
+        }
+    }
     Surface(
         modifier = modifier,
         shape = RoundedCornerShape(24.dp),
@@ -877,8 +901,11 @@ internal fun ChatInputCard(
             modifier = Modifier.padding(start = 4.dp, end = 8.dp, top = 4.dp, bottom = 4.dp)
         ) {
             TextField(
-                value = value,
-                onValueChange = onValueChange,
+                value = fieldValue,
+                onValueChange = { newValue ->
+                    fieldValue = newValue
+                    onValueChange(newValue.text)
+                },
                 modifier = Modifier
                     .weight(1f)
                     .focusRequester(inputFocusRequester),

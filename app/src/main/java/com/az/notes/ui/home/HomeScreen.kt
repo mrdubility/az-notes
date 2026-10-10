@@ -291,6 +291,8 @@ fun HomeScreen(
                     },
                     onSearchQueryChange = viewModel::onSearchQueryChange,
                     onSortSelected = viewModel::setSortOrder,
+                    // 同步入口仅配置了同步账号后出现（loaded 前不显示，避免「出现又消失」闪烁）
+                    syncConfigured = syncState.loaded && syncState.config.configured,
                     onSync = { syncViewModel.startSync() },
                     conflictCount = conflicts.size,
                     syncActive = syncRunning,

@@ -64,6 +64,7 @@ import com.az.notes.R
 import com.az.notes.domain.ai.ChatRole
 import com.az.notes.domain.ai.MessageStatus
 import com.az.notes.ui.common.resolve
+import com.az.notes.ui.components.MoveTargetDialog
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
@@ -103,6 +104,7 @@ fun AiChatScreen(
     val docPickerQuery by viewModel.docPickerQuery.collectAsStateWithLifecycle()
     val docPickerLoading by viewModel.docPickerLoading.collectAsStateWithLifecycle()
     val docPickerHasMore by viewModel.docPickerHasMore.collectAsStateWithLifecycle()
+    val docPickerFavoritesOnly by viewModel.docPickerFavoritesOnly.collectAsStateWithLifecycle()
     val canCompress by viewModel.canCompress.collectAsStateWithLifecycle()
     val compressing by viewModel.compressing.collectAsStateWithLifecycle()
     val visionEnabled by viewModel.visionEnabled.collectAsStateWithLifecycle()
@@ -111,6 +113,8 @@ fun AiChatScreen(
     val imagePickSource by viewModel.imagePickSource.collectAsStateWithLifecycle()
     val exportVisible by viewModel.exportVisible.collectAsStateWithLifecycle()
     val exportDefaultSelected by viewModel.exportDefaultSelected.collectAsStateWithLifecycle()
+    val exportTargetLabel by viewModel.exportTargetLabel.collectAsStateWithLifecycle()
+    val exportFolderPicker by viewModel.exportFolderPicker.collectAsStateWithLifecycle()
     val privacyDialog by viewModel.privacyDialog.collectAsStateWithLifecycle()
     val snackbarMessage by viewModel.message.collectAsStateWithLifecycle()
     val exportDone by viewModel.exportDone.collectAsStateWithLifecycle()
@@ -216,11 +220,12 @@ fun AiChatScreen(
         }
     }
 
-    // 导出完成提示：「查看」跳预览页（§8.2）
+    // 导出完成提示（含导出位置）；「查看」跳预览页（§8.2）
     LaunchedEffect(exportDone) {
         val done = exportDone ?: return@LaunchedEffect
+        val location = done.locationLabel ?: context.getString(R.string.ai_chat_export_root)
         val result = snackbarHostState.showSnackbar(
-            message = context.getString(R.string.ai_chat_export_done),
+            message = context.getString(R.string.ai_chat_export_done, location),
             actionLabel = context.getString(R.string.ai_chat_export_view),
             withDismissAction = true,
             duration = SnackbarDuration.Long
@@ -469,7 +474,9 @@ fun AiChatScreen(
         loading = docPickerLoading,
         hasMore = docPickerHasMore,
         pendingRelPaths = pendingAttachments.map { it.vaultRelPath }.toSet(),
+        favoritesOnly = docPickerFavoritesOnly,
         onQueryChange = viewModel::setDocPickerQuery,
+        onFavoritesChange = viewModel::setDocPickerFavoritesOnly,
         onLoadMore = viewModel::loadMoreDocPicker,
         onConfirm = viewModel::confirmDocumentSelection,
         onDismiss = viewModel::closeDocumentPicker
@@ -479,9 +486,22 @@ fun AiChatScreen(
         visible = exportVisible,
         messages = messages,
         defaultSelectedId = exportDefaultSelected,
+        targetFolderLabel = exportTargetLabel ?: stringResource(R.string.ai_chat_export_root),
+        onPickFolder = viewModel::openExportFolderPicker,
         onConfirm = viewModel::exportSelected,
         onDismiss = viewModel::closeExport
     )
+
+    // 导出位置选择：复用移动目标对话框（列出仓库根与全部子目录，按层级缩进）
+    exportFolderPicker?.let { picker ->
+        MoveTargetDialog(
+            vaultPath = picker.vaultPath,
+            targets = picker.targets,
+            title = stringResource(R.string.ai_chat_export_location),
+            onDismiss = viewModel::dismissExportFolderPicker,
+            onSelect = viewModel::pickExportFolder
+        )
+    }
 
     DocImagePickerDialog(
         items = docImageItems,

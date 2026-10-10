@@ -55,6 +55,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 /**
  * 收藏夹页：跨文件夹展示全部收藏笔记（相对路径解析，移动 / 改名后仍对应
  * 原始文档）；点击进入阅读页，右侧实心星标可取消收藏。收藏仅本地有效。
+ * 条目含正文预览（列表页同款头部小字节读取，不拖慢加载）。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -128,11 +129,11 @@ fun FavoritesScreen(
                 contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 24.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                items(state.items, key = { it.relativePath }) { node ->
+                items(state.items, key = { it.node.relativePath }) { item ->
                     FavoriteRow(
-                        node = node,
-                        onOpen = { onOpen(node.absolutePath) },
-                        onRemove = { viewModel.removeFavorite(node) }
+                        item = item,
+                        onOpen = { onOpen(item.node.absolutePath) },
+                        onRemove = { viewModel.removeFavorite(item.node) }
                     )
                 }
             }
@@ -140,13 +141,14 @@ fun FavoritesScreen(
     }
 }
 
-/** 单条：名称 + 所在文件夹（相对 Vault） + 修改时间；点击进入，星标取消收藏。 */
+/** 单条：标题 + 正文预览 + 所在文件夹（相对 Vault） + 修改时间；点击进入，星标取消收藏。 */
 @Composable
 private fun FavoriteRow(
-    node: FileNode,
+    item: FavoriteItem,
     onOpen: () -> Unit,
     onRemove: () -> Unit
 ) {
+    val node = item.node
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -163,6 +165,16 @@ private fun FavoriteRow(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
+            if (item.preview.isNotEmpty()) {
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = item.preview,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 4,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
             Spacer(Modifier.height(4.dp))
             Text(
                 text = folderLabel(node.relativePath),

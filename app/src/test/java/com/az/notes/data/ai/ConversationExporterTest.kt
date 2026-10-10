@@ -17,9 +17,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 导出纯拼装单测（§8.2）：frontmatter / 分节标题格式 / reasoning 不导出 / 工具轨迹
- * （去重、等 N 篇、无 read 回退、开关）/ 文档引用行 / SYSTEM 条目 / 图片链接与占位降级 /
- * 勾选子集保持会话顺序 / 空分节跳过。
+ * 导出纯拼装单测（§8.2）：frontmatter / 分节标题格式 / reasoning 与工具轨迹永不导出 /
+ * 文档引用行 / SYSTEM 条目 / 图片链接与占位降级 / 勾选子集保持会话顺序 / 空分节跳过。
  */
 class ConversationExporterTest {
 
@@ -77,7 +76,7 @@ class ConversationExporterTest {
             assistant("a1", modelLabel = "DeepSeek · deepseek-chat"),
             assistant("a2", modelLabel = "其他厂商 · m")
         )
-        val md = buildMarkdown(messages, includeToolTrail = true, timestamp = baseTs) { null }
+        val md = buildMarkdown(messages, timestamp = baseTs) { null }
         assertTrue(
             md.startsWith(
                 "---\ntitle: AI 对话\ndate: ${dateTime(baseTs)}\n" +
@@ -89,7 +88,7 @@ class ConversationExporterTest {
     @Test
     fun `section headers use role badge and HH mm`() {
         val messages = listOf(user("u1"), assistant("a1"))
-        val md = buildMarkdown(messages, includeToolTrail = true, timestamp = baseTs) { null }
+        val md = buildMarkdown(messages, timestamp = baseTs) { null }
         assertTrue(md.contains("## 用户 · ${hm(baseTs)}\n\n"))
         assertTrue(md.contains("## AI · ${hm(baseTs)}\n\n"))
     }
@@ -97,56 +96,28 @@ class ConversationExporterTest {
     @Test
     fun `reasoning is never exported`() {
         val messages = listOf(user("u1"), assistant("a1", reasoning = "内心推理过程"))
-        val md = buildMarkdown(messages, includeToolTrail = true, timestamp = baseTs) { null }
+        val md = buildMarkdown(messages, timestamp = baseTs) { null }
         assertFalse(md.contains("内心推理过程"))
     }
 
     @Test
-    fun `tool trail lists deduplicated read targets after text`() {
+    fun `tool trail is never exported`() {
         val trail = listOf(
-            ToolCallRecord(ToolSpecs.READ_NOTE, "./a.md", ""),
             ToolCallRecord(ToolSpecs.READ_NOTE, "a.md", ""),
-            ToolCallRecord(ToolSpecs.READ_NOTE, "folder/b.md", "")
+            ToolCallRecord(ToolSpecs.SEARCH_NOTES, "q", "")
         )
         val messages = listOf(user("u1"), assistant("a1", text = "正文", toolTrail = trail))
-        val md = buildMarkdown(messages, includeToolTrail = true, timestamp = baseTs) { null }
-        // `./a.md` 与 `a.md` 归一为同一篇；轨迹位于正文之后
-        assertTrue(md.contains("正文\n\n> 已读取：a.md、folder/b.md"))
-    }
-
-    @Test
-    fun `tool trail caps at five entries with count suffix`() {
-        val trail = (1..7).map { ToolCallRecord(ToolSpecs.READ_NOTE, "n$it.md", "") } +
-            ToolCallRecord(ToolSpecs.SEARCH_NOTES, "q", "")
-        val messages = listOf(user("u1"), assistant("a1", toolTrail = trail))
-        val md = buildMarkdown(messages, includeToolTrail = true, timestamp = baseTs) { null }
-        assertTrue(md.contains("> 已读取：n1.md、n2.md、n3.md、n4.md、n5.md 等 7 篇"))
-    }
-
-    @Test
-    fun `tool trail falls back to execution count without reads`() {
-        val trail = listOf(
-            ToolCallRecord(ToolSpecs.SEARCH_NOTES, "q", ""),
-            ToolCallRecord(ToolSpecs.LIST_NOTES, ".", "")
-        )
-        val messages = listOf(user("u1"), assistant("a1", toolTrail = trail))
-        val md = buildMarkdown(messages, includeToolTrail = true, timestamp = baseTs) { null }
-        assertTrue(md.contains("> 已执行 2 次工具调用"))
-    }
-
-    @Test
-    fun `tool trail omitted when disabled`() {
-        val trail = listOf(ToolCallRecord(ToolSpecs.READ_NOTE, "a.md", ""))
-        val messages = listOf(user("u1"), assistant("a1", toolTrail = trail))
-        val md = buildMarkdown(messages, includeToolTrail = false, timestamp = baseTs) { null }
+        val md = buildMarkdown(messages, timestamp = baseTs) { null }
+        assertTrue(md.contains("正文"))
         assertFalse(md.contains("已读取"))
+        assertFalse(md.contains("工具调用"))
     }
 
     @Test
     fun `document part exports as reference quote without full content`() {
         val doc = ChatPart.Document(name = "n.md", vaultRelPath = "folder/n.md", content = "文档全文内容")
         val messages = listOf(user("u1", extraParts = listOf(doc)))
-        val md = buildMarkdown(messages, includeToolTrail = true, timestamp = baseTs) { null }
+        val md = buildMarkdown(messages, timestamp = baseTs) { null }
         assertTrue(md.contains("> 引用文档：folder/n.md"))
         assertFalse(md.contains("文档全文内容"))
     }
@@ -157,7 +128,7 @@ class ConversationExporterTest {
             systemNote("s1", SystemNoteMode.SUMMARIZED, 6, text = "摘要正文"),
             systemNote("s2", SystemNoteMode.TRIMMED, 4)
         )
-        val md = buildMarkdown(messages, includeToolTrail = true, timestamp = baseTs) { null }
+        val md = buildMarkdown(messages, timestamp = baseTs) { null }
         assertTrue(md.contains("> 已压缩 6 条早期消息"))
         assertTrue(md.contains("> 已丢弃 4 条早期消息"))
         // 摘要正文不导出（仅条目元信息）
@@ -170,7 +141,7 @@ class ConversationExporterTest {
         val linked = ChatPart.Image(localPath = "/cache/a.jpg", mime = "image/jpeg", name = "a.jpg")
         val failed = ChatPart.Image(localPath = "/cache/b.png", mime = "image/png", name = "b.png")
         val messages = listOf(user("u1", text = "看图", extraParts = listOf(doc, linked, failed)))
-        val md = buildMarkdown(messages, includeToolTrail = true, timestamp = baseTs) { image ->
+        val md = buildMarkdown(messages, timestamp = baseTs) { image ->
             if (image.name == "a.jpg") "assets/ai-12345678.jpg" else null
         }
         // 顺序：文档引用 → 正文 → 图片（链接成功在前、失败占位在后）
@@ -186,7 +157,7 @@ class ConversationExporterTest {
     fun `empty sections are skipped`() {
         val emptyAssistant = assistant("a-err", text = "", status = MessageStatus.ERROR, reasoning = "仅有思考")
         val messages = listOf(user("u1"), emptyAssistant)
-        val md = buildMarkdown(messages, includeToolTrail = true, timestamp = baseTs) { null }
+        val md = buildMarkdown(messages, timestamp = baseTs) { null }
         assertFalse(md.contains("## AI"))
         assertFalse(md.contains("仅有思考"))
     }

@@ -34,11 +34,11 @@ class AiChatSession @Inject constructor(
     private val _messages = MutableStateFlow<List<ChatMessage>>(emptyList())
     val messages: StateFlow<List<ChatMessage>> = _messages.asStateFlow()
 
-    /** 待发附件（发送后 / 新会话时清空）。 */
+    /** 待发附件（发送后清空；新会话保留——清空对话不清输入区）。 */
     private val _pendingAttachments = MutableStateFlow<List<ChatPart.Document>>(emptyList())
     val pendingAttachments: StateFlow<List<ChatPart.Document>> = _pendingAttachments.asStateFlow()
 
-    /** 待发图片（发送后 / 新会话时清空；数量上限由 VM 守卫）。 */
+    /** 待发图片（发送后清空；新会话保留——清空对话不清输入区；数量上限由 VM 守卫）。 */
     private val _pendingImages = MutableStateFlow<List<ChatPart.Image>>(emptyList())
     val pendingImages: StateFlow<List<ChatPart.Image>> = _pendingImages.asStateFlow()
 
@@ -150,9 +150,8 @@ class AiChatSession @Inject constructor(
         _messages.value = messages
     }
 
-    fun clear() {
+    /** 清空消息历史（新会话）；输入框文字与待发附件 / 图片保留，供继续提问。 */
+    fun clearMessages() {
         _messages.value = emptyList()
-        _pendingAttachments.value = emptyList()
-        _pendingImages.value = emptyList()
     }
 }

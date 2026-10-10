@@ -68,8 +68,11 @@ data class DocImageItem(val sourceLabel: String, val file: File, val name: Strin
 /** 图片选择对话框来源：文档取图（解析会话文档图片引用）/ 软件图库（仓库全部图片）。 */
 enum class ImagePickSource { DOCUMENT, GALLERY }
 
-/** 导出完成数据（Snackbar「已导出到仓库根目录」+「查看」动作跳预览页）。 */
-data class ExportDone(val fileName: String, val absolutePath: String)
+/** 导出完成数据（Snackbar「已导出到…」+「查看」动作跳预览页；locationLabel null = 仓库根）。 */
+data class ExportDone(val fileName: String, val absolutePath: String, val locationLabel: String?)
+
+/** 导出目标文件夹选择器状态（targets = null 表示目录扫描中；含仓库根与全部子目录）。 */
+data class ExportFolderPickerState(val vaultPath: String, val targets: List<FileNode>?)
 
 /**
  * 对话页 ViewModel：
@@ -79,7 +82,7 @@ data class ExportDone(val fileName: String, val absolutePath: String)
  *   MessageStop → COMPLETE；Failure → ERROR（错误条）；stop → CANCELED（空内容移除）
  * - 压缩（§6）：自动前置 + 手动按钮（防重入）+ ContextOverflow 强制压缩后重试一次
  * - 图片（§7）：相册 / 文档取图两条来源，[AiImagePreparer] 统一预处理
- * - 导出（§8）：[ConversationExporter] 写仓库根 + 调度保存同步 + Snackbar「查看」跳预览
+ * - 导出（§8）：[ConversationExporter] 写所选目录（默认仓库根）+ 调度保存同步 + Snackbar「查看」跳预览
  * - 工具循环：ToolCallStarted → toolStatus 状态行；ToolCallCompleted → 轨迹 / 传输态回写消息
  * - 历史组装由 ChatEngine 完成（仅 COMPLETE / CANCELED 参与，ERROR 排除）
  * - 模型选择：默认按供应商 lastModelId 恢复；切换即写回记忆（repository.update）
@@ -151,6 +154,10 @@ class AiChatViewModel @Inject constructor(
     private val _docPickerHasMore = MutableStateFlow(false)
     val docPickerHasMore: StateFlow<Boolean> = _docPickerHasMore.asStateFlow()
 
+    /** 文档选择器「只看收藏夹」过滤开关（本地集合判断，与搜索叠加生效）。 */
+    private val _docPickerFavoritesOnly = MutableStateFlow(false)
+    val docPickerFavoritesOnly: StateFlow<Boolean> = _docPickerFavoritesOnly.asStateFlow()
+
     /** 文档选择器装载中（首次扫描 / 搜索过滤期间；空列表时区分「加载中」与「无结果」）。 */
     private val _docPickerLoading = MutableStateFlow(false)
     val docPickerLoading: StateFlow<Boolean> = _docPickerLoading.asStateFlow()
@@ -195,6 +202,17 @@ class AiChatViewModel @Inject constructor(
     private val _exportDefaultSelected = MutableStateFlow<String?>(null)
     val exportDefaultSelected: StateFlow<String?> = _exportDefaultSelected.asStateFlow()
 
+    /** 导出目标文件夹选择器（null = 未打开；打开后先扫描目录再填充）。 */
+    private val _exportFolderPicker = MutableStateFlow<ExportFolderPickerState?>(null)
+    val exportFolderPicker: StateFlow<ExportFolderPickerState?> = _exportFolderPicker.asStateFlow()
+
+    /** 导出目标目录绝对路径（null = 仓库根）。 */
+    private var exportTargetDir: String? = null
+
+    /** 导出目标展示名（相对仓库根的目录路径；null = 仓库根）。 */
+    private val _exportTargetLabel = MutableStateFlow<String?>(null)
+    val exportTargetLabel: StateFlow<String?> = _exportTargetLabel.asStateFlow()
+
     /** 隐私一次性告知对话框（§11.3；确认后持久化，不再弹）。 */
     private val _privacyDialog = MutableStateFlow(false)
     val privacyDialog: StateFlow<Boolean> = _privacyDialog.asStateFlow()
@@ -217,6 +235,9 @@ class AiChatViewModel @Inject constructor(
 
     /** 当前视图尚未装载预览的剩余节点（滚动续载）。 */
     private var docPickerPending: List<FileNode> = emptyList()
+
+    /** 打开选择器时的收藏集快照（相对路径集合，「只看收藏夹」过滤用）。 */
+    private var docPickerFavorites: Set<String> = emptySet()
 
     /** 选择器装载世代：搜索词变化 / 关闭重开时旧批次作废（对齐列表页 listingGeneration 先例）。 */
     private var docPickerGeneration = 0
@@ -352,22 +373,23 @@ class AiChatViewModel @Inject constructor(
     /**
      * 打开文档选择器：先置空列表（加载中），IO 扫描仓库 Markdown——按修改时间倒序
      * （最新在前，与主页默认排序一致）——首批并行读预览后填充，其余滚动加载。
+     * 同批快照收藏集（「只看收藏夹」过滤为本地集合判断，零额外 IO）。
      */
     fun openDocumentPicker() {
         if (_docPickerItems.value != null) return
         _docPickerItems.value = emptyList()
         _docPickerLoading.value = true
         _docPickerQuery.value = ""
+        _docPickerFavoritesOnly.value = false
         docPickerAll = null
         docPickerPending = emptyList()
         docPickerGeneration++
         val generation = docPickerGeneration
         viewModelScope.launch {
             val nodes = withContext(Dispatchers.IO) {
-                val vaultPath = runCatching {
-                    settingsRepository.settings.first().vaultPath
-                }.getOrNull()
-                vaultPath?.let { path ->
+                val loaded = runCatching { settingsRepository.settings.first() }.getOrNull()
+                docPickerFavorites = loaded?.favoritePaths.orEmpty()
+                loaded?.vaultPath?.let { path ->
                     vaultRepository.scanTree(path)
                         .filter { it.isMarkdown }
                         .sortedByDescending { it.lastModified }
@@ -392,6 +414,18 @@ class AiChatViewModel @Inject constructor(
         viewModelScope.launch { applyDocPickerView(generation) }
     }
 
+    /** 选择器「只看收藏夹」开关：本地过滤后重新装载首批预览（与搜索叠加）。 */
+    fun setDocPickerFavoritesOnly(enabled: Boolean) {
+        if (_docPickerFavoritesOnly.value == enabled) return
+        _docPickerFavoritesOnly.value = enabled
+        if (_docPickerItems.value == null) return
+        if (docPickerAll == null) return
+        _docPickerLoading.value = true
+        docPickerGeneration++
+        val generation = docPickerGeneration
+        viewModelScope.launch { applyDocPickerView(generation) }
+    }
+
     /**
      * 应用当前过滤视图：过滤全量节点 → 首批预览并行读取（只读文件头，列表页同款
      * [VaultRepository.readPreview]）→ 提交 UI；其余由 [loadMoreDocPicker] 滚动加载。
@@ -399,13 +433,17 @@ class AiChatViewModel @Inject constructor(
     private suspend fun applyDocPickerView(generation: Int) {
         val all = docPickerAll ?: return
         val keyword = _docPickerQuery.value.trim()
-        val filtered = if (keyword.isEmpty()) {
+        var filtered = if (keyword.isEmpty()) {
             all
         } else {
             all.filter {
                 it.name.contains(keyword, ignoreCase = true) ||
                     it.relativePath.contains(keyword, ignoreCase = true)
             }
+        }
+        // 「只看收藏夹」：本地集合判断（收藏集为打开时快照，零额外 IO）
+        if (_docPickerFavoritesOnly.value) {
+            filtered = filtered.filter { it.relativePath in docPickerFavorites }
         }
         val previewChars = currentPreviewChars()
         val firstBatch = filtered.take(DOC_PICKER_PAGE_SIZE)
@@ -460,7 +498,9 @@ class AiChatViewModel @Inject constructor(
         docPickerGeneration++
         docPickerAll = null
         docPickerPending = emptyList()
+        docPickerFavorites = emptySet()
         _docPickerQuery.value = ""
+        _docPickerFavoritesOnly.value = false
         _docPickerItems.value = null
         _docPickerHasMore.value = false
         _docPickerLoading.value = false
@@ -682,21 +722,63 @@ class AiChatViewModel @Inject constructor(
     fun closeExport() {
         _exportVisible.value = false
         _exportDefaultSelected.value = null
+        // 导出目标每次打开重置为仓库根（可预期）；选择器一并收起
+        exportTargetDir = null
+        _exportTargetLabel.value = null
+        _exportFolderPicker.value = null
     }
 
-    /** 导出勾选消息：写仓库根 + 调度保存同步 + 完成后弹「查看」入口（§8.2）。 */
-    fun exportSelected(selectedIds: Set<String>, includeToolTrail: Boolean) {
+    /** 打开「导出位置」文件夹选择器：IO 扫描当前仓库全部子目录（含根行）。 */
+    fun openExportFolderPicker() {
+        if (_exportFolderPicker.value != null) return
+        viewModelScope.launch {
+            val vaultPath = runCatching { settingsRepository.settings.first().vaultPath }
+                .getOrNull() ?: return@launch
+            _exportFolderPicker.value = ExportFolderPickerState(vaultPath, null)
+            val dirs = withContext(Dispatchers.IO) {
+                runCatching { vaultRepository.listAllDirectories(vaultPath) }.getOrDefault(emptyList())
+            }
+            // 防竞态：扫描期间被关闭（或重新打开）则丢弃本次结果
+            if (_exportFolderPicker.value != null) {
+                _exportFolderPicker.value = ExportFolderPickerState(vaultPath, dirs)
+            }
+        }
+    }
+
+    /** 选定导出目标目录（绝对路径；等于仓库根时按「根」处理）。 */
+    fun pickExportFolder(absolutePath: String) {
+        val vaultPath = _exportFolderPicker.value?.vaultPath ?: return
+        val root = File(vaultPath).normalize()
+        val target = File(absolutePath).normalize()
+        if (target.absolutePath == root.absolutePath) {
+            exportTargetDir = null
+            _exportTargetLabel.value = null
+        } else {
+            exportTargetDir = target.absolutePath
+            _exportTargetLabel.value = target.relativeTo(root).path.replace('\\', '/')
+        }
+        _exportFolderPicker.value = null
+    }
+
+    /** 关闭（取消）导出位置选择器。 */
+    fun dismissExportFolderPicker() {
+        _exportFolderPicker.value = null
+    }
+
+    /** 导出勾选消息：写入所选目录（null = 仓库根）+ 调度保存同步 + 完成后弹「查看」入口（§8.2）。 */
+    fun exportSelected(selectedIds: Set<String>) {
         if (exporting || selectedIds.isEmpty()) return
         exporting = true
         viewModelScope.launch {
             try {
-                val result = exporter.export(session.messages.value, selectedIds, includeToolTrail)
+                val result = exporter.export(session.messages.value, selectedIds, exportTargetDir)
                 if (result == null) {
                     _message.value = UiText.of(R.string.ai_chat_export_failed)
                 } else {
                     syncScheduler.scheduleSaveSync()
+                    val locationLabel = _exportTargetLabel.value
                     closeExport()
-                    _exportDone.value = ExportDone(result.fileName, result.absolutePath)
+                    _exportDone.value = ExportDone(result.fileName, result.absolutePath, locationLabel)
                 }
             } finally {
                 exporting = false
@@ -725,10 +807,12 @@ class AiChatViewModel @Inject constructor(
     fun confirmNewSession() {
         _showNewSessionConfirm.value = false
         stop()
-        session.clear()
+        // 仅清空对话历史：输入框文字与待发附件 / 图片保留（供新会话继续提问）
+        session.clearMessages()
         _error.value = null
-        // 图片临时文件随会话清空一并清理（无消息再引用本地路径）
-        viewModelScope.launch { imagePreparer.cleanup() }
+        // 图片临时文件清理：仅保留待发图片仍引用的文件
+        val keep = session.pendingImages.value.mapTo(mutableSetOf()) { it.localPath }
+        viewModelScope.launch { imagePreparer.cleanup(keep) }
     }
 
     fun dismissNewSession() {

@@ -6,7 +6,6 @@ import com.az.notes.domain.ai.ChatMessage
 import com.az.notes.domain.ai.ChatPart
 import com.az.notes.domain.ai.ChatRole
 import com.az.notes.domain.ai.SystemNoteMode
-import com.az.notes.domain.ai.ToolSpecs
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -19,14 +18,14 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 
 /**
- * 对话导出（§8）：勾选消息按会话顺序拼装为 Markdown 写入当前仓库根。
+ * 对话导出（§8）：勾选消息按会话顺序拼装为 Markdown 写入当前仓库根或选定子目录
+ * （导出位置选择器只提供仓库内已存在目录）。
  *
  * - 格式（§8.2）：frontmatter（title / date / model）+ `## 用户 · HH:mm` / `## AI · HH:mm`
- *   分节；文档 part → `> 引用文档：<相对路径>`；工具轨迹（默认含）→ `> 已读取：…`；
- *   压缩系统条目 → `> 已压缩/已丢弃 N 条早期消息`
+ *   分节；文档 part → `> 引用文档：<相对路径>`；压缩系统条目 →
+ *   `> 已压缩/已丢弃 N 条早期消息`（工具轨迹与思考过程永不导出，§9.3）
  * - 图片：复制到 `<仓库根>/assets/ai-<uuid8>.<ext>` 后正文写相对链接（Obsidian 惯例），
- *   复制失败降级 `[图片: 原名]` 占位
- * - **思考过程（reasoning）永不导出**（§9.3）
+ *   复制失败降级 `[图片: 原名]` 占位（链接相对仓库根，与导出位置无关）
  * - 命名 `AI对话 $yyyyMMdd-HHmmss$.md`（复用日期变量机制），重名自动追加序号；
  *   写盘成功后的 `scheduleSaveSync` 由调用方（VM）负责（Vault 变更纪律）
  *
@@ -46,23 +45,23 @@ class ConversationExporter @Inject constructor(
     )
 
     /**
-     * 导出勾选消息为 Markdown 写入仓库根。
+     * 导出勾选消息为 Markdown。
      *
      * @param messages 完整会话列表（勾选过滤后保持会话顺序）
      * @param selectedIds 勾选的消息 id 集合（对话框入口决定初始选中）
-     * @param includeToolTrail 是否附注工具轨迹（对话框开关，默认含）
+     * @param targetDir 目标目录绝对路径（null / 等于仓库根 = 写入仓库根；选择器只提供仓库内已存在目录）
      * @return null = 无勾选 / 无当前仓库 / 写盘失败
      */
     suspend fun export(
         messages: List<ChatMessage>,
         selectedIds: Set<String>,
-        includeToolTrail: Boolean = true
+        targetDir: String? = null
     ): ExportResult? = withContext(Dispatchers.IO) {
         val root = settingsRepository.settings.first().vaultPath ?: return@withContext null
         val selected = selectForExport(messages, selectedIds)
         if (selected.isEmpty()) return@withContext null
 
-        // 图片先复制到仓库 assets/（同一临时文件只复制一次）；失败记 null → 正文降级占位
+        // 图片先复制到仓库根 assets/（同一临时文件只复制一次）；失败记 null → 正文降级占位
         val links = HashMap<String, String?>()
         selected.forEach { message ->
             message.parts.filterIsInstance<ChatPart.Image>().forEach { image ->
@@ -73,16 +72,19 @@ class ConversationExporter @Inject constructor(
         }
         val markdown = buildMarkdown(
             messages = selected,
-            includeToolTrail = includeToolTrail,
             timestamp = System.currentTimeMillis()
         ) { image -> links[image.localPath] }
 
         val baseName = VaultRepository.resolveDateName(EXPORT_NAME_PATTERN)
-        val absolutePath = vaultRepository.uniqueNotePath(root, baseName)
+        val absolutePath = vaultRepository.uniqueNotePath(targetDir ?: root, baseName)
         runCatching { vaultRepository.writeTextAtomically(absolutePath, markdown) }
             .getOrNull() ?: return@withContext null
         val fileName = File(absolutePath).name
-        ExportResult(fileName = fileName, relativePath = fileName, absolutePath = absolutePath)
+        // 相对路径始终相对仓库根（子目录导出 = 「目录/文件名」）
+        val relativePath = runCatching {
+            File(absolutePath).relativeTo(File(root)).path.replace('\\', '/')
+        }.getOrDefault(fileName)
+        ExportResult(fileName = fileName, relativePath = relativePath, absolutePath = absolutePath)
     }
 
     // ---------------------------------------------------------------- 图片复制
@@ -133,9 +135,6 @@ private const val ROLE_AI = "AI"
 /** frontmatter 标题（§8.2）。 */
 private const val EXPORT_TITLE = "AI 对话"
 
-/** 完成态「已读取」摘要最多列出的文件名数（与组件层 READ_SUMMARY_MAX 对齐）。 */
-private const val READ_SUMMARY_MAX = 5
-
 /**
  * 勾选过滤：保持会话顺序输出勾选消息；TOOL 为传输态角色，不导出。
  * （「保持会话顺序」由本函数基于原列表顺序 filter 保证，而非勾选顺序。）
@@ -148,9 +147,9 @@ internal fun selectForExport(
 /**
  * 纯拼装（internal，供单测）：frontmatter + 勾选消息分节，`\n\n` 分隔、末尾单换行。
  *
- * - USER 分节：文档引用行 → 正文 → 图片行；ASSISTANT 分节：正文 → 工具轨迹附注
+ * - USER 分节：文档引用行 → 正文 → 图片行；ASSISTANT 分节：正文（工具轨迹永不导出）
  * - SYSTEM 条目输出为单行引用（`> 已压缩/已丢弃 N 条…`，摘要正文不导出）
- * - reasoning 不参与拼装（永不导出）；空正文分节整体跳过
+ * - reasoning 与工具轨迹不参与拼装（永不导出）；空正文分节整体跳过
  * - model 取首个携带 [ChatMessage.modelLabel] 的 ASSISTANT，无则省略该行
  *
  * @param timestamp 导出时刻（frontmatter date 行）
@@ -158,14 +157,13 @@ internal fun selectForExport(
  */
 internal fun buildMarkdown(
     messages: List<ChatMessage>,
-    includeToolTrail: Boolean,
     timestamp: Long,
     imageLink: (ChatPart.Image) -> String?
 ): String {
     val sections = messages.mapNotNull { message ->
         when (message.role) {
             ChatRole.USER -> userSection(message, imageLink)
-            ChatRole.ASSISTANT -> assistantSection(message, includeToolTrail)
+            ChatRole.ASSISTANT -> assistantSection(message)
             ChatRole.SYSTEM -> systemSection(message)
             ChatRole.TOOL -> null
         }
@@ -199,33 +197,10 @@ private fun userSection(message: ChatMessage, imageLink: (ChatPart.Image) -> Str
     return sectionOf(ROLE_USER, message.timestamp, body)
 }
 
-/** ASSISTANT 分节：`## AI · HH:mm` + 正文 + 工具轨迹附注（正文为空时跳过）。 */
-private fun assistantSection(message: ChatMessage, includeToolTrail: Boolean): String? {
-    val body = buildList {
-        if (message.text.isNotEmpty()) add(message.text)
-        if (includeToolTrail) toolTrailLine(message)?.let { add(it) }
-    }
-    if (body.isEmpty()) return null
-    return sectionOf(ROLE_AI, message.timestamp, body)
-}
-
-/**
- * 工具轨迹附注（§8.2）：read_note 归一后去重列文件名；超 [READ_SUMMARY_MAX] 篇附「等 N 篇」；
- * 无 read_note 调用回退为执行次数。
- */
-private fun toolTrailLine(message: ChatMessage): String? {
-    val trail = message.toolTrail
-    if (trail.isEmpty()) return null
-    val readTargets = trail
-        .filter { it.tool == ToolSpecs.READ_NOTE && it.argsSummary.isNotBlank() }
-        .map { normalizeExportToolPath(it.argsSummary) }
-        .distinct()
-    if (readTargets.isEmpty()) return "> 已执行 ${trail.size} 次工具调用"
-    return if (readTargets.size > READ_SUMMARY_MAX) {
-        "> 已读取：${readTargets.take(READ_SUMMARY_MAX).joinToString("、")} 等 ${readTargets.size} 篇"
-    } else {
-        "> 已读取：${readTargets.joinToString("、")}"
-    }
+/** ASSISTANT 分节：`## AI · HH:mm` + 正文（工具轨迹永不导出；正文为空时跳过）。 */
+private fun assistantSection(message: ChatMessage): String? {
+    if (message.text.isEmpty()) return null
+    return sectionOf(ROLE_AI, message.timestamp, listOf(message.text))
 }
 
 /** SYSTEM 条目（压缩提示）：单行引用；摘要正文与 reasoning 均不导出。 */
@@ -245,11 +220,3 @@ private fun sectionOf(role: String, timestamp: Long, body: List<String>): String
 /** 时间格式化（导出一次性使用，逐条新建 SimpleDateFormat 无性能顾虑）。 */
 private fun formatTime(timestamp: Long, pattern: String): String =
     SimpleDateFormat(pattern, Locale.getDefault()).format(Date(timestamp))
-
-/** 工具路径归一（镜像 ui/ai 组件层 normalizeToolPath：统一分隔符、剥前导斜杠与 `.` 段）。 */
-private fun normalizeExportToolPath(path: String): String =
-    path.trim()
-        .replace('\\', '/')
-        .split('/')
-        .filter { it.isNotEmpty() && it != "." }
-        .joinToString("/")

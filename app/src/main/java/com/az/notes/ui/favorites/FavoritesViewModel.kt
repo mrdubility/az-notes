@@ -10,6 +10,8 @@ import com.az.notes.ui.common.UiMessage
 import com.az.notes.ui.common.UiText
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -19,12 +21,15 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import javax.inject.Inject
 
+/** 收藏条目：节点 + 正文预览（头部小字节读取，列表页同款 [VaultRepository.readPreview]）。 */
+data class FavoriteItem(val node: FileNode, val preview: String = "")
+
 data class FavoritesUiState(
     val loading: Boolean = true,
     /** 当前仓库展示名（页面标题下标注「仓库：xxx」） */
     val vaultName: String? = null,
-    /** 收藏笔记列表（按修改时间倒序；跨文件夹、不区分层级） */
-    val items: List<FileNode> = emptyList(),
+    /** 收藏笔记列表（按修改时间倒序；跨文件夹、不区分层级；含正文预览） */
+    val items: List<FavoriteItem> = emptyList(),
     /** 一次性提示（Snackbar），消费后清空；携带撤销动作时横幅右侧显示「撤销」按钮 */
     val message: UiMessage? = null
 )
@@ -43,31 +48,46 @@ class FavoritesViewModel @Inject constructor(
     private val _state = MutableStateFlow(FavoritesUiState())
     val state: StateFlow<FavoritesUiState> = _state.asStateFlow()
 
-    /** 上次加载依据（Vault / 收藏集），设置其它字段变化时无需重扫 */
+    /** 上次加载依据（Vault / 收藏集 / 预览长度），设置其它字段变化时无需重扫 */
     private var lastVault: String? = null
     private var lastFavorites: Set<String> = emptySet()
+    private var lastPreviewChars: Int = -1
 
     init {
         viewModelScope.launch {
             settingsRepository.settings.collect { s ->
                 val vaultName = s.vaults.firstOrNull { it.id == s.currentVaultId }?.name
-                if (s.vaultPath == lastVault && s.favoritePaths == lastFavorites) {
+                if (s.vaultPath == lastVault && s.favoritePaths == lastFavorites &&
+                    s.previewChars == lastPreviewChars
+                ) {
                     // 其它设置（如仓库重命名）变化：仅同步仓库标注，无需重扫
                     _state.update { it.copy(vaultName = vaultName) }
                     return@collect
                 }
                 lastVault = s.vaultPath
                 lastFavorites = s.favoritePaths
+                lastPreviewChars = s.previewChars
                 val vault = s.vaultPath
                 if (vault.isNullOrBlank()) {
                     _state.update { it.copy(vaultName = vaultName, loading = false, items = emptyList()) }
                     return@collect
                 }
+                // 解析 + 预览并行读取：readPreview 只读文件头部小字节，收藏量级下不拖慢首屏
                 val loaded = withContext(Dispatchers.IO) {
-                    s.favoritePaths.mapNotNull { rel -> resolve(vault, rel) }
+                    s.favoritePaths
+                        .mapNotNull { rel -> resolve(vault, rel) }
+                        .map { node ->
+                            async {
+                                FavoriteItem(
+                                    node = node,
+                                    preview = vaultRepository.readPreview(node.absolutePath, s.previewChars)
+                                )
+                            }
+                        }
+                        .awaitAll()
                 }
                 // 失效路径（被删除 / 移出 Vault）：静默清理，保持收藏集与磁盘一致
-                val valid = loaded.map { it.relativePath }.toSet()
+                val valid = loaded.map { it.node.relativePath }.toSet()
                 if (valid != s.favoritePaths) {
                     runCatching { settingsRepository.setFavorites(valid) }
                 }
@@ -75,7 +95,7 @@ class FavoritesViewModel @Inject constructor(
                     it.copy(
                         vaultName = vaultName,
                         loading = false,
-                        items = loaded.sortedByDescending { node -> node.lastModified }
+                        items = loaded.sortedByDescending { item -> item.node.lastModified }
                     )
                 }
             }
