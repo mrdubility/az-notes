@@ -41,6 +41,7 @@ import androidx.compose.material.icons.outlined.Lightbulb
 import androidx.compose.material.icons.outlined.PhotoLibrary
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -965,7 +966,7 @@ internal fun ChatInputCard(
  *   （从文档中选取 / 从本地相册 / 从本软件图库）
  * - 「压缩上下文」：空闲且有可压缩区（[canCompress]）才可点；[compressing] 时文案变
  *   「正在压缩…」并禁用（手动压缩防重入，§6.4）
- * - 「添加图片」：当前模型不支持图片（vision=false）时整钮置灰，行下小字提示（§7.3）
+ * - 「添加图片」：当前模型不支持图片（vision=false）时整钮置灰，点击弹气泡提示（§7.3）
  */
 @Composable
 internal fun ChatFeatureRow(
@@ -1012,32 +1013,34 @@ internal fun ChatFeatureRow(
                 modifier = Modifier.weight(1f)
             )
         }
-        if (!imageEnabled) {
-            Text(
-                text = stringResource(R.string.ai_chat_image_unsupported),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.End,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(start = 16.dp, end = 16.dp, top = 2.dp)
-            )
-        }
     }
 }
 
-/** 功能行按钮：小图标 16dp + labelMedium 文案（weight 均分，窄屏省略号兜底）。 */
+/**
+ * 功能行按钮：小图标 16dp + labelMedium 文案（weight 均分，窄屏省略号兜底）。
+ * [disabledLook]：置灰外观但仍可点（vision=false 的「添加图片」以此弹气泡提示，§7.3）。
+ */
 @Composable
 private fun FeatureButton(
     icon: ImageVector,
     label: String,
     enabled: Boolean,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    disabledLook: Boolean = false
 ) {
+    val muted = disabledLook && !enabled
     TextButton(
         onClick = onClick,
-        enabled = enabled,
+        enabled = enabled || disabledLook,
+        colors = if (muted) {
+            // 与 TextButton 禁用态默认灰一致（onSurface 38%），但保持可点
+            ButtonDefaults.textButtonColors(
+                contentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+            )
+        } else {
+            ButtonDefaults.textButtonColors()
+        },
         contentPadding = PaddingValues(horizontal = 2.dp, vertical = 4.dp),
         modifier = modifier
     ) {
@@ -1057,7 +1060,8 @@ private fun FeatureButton(
 }
 
 /**
- * 「添加图片」入口：点击弹出三来源菜单（从文档中选取 / 从本地相册 / 从本软件图库）。
+ * 「添加图片」入口：可点态点击弹出三来源菜单（从文档中选取 / 从本地相册 / 从本软件图库）；
+ * 当前模型不支持图片（vision=false，整钮置灰）时点击弹气泡提示（§7.3）。
  * 与 [FeatureButton] 同宽均分（外层 Row 的 weight 由 [modifier] 传入并落在 Box 上）。
  */
 @Composable
@@ -1075,20 +1079,32 @@ private fun ImageSourceMenuButton(
             label = stringResource(R.string.ai_chat_add_image),
             enabled = enabled,
             onClick = { expanded = true },
+            disabledLook = true,
             modifier = Modifier.fillMaxWidth()
         )
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            SourceMenuItem(Icons.Outlined.Description, stringResource(R.string.ai_chat_pick_from_doc)) {
-                expanded = false
-                onPickFromDoc()
-            }
-            SourceMenuItem(Icons.Outlined.PhotoLibrary, stringResource(R.string.ai_chat_pick_from_album)) {
-                expanded = false
-                onPickFromAlbum()
-            }
-            SourceMenuItem(Icons.Outlined.Collections, stringResource(R.string.ai_chat_pick_from_gallery)) {
-                expanded = false
-                onPickFromGallery()
+            if (enabled) {
+                SourceMenuItem(Icons.Outlined.Description, stringResource(R.string.ai_chat_pick_from_doc)) {
+                    expanded = false
+                    onPickFromDoc()
+                }
+                SourceMenuItem(Icons.Outlined.PhotoLibrary, stringResource(R.string.ai_chat_pick_from_album)) {
+                    expanded = false
+                    onPickFromAlbum()
+                }
+                SourceMenuItem(Icons.Outlined.Collections, stringResource(R.string.ai_chat_pick_from_gallery)) {
+                    expanded = false
+                    onPickFromGallery()
+                }
+            } else {
+                // 气泡提示（无动作；点外部关闭）
+                Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+                    Text(
+                        text = stringResource(R.string.ai_chat_image_unsupported),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
         }
     }

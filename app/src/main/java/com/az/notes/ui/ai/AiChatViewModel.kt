@@ -169,7 +169,7 @@ class AiChatViewModel @Inject constructor(
     private val settings: StateFlow<AppSettings> = settingsRepository.settings
         .stateIn(viewModelScope, SharingStarted.Eagerly, AppSettings())
 
-    /** 当前模型是否支持图片（vision=false → 「添加图片」「文档取图」置灰 + 提示，§7.3）。 */
+    /** 当前模型是否支持图片（vision=false → 「添加图片」置灰 + 点击弹气泡提示，§7.3）。 */
     val visionEnabled: StateFlow<Boolean> = combine(selection, providers) { sel, list ->
         if (sel == null) return@combine false
         val provider = list.firstOrNull { it.id == sel.providerId } ?: return@combine false
