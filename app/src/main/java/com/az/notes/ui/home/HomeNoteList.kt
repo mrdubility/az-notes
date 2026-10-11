@@ -133,11 +133,10 @@ internal fun NotesListContent(
                 }
             }
             else -> {
-                PullToRefreshBox(
+                RefreshContainer(
+                    enabled = !searchActive,
                     isRefreshing = state.refreshing,
                     onRefresh = onRefresh,
-                    // 搜索态禁用下拉刷新（搜索结果一次性返回，刷新无意义）
-                    enabled = !searchActive,
                     modifier = Modifier.fillMaxSize()
                 ) {
                     LazyColumn(
@@ -504,3 +503,29 @@ private fun NoteMoreButton(
 /** 列表展示标题：笔记去掉 .md 扩展名。 */
 private fun displayTitle(node: FileNode): String =
     if (node.isMarkdown) node.name.substringBeforeLast('.') else node.name
+
+/**
+ * 列表下拉刷新容器（Material3 PullToRefreshBox 薄封装）：
+ * [enabled] = false 时经 [Box] 直接透传内容（不安装刷新手势，供搜索态等场景使用）。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun RefreshContainer(
+    enabled: Boolean,
+    isRefreshing: Boolean,
+    onRefresh: () -> Unit,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit
+) {
+    if (enabled) {
+        PullToRefreshBox(
+            isRefreshing = isRefreshing,
+            onRefresh = onRefresh,
+            modifier = modifier
+        ) {
+            content()
+        }
+    } else {
+        Box(modifier) { content() }
+    }
+}
