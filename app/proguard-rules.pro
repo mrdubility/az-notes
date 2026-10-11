@@ -24,6 +24,10 @@
     public <init>(android.content.Context, androidx.work.WorkerParameters);
 }
 
+# Tink（security-crypto 传递依赖）：引用 errorprone 编译期注解，运行期无需这些类，
+# 抑制缺类告警（CanIgnoreReturnValue / CheckReturnValue / Immutable / RestrictedApi）。
+-dontwarn com.google.errorprone.annotations.**
+
 # 堆栈可读性：保留行号信息，release 崩溃日志仍可定位到源码行
 -keepattributes SourceFile,LineNumberTable
 -renamesourcefileattribute SourceFile
