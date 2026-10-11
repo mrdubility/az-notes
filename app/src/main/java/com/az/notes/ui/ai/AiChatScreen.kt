@@ -63,6 +63,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -141,6 +142,8 @@ fun AiChatScreen(
     )
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
+    // 底部输入区实测高度（px）：Snackbar 据此抬高，避免遮挡输入卡与功能行
+    var inputAreaHeightPx by remember { mutableStateOf(0) }
     // 输入卡焦点目标（错误条 / 外部入口聚焦复用）
     val inputFocusRequester = remember { FocusRequester() }
     val context = LocalContext.current
@@ -356,7 +359,15 @@ fun AiChatScreen(
     }
 
     Scaffold(
-        snackbarHost = { SnackbarHost(snackbarHostState) },
+        snackbarHost = {
+            // 抬高到底部输入区之上（不遮挡输入卡与功能行）；键盘弹起时随之上浮
+            SnackbarHost(
+                snackbarHostState,
+                modifier = Modifier
+                    .imePadding()
+                    .padding(bottom = with(LocalDensity.current) { inputAreaHeightPx.toDp() } + 8.dp)
+            )
+        },
         topBar = {
             TopAppBar(
                 navigationIcon = {
@@ -553,61 +564,69 @@ fun AiChatScreen(
                     }
                 }
             }
-            // 待发附件 / 图片卡片行（非空时；随发送清空）
-            if (pendingAttachments.isNotEmpty() || pendingImages.isNotEmpty()) {
-                PendingAttachmentRow(
-                    documents = pendingAttachments,
-                    images = pendingImages,
-                    onRemove = viewModel::removePendingAttachment,
-                    onRemoveImage = viewModel::removePendingImage
-                )
-                Spacer(Modifier.height(4.dp))
-            }
-            ChatInputCard(
-                value = input,
-                onValueChange = viewModel::setInput,
-                generating = generating,
-                canSend = selectionLabel != null,
-                hasAttachments = pendingAttachments.isNotEmpty() || pendingImages.isNotEmpty(),
-                inputFocusRequester = inputFocusRequester,
-                onSend = {
-                    // 自己发送时强制回到底部跟随；发送后收起输入法
-                    resumeFollow("send")
-                    keyboard?.hide()
-                    viewModel.send()
-                },
-                onStop = viewModel::stop,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 8.dp)
-            )
-            // 功能行（§9.1）：选择文档 / 添加图片（弹出文档·相册·图库三来源）/ 压缩上下文
-            ChatFeatureRow(
-                canCompress = canCompress,
-                compressing = compressing,
-                imageEnabled = visionEnabled,
-                onPickDocument = viewModel::openDocumentPicker,
-                onCompress = viewModel::compressContext,
-                onPickImageFromDoc = viewModel::openDocImagePicker,
-                onPickImageFromAlbum = {
-                    imagePicker.launch(
-                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+            // 底部输入区（附件行 + 输入卡 + 功能行 + 甄别行）：整体测量高度，
+            // Snackbar 依此抬高定位，避免遮挡输入框与功能按钮
+            Column(
+                modifier = Modifier.onGloballyPositioned { coords ->
+                    inputAreaHeightPx = coords.size.height
+                }
+            ) {
+                // 待发附件 / 图片卡片行（非空时；随发送清空）
+                if (pendingAttachments.isNotEmpty() || pendingImages.isNotEmpty()) {
+                    PendingAttachmentRow(
+                        documents = pendingAttachments,
+                        images = pendingImages,
+                        onRemove = viewModel::removePendingAttachment,
+                        onRemoveImage = viewModel::removePendingImage
                     )
-                },
-                onPickImageFromGallery = viewModel::openGalleryPicker,
-                onImageUnsupported = viewModel::showImageUnsupportedHint,
-                modifier = Modifier.fillMaxWidth()
-            )
-            // 常驻甄别行
-            Text(
-                text = stringResource(R.string.ai_chat_disclaimer),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 2.dp, bottom = 6.dp)
-            )
+                    Spacer(Modifier.height(4.dp))
+                }
+                ChatInputCard(
+                    value = input,
+                    onValueChange = viewModel::setInput,
+                    generating = generating,
+                    canSend = selectionLabel != null,
+                    hasAttachments = pendingAttachments.isNotEmpty() || pendingImages.isNotEmpty(),
+                    inputFocusRequester = inputFocusRequester,
+                    onSend = {
+                        // 自己发送时强制回到底部跟随；发送后收起输入法
+                        resumeFollow("send")
+                        keyboard?.hide()
+                        viewModel.send()
+                    },
+                    onStop = viewModel::stop,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 8.dp)
+                )
+                // 功能行（§9.1）：选择文档 / 添加图片（弹出文档·相册·图库三来源）/ 压缩上下文
+                ChatFeatureRow(
+                    canCompress = canCompress,
+                    compressing = compressing,
+                    imageEnabled = visionEnabled,
+                    onPickDocument = viewModel::openDocumentPicker,
+                    onCompress = viewModel::compressContext,
+                    onPickImageFromDoc = viewModel::openDocImagePicker,
+                    onPickImageFromAlbum = {
+                        imagePicker.launch(
+                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                        )
+                    },
+                    onPickImageFromGallery = viewModel::openGalleryPicker,
+                    onImageUnsupported = viewModel::showImageUnsupportedHint,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                // 常驻甄别行
+                Text(
+                    text = stringResource(R.string.ai_chat_disclaimer),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 2.dp, bottom = 6.dp)
+                )
+            }
         }
     }
 
