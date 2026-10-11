@@ -66,7 +66,7 @@ import com.az.notes.ui.notes.NoteListItem
 import com.az.notes.ui.notes.NotesUiState
 
 /**
- * 主页笔记列表内容：下拉刷新 + 卡片列表（文件夹在前，笔记随后）；
+ * 主页笔记列表内容：下拉刷新（搜索态禁用）+ 卡片列表（文件夹在前，笔记随后）；
  * 滚动接近末尾自动加载下一批；搜索输入为空时展示搜索历史（可单条删除 / 全部清空）。
  * 自 HomeScreen 拆分独立文件（纯 UI，逻辑不变）；列表滚动状态由调用方持有
  * （[listState] 提升至 HomeScreen，供新建浮层的滚动隐藏 / 出现监听复用）。
@@ -136,6 +136,8 @@ internal fun NotesListContent(
                 PullToRefreshBox(
                     isRefreshing = state.refreshing,
                     onRefresh = onRefresh,
+                    // 搜索态禁用下拉刷新（搜索结果一次性返回，刷新无意义）
+                    enabled = !searchActive,
                     modifier = Modifier.fillMaxSize()
                 ) {
                     LazyColumn(

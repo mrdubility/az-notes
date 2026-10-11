@@ -176,6 +176,11 @@ class AiChatViewModel @Inject constructor(
         provider.models.firstOrNull { it.id == sel.modelId }?.vision == true
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
 
+    /** 「添加图片」置灰态点击提示（vision=false）：一次性 Snackbar 文案（§7.3）。 */
+    fun showImageUnsupportedHint() {
+        _message.value = UiText.of(R.string.ai_chat_image_unsupported)
+    }
+
     /** 压缩进行中（手动按钮防重入 + 显示「正在压缩…」）。 */
     private val _compressing = MutableStateFlow(false)
     val compressing: StateFlow<Boolean> = _compressing.asStateFlow()

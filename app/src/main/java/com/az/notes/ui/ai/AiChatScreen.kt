@@ -595,6 +595,7 @@ fun AiChatScreen(
                     )
                 },
                 onPickImageFromGallery = viewModel::openGalleryPicker,
+                onImageUnsupported = viewModel::showImageUnsupportedHint,
                 modifier = Modifier.fillMaxWidth()
             )
             // 常驻甄别行

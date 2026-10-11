@@ -966,7 +966,7 @@ internal fun ChatInputCard(
  *   （从文档中选取 / 从本地相册 / 从本软件图库）
  * - 「压缩上下文」：空闲且有可压缩区（[canCompress]）才可点；[compressing] 时文案变
  *   「正在压缩…」并禁用（手动压缩防重入，§6.4）
- * - 「添加图片」：当前模型不支持图片（vision=false）时整钮置灰，点击弹气泡提示（§7.3）
+ * - 「添加图片」：当前模型不支持图片（vision=false）时整钮置灰，点击经 Snackbar 提示（§7.3）
  */
 @Composable
 internal fun ChatFeatureRow(
@@ -978,6 +978,7 @@ internal fun ChatFeatureRow(
     onPickImageFromDoc: () -> Unit,
     onPickImageFromAlbum: () -> Unit,
     onPickImageFromGallery: () -> Unit,
+    onImageUnsupported: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Column(modifier = modifier.fillMaxWidth()) {
@@ -999,6 +1000,7 @@ internal fun ChatFeatureRow(
                 onPickFromDoc = onPickImageFromDoc,
                 onPickFromAlbum = onPickImageFromAlbum,
                 onPickFromGallery = onPickImageFromGallery,
+                onUnsupported = onImageUnsupported,
                 modifier = Modifier.weight(1f)
             )
             FeatureButton(
@@ -1061,7 +1063,7 @@ private fun FeatureButton(
 
 /**
  * 「添加图片」入口：可点态点击弹出三来源菜单（从文档中选取 / 从本地相册 / 从本软件图库）；
- * 当前模型不支持图片（vision=false，整钮置灰）时点击弹气泡提示（§7.3）。
+ * 当前模型不支持图片（vision=false，整钮置灰）时点击走 [onUnsupported]（Snackbar 提示，§7.3）。
  * 与 [FeatureButton] 同宽均分（外层 Row 的 weight 由 [modifier] 传入并落在 Box 上）。
  */
 @Composable
@@ -1070,6 +1072,7 @@ private fun ImageSourceMenuButton(
     onPickFromDoc: () -> Unit,
     onPickFromAlbum: () -> Unit,
     onPickFromGallery: () -> Unit,
+    onUnsupported: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     var expanded by remember { mutableStateOf(false) }
@@ -1078,33 +1081,22 @@ private fun ImageSourceMenuButton(
             icon = Icons.Outlined.AddPhotoAlternate,
             label = stringResource(R.string.ai_chat_add_image),
             enabled = enabled,
-            onClick = { expanded = true },
+            onClick = { if (enabled) expanded = true else onUnsupported() },
             disabledLook = true,
             modifier = Modifier.fillMaxWidth()
         )
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            if (enabled) {
-                SourceMenuItem(Icons.Outlined.Description, stringResource(R.string.ai_chat_pick_from_doc)) {
-                    expanded = false
-                    onPickFromDoc()
-                }
-                SourceMenuItem(Icons.Outlined.PhotoLibrary, stringResource(R.string.ai_chat_pick_from_album)) {
-                    expanded = false
-                    onPickFromAlbum()
-                }
-                SourceMenuItem(Icons.Outlined.Collections, stringResource(R.string.ai_chat_pick_from_gallery)) {
-                    expanded = false
-                    onPickFromGallery()
-                }
-            } else {
-                // 气泡提示（无动作；点外部关闭）
-                Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
-                    Text(
-                        text = stringResource(R.string.ai_chat_image_unsupported),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+            SourceMenuItem(Icons.Outlined.Description, stringResource(R.string.ai_chat_pick_from_doc)) {
+                expanded = false
+                onPickFromDoc()
+            }
+            SourceMenuItem(Icons.Outlined.PhotoLibrary, stringResource(R.string.ai_chat_pick_from_album)) {
+                expanded = false
+                onPickFromAlbum()
+            }
+            SourceMenuItem(Icons.Outlined.Collections, stringResource(R.string.ai_chat_pick_from_gallery)) {
+                expanded = false
+                onPickFromGallery()
             }
         }
     }

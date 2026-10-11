@@ -30,6 +30,7 @@ import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material.icons.outlined.Sync
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -354,7 +355,7 @@ internal fun ModelEditRow(
     }
 }
 
-/** 测试连接行：按钮（测试中转圈）+ 内联结果（成功主题色 / 失败错误色）。 */
+/** 测试连接行：按钮（连接图标 / 测试中转圈）+ 内联结果（成功主题色 / 失败错误色）。 */
 @Composable
 internal fun ConnectionTestRow(
     testing: Boolean,
@@ -371,6 +372,8 @@ internal fun ConnectionTestRow(
                 Spacer(Modifier.width(8.dp))
                 Text(stringResource(R.string.ai_provider_testing))
             } else {
+                Icon(Icons.Outlined.Sync, null, Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
                 Text(stringResource(R.string.ai_provider_test))
             }
         }

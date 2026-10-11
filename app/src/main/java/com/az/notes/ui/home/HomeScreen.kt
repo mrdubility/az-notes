@@ -367,9 +367,10 @@ fun HomeScreen(
                 )
             },
             floatingActionButton = {
-                // 新建浮层：三个快捷动作横条（主题色背景）；列表向下滚动时隐藏、往回划时出现
+                // 新建浮层：三个快捷动作横条（主题色背景）；列表向下滚动时隐藏、往回划时出现；
+                // 搜索态整体隐藏（搜索中不需要新建入口）
                 AnimatedVisibility(
-                    visible = fabVisible,
+                    visible = fabVisible && !searchActive,
                     enter = fadeIn() + slideInVertically(),
                     exit = fadeOut() + slideOutVertically()
                 ) {
