@@ -41,7 +41,7 @@ enum class SyncPhase { IDLE, TESTING, SCANNING, AWAIT_CONFIRM, EXECUTING, DONE, 
 
 data class SyncUiState(
     val config: SyncConfig = SyncConfig(),
-    /** 编辑中的密码（预填自加密存储；仅内存 + EncryptedSharedPreferences，不落明文） */
+    /** 编辑中的密码（预填自加密存储；仅内存 + Keystore 加密存储，不落明文） */
     val password: String = "",
     val vaultPath: String? = null,
     /** 配置与偏好是否已从 DataStore 载入；自动开始的同步必须等它就绪，否则会误报“未配置”。 */

@@ -138,7 +138,6 @@ dependencies {
     implementation(libs.room.ktx)
     ksp(libs.room.compiler)
     implementation(libs.androidx.datastore.preferences)
-    implementation(libs.androidx.security.crypto)
 
     // --- 序列化 (JSON) ---
     // 仓库注册表 / per-vault 同步配置的持久化

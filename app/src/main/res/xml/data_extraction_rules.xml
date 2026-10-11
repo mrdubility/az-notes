@@ -3,11 +3,13 @@
 -->
 <data-extraction-rules>
     <cloud-backup>
-        <exclude domain="sharedpref" path="az_notes_webdav_prefs.xml" />
+        <exclude domain="sharedpref" path="az_notes_secure.xml" />
+        <exclude domain="sharedpref" path="az_notes_ai_secure.xml" />
         <exclude domain="file" path="data/local/webdav" />
     </cloud-backup>
     <device-transfer>
-        <exclude domain="sharedpref" path="az_notes_webdav_prefs.xml" />
+        <exclude domain="sharedpref" path="az_notes_secure.xml" />
+        <exclude domain="sharedpref" path="az_notes_ai_secure.xml" />
         <exclude domain="file" path="data/local/webdav" />
     </device-transfer>
 </data-extraction-rules>
