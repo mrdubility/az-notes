@@ -20,7 +20,6 @@ room = "2.7.1"
 
 # --- AndroidX / 官方库 ---
 coreKtx = "1.16.0"
-appcompat = "1.7.0"
 activityCompose = "1.10.1"
 lifecycle = "2.8.7"
 navigationCompose = "2.8.9"
@@ -53,7 +52,6 @@ minSdk = "26"
 [libraries]
 # --- AndroidX 基础 ---
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
-androidx-appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "appcompat" }
 androidx-activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activityCompose" }
 androidx-splashscreen = { group = "androidx.core", name = "core-splashscreen", version.ref = "splashscreen" }
 
@@ -61,10 +59,10 @@ androidx-splashscreen = { group = "androidx.core", name = "core-splashscreen", v
 compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "composeBom" }
 compose-ui = { group = "androidx.compose.ui", name = "ui" }
 compose-ui-graphics = { group = "androidx.compose.ui", name = "ui-graphics" }
-compose-ui-tooling = { group = "androidx.compose.ui", name = "ui-tooling" }
-compose-ui-tooling-preview = { group = "androidx.compose.ui", name = "ui-tooling-preview" }
 compose-material3 = { group = "androidx.compose.material3", name = "material3" }
-compose-material-icons-extended = { group = "androidx.compose.material", name = "material-icons-extended" }
+# 图标：仅依赖 core（Icons 容器 + 49 个基础图标，BOM 管理版本）；其余按需图标源码已
+# 本地化到 app/src/main/java/androidx/compose/material/icons/，全量源码包见 third_party/。
+compose-material-icons-core = { group = "androidx.compose.material", name = "material-icons-core" }
 
 # --- 生命周期 / 导航 ---
 androidx-lifecycle-runtime-ktx = { group = "androidx.lifecycle", name = "lifecycle-runtime-ktx", version.ref = "lifecycle" }

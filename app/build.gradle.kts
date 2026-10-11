@@ -70,10 +70,10 @@ android {
             manifestPlaceholders["appLabel"] = "Az Notes Debug"
         }
         release {
-            // 先不混淆，避免反射/序列化被裁剪（后续评估 R8）；
-            // Demo 阶段通过 debug APK side-load，正式渠道仅 Release。
-            isMinifyEnabled = false
-            isShrinkResources = false
+            // R8 代码裁剪 + 资源收缩：仅 release 生效（debug 保持不混淆，便于排障）；
+            // keep 规则见 proguard-rules.pro（serialization / 枚举名 / WorkManager / mikepenz）。
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -116,7 +116,6 @@ ksp {
 dependencies {
     // --- AndroidX 基础 ---
     implementation(libs.androidx.core.ktx)
-    implementation(libs.androidx.appcompat)
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.splashscreen)
 
@@ -124,10 +123,9 @@ dependencies {
     implementation(platform(libs.compose.bom))
     implementation(libs.compose.ui)
     implementation(libs.compose.ui.graphics)
-    implementation(libs.compose.ui.tooling.preview)
     implementation(libs.compose.material3)
-    implementation(libs.compose.material.icons.extended)
-    debugImplementation(libs.compose.ui.tooling)
+    // 图标：core 容器 + 本地按需图标（app/src/main/java/androidx/compose/material/icons/）
+    implementation(libs.compose.material.icons.core)
 
     // --- 生命周期 / 导航 ---
     implementation(libs.androidx.lifecycle.runtime.ktx)

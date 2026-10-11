@@ -24,3 +24,9 @@ keystore.properties
 # 系统文件
 .DS_Store
 *.log
+
+# 本地离线资料与临时分析产物（不入库）：
+# third_party/ 存放图标源码包等参考包（使用说明见 third_party/README.md）；
+# .apk-analysis/ 为本地 APK 解包分析工作目录。
+/third_party/
+/.apk-analysis/
