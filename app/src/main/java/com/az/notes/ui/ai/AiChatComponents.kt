@@ -1020,7 +1020,7 @@ internal fun ChatFeatureRow(
 
 /**
  * 功能行按钮：小图标 16dp + labelMedium 文案（weight 均分，窄屏省略号兜底）。
- * [disabledLook]：置灰外观但仍可点（vision=false 的「添加图片」以此弹气泡提示，§7.3）。
+ * [disabledLook]：置灰外观但仍可点（vision=false 的「添加图片」经此触发 Snackbar 提示，§7.3）。
  */
 @Composable
 private fun FeatureButton(
