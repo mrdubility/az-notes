@@ -1,6 +1,11 @@
 package com.az.notes.ui.reader
 
+import android.Manifest
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.slideInHorizontally
@@ -20,13 +25,19 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -38,14 +49,17 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -56,10 +70,13 @@ import coil3.compose.LocalPlatformContext
 import coil3.request.ImageRequest
 import coil3.request.crossfade
 import com.az.notes.R
+import com.az.notes.data.media.GallerySaver
 import com.az.notes.domain.markdown.Heading
 import com.az.notes.ui.common.formatDateTimeSeconds
 import com.az.notes.ui.common.formatSize
 import java.io.File
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /**
  * 预览页浮层与对话框：大纲面板 / 全屏图片预览 / 文档信息。
@@ -201,7 +218,12 @@ internal fun ImagePreviewDialog(file: File, onDismiss: () -> Unit) {
             .crossfade(true)
             .build()
     }
-    ImagePreviewDialog(request = request, contentDescription = file.name, onDismiss = onDismiss)
+    ImagePreviewDialog(
+        request = request,
+        contentDescription = file.name,
+        onDismiss = onDismiss,
+        saveSource = file
+    )
 }
 
 /** 全屏图片预览（通用入口）：[request] 决定来源与解码策略。网络图必须与行内渲染使用
@@ -211,7 +233,9 @@ internal fun ImagePreviewDialog(file: File, onDismiss: () -> Unit) {
 internal fun ImagePreviewDialog(
     request: ImageRequest,
     contentDescription: String?,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    /** 本地图片来源文件（非 null 时显示「保存到相册」按钮；网络图传 null）。 */
+    saveSource: File? = null
 ) {
     var scale by remember { mutableFloatStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
@@ -244,7 +268,111 @@ internal fun ImagePreviewDialog(
                         translationY = offset.y
                     )
             )
+            saveSource?.let { file ->
+                SaveToGalleryButton(
+                    file = file,
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .navigationBarsPadding()
+                        .padding(bottom = 32.dp)
+                )
+            }
         }
+    }
+}
+
+/** 相册保存按钮状态（终态短暂展示后自动复位）。 */
+private enum class GallerySaveUiState { IDLE, SAVING, SAVED, FAILED, DENIED }
+
+/**
+ * 「保存到相册」按钮（黑底预览浮层专用，胶囊形）：写入 Pictures/AzNotes。
+ * Android 8.0–9.0 写公共相册需 WRITE 权限（运行时请求）；Android 10+ 零权限。
+ */
+@Composable
+private fun SaveToGalleryButton(file: File, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var state by remember { mutableStateOf(GallerySaveUiState.IDLE) }
+
+    // 结果状态展示 2 秒后复位，恢复可保存形态
+    LaunchedEffect(state) {
+        when (state) {
+            GallerySaveUiState.SAVED, GallerySaveUiState.FAILED, GallerySaveUiState.DENIED -> {
+                delay(2000)
+                state = GallerySaveUiState.IDLE
+            }
+            else -> Unit
+        }
+    }
+
+    val doSave: () -> Unit = {
+        if (state != GallerySaveUiState.SAVING) {
+            state = GallerySaveUiState.SAVING
+            scope.launch {
+                val uri = GallerySaver.save(context, file)
+                state = if (uri != null) GallerySaveUiState.SAVED else GallerySaveUiState.FAILED
+            }
+        }
+    }
+
+    // Android 8.0–9.0 写公共相册需 WRITE 权限（Manifest maxSdkVersion=29 已声明）
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) doSave() else state = GallerySaveUiState.DENIED
+    }
+
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(50))
+            .background(Color.Black.copy(alpha = 0.55f))
+            .clickable {
+                if (state == GallerySaveUiState.SAVING) return@clickable
+                val needsPermission = Build.VERSION.SDK_INT < Build.VERSION_CODES.Q &&
+                    context.checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) !=
+                    PackageManager.PERMISSION_GRANTED
+                if (needsPermission) {
+                    permissionLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                } else {
+                    doSave()
+                }
+            }
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        when (state) {
+            GallerySaveUiState.SAVING -> CircularProgressIndicator(
+                modifier = Modifier.size(16.dp),
+                strokeWidth = 2.dp,
+                color = Color.White
+            )
+            GallerySaveUiState.SAVED -> Icon(
+                imageVector = Icons.Filled.Check,
+                contentDescription = null,
+                tint = Color.White,
+                modifier = Modifier.size(18.dp)
+            )
+            else -> Icon(
+                imageVector = Icons.Filled.Download,
+                contentDescription = null,
+                tint = Color.White,
+                modifier = Modifier.size(18.dp)
+            )
+        }
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = stringResource(
+                when (state) {
+                    GallerySaveUiState.IDLE -> R.string.image_save_gallery
+                    GallerySaveUiState.SAVING -> R.string.image_save_saving
+                    GallerySaveUiState.SAVED -> R.string.image_save_saved
+                    GallerySaveUiState.FAILED -> R.string.image_save_failed
+                    GallerySaveUiState.DENIED -> R.string.image_save_denied
+                }
+            ),
+            style = MaterialTheme.typography.labelLarge,
+            color = Color.White
+        )
     }
 }
 

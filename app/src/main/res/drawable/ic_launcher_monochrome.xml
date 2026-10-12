@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 自适应图标单色层（Android 13+ 主题图标）：仅保留 az 双字母字形，由系统单色化着色。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- a（字碗圆环 + 右侧字腿） -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillType="evenOdd"
+        android:pathData="M43.5,36.5 A12,12 0 1 0 43.5,60.5 A12,12 0 1 0 43.5,36.5 Z M43.5,43.9 A4.6,4.6 0 1 0 43.5,53.1 A4.6,4.6 0 1 0 43.5,43.9 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M49.5,39.5 A2,2 0 0 1 51.5,37.5 L55,37.5 A2,2 0 0 1 57,39.5 L57,58.5 A2,2 0 0 1 55,60.5 L51.5,60.5 A2,2 0 0 1 49.5,58.5 Z" />
+
+    <!-- z -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M66.5,44.5 L80.5,44.5 L80.5,49.2 L72.5,59.5 L80.5,59.5 L80.5,54.8 L70.2,54.8 L74.5,49.2 L66.5,49.2 Z" />
+</vector>

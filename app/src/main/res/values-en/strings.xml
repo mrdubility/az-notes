@@ -248,6 +248,11 @@
     <string name="settings_image_remote_max_hint">Set to 0 to stop loading network images</string>
     <string name="settings_image_timeout">Network image timeout (seconds)</string>
     <string name="settings_image_timeout_value">%1$d s</string>
+    <string name="image_save_gallery">Save to gallery</string>
+    <string name="image_save_saving">Saving…</string>
+    <string name="image_save_saved">Saved to gallery</string>
+    <string name="image_save_failed">Save failed</string>
+    <string name="image_save_denied">Storage permission required</string>
 
     <!-- AI providers (Settings → AI; providers CRUD + connection test) -->
     <string name="ai_provider_section">AI</string>

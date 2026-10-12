@@ -1,31 +1,59 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 自适应图标前景：抽象的“笔记文档 + 折角”矢量图形，Material Symbols 风格 -->
+<!-- 自适应图标前景：白色笔记卡片 + 右上红色折页（白色 z）+ 深灰 a + 文本行与红点。
+     由设计图重绘为 108dp 矢量（内容收于中心安全区内，四角允许被圆形遮罩裁切）。 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <group android:scaleX="0.5"
-        android:scaleY="0.5"
-        android:pivotX="54"
-        android:pivotY="54">
-        <!-- 文档主体 -->
+
+    <!-- 白色笔记卡片 -->
+    <path
+        android:fillColor="#FEFDF9"
+        android:pathData="M33.5,24 L74.5,24 A9,9 0 0 1 83.5,33 L83.5,57 A9,9 0 0 1 74.5,66 L33.5,66 A9,9 0 0 1 24.5,57 L24.5,33 A9,9 0 0 1 33.5,24 Z" />
+
+    <!-- 右上红色折页（裁剪到卡片圆角范围内） -->
+    <group>
+        <clip-path
+            android:pathData="M33.5,24 L74.5,24 A9,9 0 0 1 83.5,33 L83.5,57 A9,9 0 0 1 74.5,66 L33.5,66 A9,9 0 0 1 24.5,57 L24.5,33 A9,9 0 0 1 33.5,24 Z" />
         <path
-            android:fillColor="#FFFFFFFF"
-            android:pathData="M34,26 L66,26 L74,34 L74,82 L34,82 Z" />
-        <!-- 折角 -->
-        <path
-            android:fillColor="#FFB0BEC5"
-            android:pathData="M66,26 L66,34 L74,34 Z" />
-        <!-- 文本行 -->
-        <path
-            android:fillColor="#FF37474F"
-            android:pathData="M42,44 L66,44 L66,49 L42,49 Z" />
-        <path
-            android:fillColor="#FF37474F"
-            android:pathData="M42,55 L66,55 L66,60 L42,60 Z" />
-        <path
-            android:fillColor="#FF37474F"
-            android:pathData="M42,66 L58,66 L58,71 L42,71 Z" />
+            android:fillColor="#CB4B3A"
+            android:pathData="M57,24 L83.5,24 L83.5,62.5 L66,62.5 Z" />
     </group>
+
+    <!-- z（折页上的白色字母） -->
+    <path
+        android:fillColor="#FEFDF9"
+        android:pathData="M66.5,44.5 L80.5,44.5 L80.5,49.2 L72.5,59.5 L80.5,59.5 L80.5,54.8 L70.2,54.8 L74.5,49.2 L66.5,49.2 Z" />
+
+    <!-- a（字碗圆环 + 右侧字腿） -->
+    <path
+        android:fillColor="#47505A"
+        android:fillType="evenOdd"
+        android:pathData="M43.5,36.5 A12,12 0 1 0 43.5,60.5 A12,12 0 1 0 43.5,36.5 Z M43.5,43.9 A4.6,4.6 0 1 0 43.5,53.1 A4.6,4.6 0 1 0 43.5,43.9 Z" />
+    <path
+        android:fillColor="#47505A"
+        android:pathData="M49.5,39.5 A2,2 0 0 1 51.5,37.5 L55,37.5 A2,2 0 0 1 57,39.5 L57,58.5 A2,2 0 0 1 55,60.5 L51.5,60.5 A2,2 0 0 1 49.5,58.5 Z" />
+
+    <!-- 文本行（圆头短横，长度递减） -->
+    <path
+        android:strokeColor="#C6C6C9"
+        android:strokeWidth="3"
+        android:strokeLineCap="round"
+        android:pathData="M26,71 L81.5,71" />
+    <path
+        android:strokeColor="#C6C6C9"
+        android:strokeWidth="3"
+        android:strokeLineCap="round"
+        android:pathData="M26,76 L76,76" />
+    <path
+        android:strokeColor="#C6C6C9"
+        android:strokeWidth="3"
+        android:strokeLineCap="round"
+        android:pathData="M26,81 L55,81" />
+
+    <!-- 红点（与红色折页呼应） -->
+    <path
+        android:fillColor="#CB4B3A"
+        android:pathData="M65,77.9 A3.1,3.1 0 1 0 65,84.1 A3.1,3.1 0 1 0 65,77.9 Z" />
 </vector>
