@@ -1,59 +1,53 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 自适应图标前景：白色笔记卡片 + 右上红色折页（白色 z）+ 深灰 a + 文本行与红点。
-     由设计图重绘为 108dp 矢量（内容收于中心安全区内，四角允许被圆形遮罩裁切）。 -->
+<!-- 自适应图标前景层：红色折页 + 白色笔记卡片（a/z 字形由 Arial Bold 轮廓矢量化为纯路径，无文字依赖），
+     下方三条列表线与红点。全部内容位于 72x72dp 可见区内，卡片四角在圆形遮罩下自然裁切。 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
 
-    <!-- 白色笔记卡片 -->
+    <!-- 红色折页（斜顶） -->
     <path
-        android:fillColor="#FEFDF9"
-        android:pathData="M33.5,24 L74.5,24 A9,9 0 0 1 83.5,33 L83.5,57 A9,9 0 0 1 74.5,66 L33.5,66 A9,9 0 0 1 24.5,57 L24.5,33 A9,9 0 0 1 33.5,24 Z" />
+        android:fillColor="#D94836"
+        android:pathData="M63.28,27.09 L81.14,37.43 Q83.26,38.61 83.26,41.19 L83.26,64.69 Q83.26,67.04 80.91,67.04 L65.63,67.04 Q63.28,67.04 63.28,64.69 Z" />
 
-    <!-- 右上红色折页（裁剪到卡片圆角范围内） -->
-    <group>
-        <clip-path
-            android:pathData="M33.5,24 L74.5,24 A9,9 0 0 1 83.5,33 L83.5,57 A9,9 0 0 1 74.5,66 L33.5,66 A9,9 0 0 1 24.5,57 L24.5,33 A9,9 0 0 1 33.5,24 Z" />
-        <path
-            android:fillColor="#CB4B3A"
-            android:pathData="M57,24 L83.5,24 L83.5,62.5 L66,62.5 Z" />
-    </group>
-
-    <!-- z（折页上的白色字母） -->
+    <!-- 白色卡片 -->
     <path
-        android:fillColor="#FEFDF9"
-        android:pathData="M66.5,44.5 L80.5,44.5 L80.5,49.2 L72.5,59.5 L80.5,59.5 L80.5,54.8 L70.2,54.8 L74.5,49.2 L66.5,49.2 Z" />
+        android:fillColor="#FDFBF7"
+        android:pathData="M30.85,24.27 L58.11,24.27 A6.11,6.11 0 0 1 64.22,30.38 L64.22,57.64 A6.11,6.11 0 0 1 58.11,63.75 L30.85,63.75 A6.11,6.11 0 0 1 24.74,57.64 L24.74,30.38 A6.11,6.11 0 0 1 30.85,24.27 Z" />
 
-    <!-- a（字碗圆环 + 右侧字腿） -->
+    <!-- a 字形（Arial Bold 轮廓） -->
     <path
-        android:fillColor="#47505A"
+        android:fillColor="#3E464B"
         android:fillType="evenOdd"
-        android:pathData="M43.5,36.5 A12,12 0 1 0 43.5,60.5 A12,12 0 1 0 43.5,36.5 Z M43.5,43.9 A4.6,4.6 0 1 0 43.5,53.1 A4.6,4.6 0 1 0 43.5,43.9 Z" />
-    <path
-        android:fillColor="#47505A"
-        android:pathData="M49.5,39.5 A2,2 0 0 1 51.5,37.5 L55,37.5 A2,2 0 0 1 57,39.5 L57,58.5 A2,2 0 0 1 55,60.5 L51.5,60.5 A2,2 0 0 1 49.5,58.5 Z" />
+        android:pathData="M40.32,47.53 L35.93,46.74 C36.42,44.97 37.27,43.66 38.48,42.81 C39.68,41.96 41.47,41.54 43.85,41.54 C46,41.54 47.61,41.79 48.67,42.3 C49.72,42.81 50.46,43.46 50.89,44.25 C51.33,45.03 51.54,46.48 51.54,48.58 L51.49,54.22 C51.49,55.83 51.57,57.01 51.72,57.78 C51.88,58.54 52.17,59.36 52.59,60.23 L47.81,60.23 C47.68,59.91 47.52,59.43 47.34,58.8 C47.26,58.51 47.2,58.33 47.17,58.23 C46.34,59.04 45.46,59.64 44.52,60.04 C43.58,60.44 42.57,60.64 41.51,60.64 C39.62,60.64 38.14,60.13 37.06,59.11 C35.97,58.09 35.43,56.8 35.43,55.24 C35.43,54.21 35.68,53.28 36.17,52.48 C36.66,51.67 37.35,51.05 38.24,50.62 C39.13,50.19 40.42,49.81 42.09,49.49 C44.35,49.07 45.92,48.67 46.79,48.3 L46.79,47.82 C46.79,46.89 46.56,46.23 46.1,45.83 C45.64,45.44 44.78,45.24 43.5,45.24 C42.64,45.24 41.97,45.41 41.49,45.75 C41.01,46.08 40.62,46.68 40.32,47.53 Z M46.79,51.45 C46.17,51.66 45.19,51.91 43.85,52.19 C42.5,52.48 41.63,52.76 41.21,53.04 C40.58,53.48 40.27,54.05 40.27,54.74 C40.27,55.42 40.52,56 41.02,56.5 C41.53,56.99 42.17,57.24 42.95,57.24 C43.82,57.24 44.66,56.95 45.45,56.37 C46.03,55.94 46.42,55.4 46.6,54.77 C46.73,54.36 46.79,53.57 46.79,52.42 Z" />
 
-    <!-- 文本行（圆头短横，长度递减） -->
+    <!-- z 字形（Arial Bold 轮廓） -->
     <path
-        android:strokeColor="#C6C6C9"
-        android:strokeWidth="3"
-        android:strokeLineCap="round"
-        android:pathData="M26,71 L81.5,71" />
-    <path
-        android:strokeColor="#C6C6C9"
-        android:strokeWidth="3"
-        android:strokeLineCap="round"
-        android:pathData="M26,76 L76,76" />
-    <path
-        android:strokeColor="#C6C6C9"
-        android:strokeWidth="3"
-        android:strokeLineCap="round"
-        android:pathData="M26,81 L55,81" />
+        android:fillColor="#FDFBF7"
+        android:fillType="evenOdd"
+        android:pathData="M67.68,53.52 L67.68,51.21 L71.88,46.38 C72.57,45.6 73.08,45.04 73.41,44.71 C73.06,44.73 72.61,44.74 72.05,44.75 L68.09,44.77 L68.09,42.31 L77.36,42.31 L77.36,44.41 L73.07,49.35 L71.56,50.99 C72.38,50.94 72.89,50.91 73.09,50.91 L77.68,50.91 L77.68,53.52 Z" />
 
-    <!-- 红点（与红色折页呼应） -->
+    <!-- 三条列表线 -->
     <path
-        android:fillColor="#CB4B3A"
-        android:pathData="M65,77.9 A3.1,3.1 0 1 0 65,84.1 A3.1,3.1 0 1 0 65,77.9 Z" />
+        android:strokeColor="#CCCCCC"
+        android:strokeWidth="1.88"
+        android:strokeLineCap="round"
+        android:pathData="M25.68,72.45 L62.08,72.45" />
+    <path
+        android:strokeColor="#CCCCCC"
+        android:strokeWidth="1.88"
+        android:strokeLineCap="round"
+        android:pathData="M25.68,77.38 L72.68,77.38" />
+    <path
+        android:strokeColor="#CCCCCC"
+        android:strokeWidth="1.88"
+        android:strokeLineCap="round"
+        android:pathData="M25.68,82.32 L51.53,82.32" />
+
+    <!-- 红点 -->
+    <path
+        android:fillColor="#D94836"
+        android:pathData="M59.76,78.79 A2.35,2.35 0 1 0 59.76,83.49 A2.35,2.35 0 1 0 59.76,78.79 Z" />
 </vector>
