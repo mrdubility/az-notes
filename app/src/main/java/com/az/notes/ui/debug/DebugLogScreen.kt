@@ -157,8 +157,9 @@ class DebugLogViewModel @Inject constructor(
         refreshStatus()
     }
 
-    fun consumeMessage() {
-        message = null
+    /** 传入 [current] 时仅当仍是同一条才清除（横幅协程取消时兜底消费，且不误清新提示）。 */
+    fun consumeMessage(current: UiText? = null) {
+        if (current == null || message == current) message = null
     }
 }
 
@@ -172,12 +173,17 @@ fun DebugLogScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     var clearConfirm by remember { mutableStateOf(false) }
 
-    // 一次性提示：resolve() 是 @Composable，需先在组合上下文解析再交给副作用（同 EditorScreen）
-    val messageText = viewModel.message?.resolve()
+    // 一次性提示：resolve() 是 @Composable，需先在组合上下文解析再交给副作用（同 EditorScreen）；
+    // 离开页面（协程取消）时兜底消费本条（messageSource 为组合时快照），返回不重放
+    val messageSource = viewModel.message
+    val messageText = messageSource?.resolve()
     LaunchedEffect(messageText) {
         if (messageText != null) {
-            snackbarHostState.showTimedSnackbar(messageText)
-            viewModel.consumeMessage()
+            try {
+                snackbarHostState.showTimedSnackbar(messageText)
+            } finally {
+                viewModel.consumeMessage(messageSource)
+            }
         }
     }
 

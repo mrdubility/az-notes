@@ -135,6 +135,14 @@ class NotesViewModel @Inject constructor(
     private var pendingNotes: List<FileNode> = emptyList()
 
     /**
+     * 笔记显示顺序快照（绝对路径，与 [orderSnapshotDir] 配对）：编辑返回、增删改等
+     * 重载时按它保持条目位置（标题 / 时间 / 预览仍取最新）；下拉刷新、切换目录、
+     * 改排序时按最新排序重排并重建快照。新建 / 移入的新笔记按最新排序置于顶部。
+     */
+    private var orderSnapshot: List<String>? = null
+    private var orderSnapshotDir: String? = null
+
+    /**
      * 正文预览内存缓存（绝对路径 → 文件 mtime + 预览）：跨目录往返与重复刷新零重读。
      * 按访问序 LRU：超限时逐出最久未访问条目而非清空整表（避免周期性命中率归零）；
      * [Collections.synchronizedMap] 保证多协程（列表装载 / 搜索）并发访问安全。
@@ -194,14 +202,15 @@ class NotesViewModel @Inject constructor(
             // 预览字符数 / 排序方式变化：保持当前目录重新加载
             initialized && (s.previewChars != prev.previewChars || s.sortOrder != prev.sortOrder) -> {
                 if (s.previewChars != prev.previewChars) previewCache.clear() // 预览长度变化：缓存失效
-                reloadItems(pullRefresh = false)
+                // 改排序：按新排序立即重排；仅预览长度变化：保持现有条目位置
+                reloadItems(pullRefresh = false, preserveOrder = s.sortOrder == prev.sortOrder)
             }
         }
     }
 
-    /** 进入主页（含从阅读/编辑页返回）时调用：静默重读当前目录。 */
+    /** 进入主页（含从阅读/编辑页返回）时调用：静默重读当前目录，条目保持原位（内容取最新）。 */
     fun onScreenEntered() {
-        if (initialized) reloadItems(pullRefresh = false)
+        if (initialized) reloadItems(pullRefresh = false, preserveOrder = true)
     }
 
     /** 下拉刷新。 */
@@ -317,7 +326,9 @@ class NotesViewModel @Inject constructor(
             }
             if (ok) {
                 migrateFavorite(node.absolutePath, target)
-                reloadItems(pullRefresh = false)
+                // 顺序快照同步替换为新路径：重命名后条目保持原位
+                orderSnapshot = orderSnapshot?.map { if (it == node.absolutePath) target else it }
+                reloadItems(pullRefresh = false, preserveOrder = true)
                 syncRemoteRename(node.absolutePath, target)
                 scheduleSaveSync()
             }
@@ -416,7 +427,8 @@ class NotesViewModel @Inject constructor(
                 )
             }
             if (ok) {
-                reloadItems(pullRefresh = false)
+                // 保序重载：删除后其余条目保持原位
+                reloadItems(pullRefresh = false, preserveOrder = true)
                 scheduleSaveSync()
             }
         }
@@ -426,7 +438,7 @@ class NotesViewModel @Inject constructor(
     private fun undoRestoreFromTrash(vault: String, items: List<TrashItem>): () -> Unit = {
         viewModelScope.launch {
             withContext(Dispatchers.IO) { items.forEach { trashRepository.restore(vault, it) } }
-            reloadItems(pullRefresh = false)
+            reloadItems(pullRefresh = false, preserveOrder = true)
             scheduleSaveSync()
         }
     }
@@ -462,7 +474,7 @@ class NotesViewModel @Inject constructor(
                 _state.update { it.copy(message = UiMessage(UiText.of(R.string.msg_share_note_failed))) }
                 return@launch
             }
-            reloadItems(pullRefresh = false)
+            reloadItems(pullRefresh = false, preserveOrder = true)
             scheduleSaveSync()
             onCreated(createdPath)
         }
@@ -510,7 +522,7 @@ class NotesViewModel @Inject constructor(
                 _state.update { it.copy(message = UiMessage(UiText.of(R.string.msg_share_note_failed))) }
                 return@launch
             }
-            reloadItems(pullRefresh = false)
+            reloadItems(pullRefresh = false, preserveOrder = true)
             scheduleSaveSync()
             onCreated(createdPath)
         }
@@ -537,7 +549,7 @@ class NotesViewModel @Inject constructor(
                 _state.update { it.copy(message = UiMessage(UiText.of(R.string.msg_note_create_failed))) }
                 return@launch
             }
-            reloadItems(pullRefresh = false)
+            reloadItems(pullRefresh = false, preserveOrder = true)
             scheduleSaveSync()
             onCreated(createdPath)
         }
@@ -563,7 +575,7 @@ class NotesViewModel @Inject constructor(
                 _state.update { it.copy(message = UiMessage(UiText.of(R.string.msg_note_create_failed))) }
                 return@launch
             }
-            reloadItems(pullRefresh = false)
+            reloadItems(pullRefresh = false, preserveOrder = true)
             scheduleSaveSync()
             onCreated(createdPath)
         }
@@ -594,14 +606,19 @@ class NotesViewModel @Inject constructor(
                 )
             }
             if (ok) {
-                reloadItems(pullRefresh = false)
+                // 保序重载：新文件夹入列，既有笔记保持原位
+                reloadItems(pullRefresh = false, preserveOrder = true)
                 scheduleSaveSync()
             }
         }
     }
 
-    fun consumeMessage() {
-        _state.update { it.copy(message = null) }
+    /**
+     * 清除已展示的一次性提示。传入 [current] 时仅当仍是同一条才清除：
+     * 横幅协程因离开页面被取消时于 finally 兜底消费本条，且不误清被替换的新提示。
+     */
+    fun consumeMessage(current: UiMessage? = null) {
+        _state.update { s -> if (current == null || s.message == current) s.copy(message = null) else s }
     }
 
     private fun resolveNewName(node: FileNode, input: String): String? {
@@ -710,7 +727,8 @@ class NotesViewModel @Inject constructor(
                 )
             }
             exitSelectMode()
-            reloadItems(pullRefresh = false)
+            // 保序重载：移动完成后剩余条目保持原位
+            reloadItems(pullRefresh = false, preserveOrder = true)
             if (moved > 0) scheduleSaveSync()
         }
     }
@@ -738,7 +756,7 @@ class NotesViewModel @Inject constructor(
                     migrateFavorite(sourcePath, target)
                     migrateRecent(sourcePath, target)
                 }
-                reloadItems(pullRefresh = false)
+                reloadItems(pullRefresh = false, preserveOrder = true)
                 if (!crossVault) syncRemoteRename(sourcePath, target)
                 scheduleSaveSync()
                 _state.update {
@@ -765,7 +783,8 @@ class NotesViewModel @Inject constructor(
                     it.copy(message = UiMessage(UiText.of(R.string.msg_duplicate_failed)))
                 }
             } else {
-                reloadItems(pullRefresh = false)
+                // 保序重载：副本置顶，其余条目保持原位
+                reloadItems(pullRefresh = false, preserveOrder = true)
                 _state.update {
                     it.copy(message = UiMessage(UiText.of(R.string.msg_duplicated, File(newPath).name)))
                 }
@@ -818,7 +837,8 @@ class NotesViewModel @Inject constructor(
                                     withContext(Dispatchers.IO) {
                                         trashed.forEach { trashRepository.restore(vault, it) }
                                     }
-                                    reloadItems(pullRefresh = false)
+                                    // 撤销批量删除：恢复项置顶，其余条目保持原位
+                                    reloadItems(pullRefresh = false, preserveOrder = true)
                                     scheduleSaveSync()
                                 }
                             }
@@ -828,7 +848,8 @@ class NotesViewModel @Inject constructor(
                 )
             }
             exitSelectMode()
-            reloadItems(pullRefresh = false)
+            // 保序重载：删除后其余条目保持原位
+            reloadItems(pullRefresh = false, preserveOrder = true)
             if (done > 0) scheduleSaveSync()
         }
     }
@@ -964,8 +985,14 @@ class NotesViewModel @Inject constructor(
      * 笔记数：从阅读页返回、增删改刷新等场景下列表长度不缩回首批，返回时滚动位置
      * 恢复的 index 不越界（越界会被 LazyListState clamp 造成位置漂移）；
      * 目录切换（enterDir / navigateUp / 换仓库）须显式传 false，从首批重新装载。
+     * [preserveOrder] 为 true 时按上次显示顺序排列（内容仍取最新）：编辑返回、
+     * 增删改后条目不跳位；下拉刷新 / 切目录 / 改排序保持 false，按最新排序重排。
      */
-    private fun reloadItems(pullRefresh: Boolean, keepLoadedNotes: Boolean = true) {
+    private fun reloadItems(
+        pullRefresh: Boolean,
+        keepLoadedNotes: Boolean = true,
+        preserveOrder: Boolean = false
+    ) {
         val vault = currentSettings.vaultPath ?: return
         loadJob?.cancel()
         loadMoreJob?.cancel()
@@ -987,13 +1014,18 @@ class NotesViewModel @Inject constructor(
             val dir = _state.value.currentDir ?: vault
             // 当前列表已装载的笔记数（文件夹不计），作为首批装载下限
             val keepNotes = if (keepLoadedNotes) _state.value.items.count { !it.node.isDirectory } else 0
+            // 保序重载：装载前取同目录快照（装载期间快照被重建也不影响本次）
+            val keepOrder = if (preserveOrder && dir == orderSnapshotDir) orderSnapshot else null
             val result = runCatching {
-                withContext(Dispatchers.IO) { loadListing(dir, vault, keepNotes) }
+                withContext(Dispatchers.IO) { loadListing(dir, vault, keepNotes, keepOrder) }
             }
             if (generation != listingGeneration) return@launch
             result.fold(
                 onSuccess = { page ->
                     pendingNotes = page.pending
+                    // 记录本页笔记最新显示顺序：作为下一次保序重载的基准
+                    orderSnapshotDir = dir
+                    orderSnapshot = page.orderedNotePaths
                     _state.update { s ->
                         s.copy(
                             items = page.items,
@@ -1044,8 +1076,15 @@ class NotesViewModel @Inject constructor(
         }
     }
 
-    /** 一页列表数据：已就绪条目（文件夹 + 首批笔记）+ 尚未装载预览的后续笔记。 */
-    private data class ListingPage(val items: List<NoteListItem>, val pending: List<FileNode>)
+    /**
+     * 一页列表数据：已就绪条目（文件夹 + 首批笔记）+ 尚未装载预览的后续笔记 +
+     * 全量笔记显示顺序（含待装载，作为下一次保序重载的基准快照）。
+     */
+    private data class ListingPage(
+        val items: List<NoteListItem>,
+        val pending: List<FileNode>,
+        val orderedNotePaths: List<String>
+    )
 
     /**
      * 列表分批装载：文件夹无需预览，全部立即包含；笔记按 [PAGE_SIZE] 逐批读取预览，
@@ -1053,16 +1092,19 @@ class NotesViewModel @Inject constructor(
      * 列目录 / 首批预览两路并行读取，缩短首屏等待；
      * 预览读取走 [previewFor] 内存缓存，未变化文件不重读、往返目录零等待。
      * [minNoteCount]：首批至少装载的笔记数（同目录重载时传已显示数量，列表不缩水）。
+     * [keepOrder]：非空时按该顺序（上次显示顺序）排列笔记，内容取最新（保序重载）。
      */
     private suspend fun loadListing(
         dirPath: String,
         vaultPath: String,
-        minNoteCount: Int = 0
+        minNoteCount: Int = 0,
+        keepOrder: List<String>? = null
     ): ListingPage = coroutineScope {
         val nodesAsync = async(Dispatchers.IO) { vaultRepository.listChildren(dirPath, vaultPath) }
         val nodes = nodesAsync.await()
         val folders = nodes.filter { it.isDirectory }.sortedBy { it.name.lowercase() }
-        val notes = sortNotes(nodes.filter { it.isMarkdown }, currentSettings.sortOrder)
+        val sorted = sortNotes(nodes.filter { it.isMarkdown }, currentSettings.sortOrder)
+        val notes = if (keepOrder != null) applyOrderSnapshot(sorted, keepOrder) else sorted
         val previewChars = currentSettings.previewChars
         val firstCount = maxOf(PAGE_SIZE, minNoteCount)
         val firstBatch = notes.take(firstCount)
@@ -1078,7 +1120,19 @@ class NotesViewModel @Inject constructor(
             }
             .awaitAll()
         val items = folders.map { NoteListItem(it) } + firstItems
-        ListingPage(items, notes.drop(firstCount))
+        ListingPage(items, notes.drop(firstCount), notes.map { it.absolutePath })
+    }
+
+    /**
+     * 按 [snapshot]（上次显示顺序）重排最新排序结果 [sorted]：仍存在的笔记保持快照
+     * 相对顺序（标题 / 时间 / 预览均为最新），新出现（快照中无）的笔记按最新排序置顶。
+     */
+    private fun applyOrderSnapshot(sorted: List<FileNode>, snapshot: List<String>): List<FileNode> {
+        val byPath = sorted.associateBy { it.absolutePath }
+        val kept = snapshot.mapNotNull { byPath[it] }
+        val known = snapshot.toHashSet()
+        val newcomers = sorted.filter { it.absolutePath !in known }
+        return newcomers + kept
     }
 
     /** 预览缓存条目：文件 mtime 未变即可复用。 */

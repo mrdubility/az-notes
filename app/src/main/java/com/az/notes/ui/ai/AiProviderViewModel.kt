@@ -317,8 +317,12 @@ class AiProviderViewModel @Inject constructor(
         }
     }
 
-    fun consumeMessage() {
-        _message.value = null
+    /**
+     * 清除已展示的一次性提示。传入 [current] 时仅当仍是同一条才清除：
+     * 横幅协程因离开页面被取消时于 finally 兜底消费本条，且不误清被替换的新提示。
+     */
+    fun consumeMessage(current: UiText? = null) {
+        if (current == null || _message.value == current) _message.value = null
     }
 
     // ---------------------------------------------------------------- 内部

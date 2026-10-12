@@ -209,12 +209,15 @@ fun EditorScreen(
     }
     BackHandler { exit() }
 
-    // 一次性提示（重命名结果等）
+    // 一次性提示（重命名结果等）；离开页面（协程取消）时兜底消费本条，返回不重放
     val stateMessage = state.message?.resolve()
     LaunchedEffect(state.message) {
-        stateMessage?.let {
-            snackbarHostState.showTimedSnackbar(it)
-            viewModel.consumeMessage()
+        val msg = state.message ?: return@LaunchedEffect
+        val text = stateMessage ?: return@LaunchedEffect
+        try {
+            snackbarHostState.showTimedSnackbar(text)
+        } finally {
+            viewModel.consumeMessage(msg)
         }
     }
 

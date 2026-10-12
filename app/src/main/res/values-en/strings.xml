@@ -30,6 +30,7 @@
     <string name="home_new_task">New task</string>
     <string name="home_double_back_exit">Press back again to exit</string>
     <string name="home_drop_hint">Release to create a note</string>
+    <string name="home_back_to_top">Back to top</string>
     <string name="home_no_vault">No Vault folder selected</string>
     <string name="home_folder">Folder</string>
     <string name="action_menu">Menu</string>

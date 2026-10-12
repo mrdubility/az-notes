@@ -90,8 +90,12 @@ fun GalleryScreen(
 
     LaunchedEffect(state.message) {
         val msg = state.message ?: return@LaunchedEffect
-        snackbarHostState.showTimedSnackbar(msg.text.resolve(context))
-        viewModel.consumeMessage()
+        try {
+            snackbarHostState.showTimedSnackbar(msg.text.resolve(context))
+        } finally {
+            // 正常结束或离开页面（协程取消）都消费本条：返回不再重放
+            viewModel.consumeMessage(msg)
+        }
     }
 
     // 选择模式下系统返回先退出选择（不离开页面）

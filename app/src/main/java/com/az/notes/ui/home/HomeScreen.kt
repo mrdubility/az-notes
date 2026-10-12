@@ -7,6 +7,8 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -27,6 +29,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Checklist
 import androidx.compose.material.icons.outlined.CreateNewFolder
 import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.VerticalAlignTop
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -42,6 +45,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -179,6 +183,15 @@ fun HomeScreen(
             }
     }
 
+    // 回到顶部：列表下滑离开顶部一定距离后于页面顶部右侧浮现，点按平滑滚回列表顶部
+    val backTopThresholdPx = with(LocalDensity.current) { 48.dp.roundToPx() }
+    val showBackTop by remember(listState) {
+        derivedStateOf {
+            listState.firstVisibleItemIndex > 0 ||
+                listState.firstVisibleItemScrollOffset > backTopThresholdPx
+        }
+    }
+
     // 首次进入 / 从阅读、编辑页返回时静默重读当前目录，保证修改时间与预览最新
     LaunchedEffect(Unit) { viewModel.onScreenEntered() }
 
@@ -193,12 +206,16 @@ fun HomeScreen(
     val undoLabel = stringResource(R.string.action_undo)
     LaunchedEffect(state.message) {
         val msg = state.message ?: return@LaunchedEffect
-        val result = snackbarHostState.showTimedSnackbar(
-            message = msg.text.resolve(context),
-            actionLabel = if (msg.undo != null) undoLabel else null
-        )
-        if (result == SnackbarResult.ActionPerformed) msg.undo?.invoke()
-        viewModel.consumeMessage()
+        try {
+            val result = snackbarHostState.showTimedSnackbar(
+                message = msg.text.resolve(context),
+                actionLabel = if (msg.undo != null) undoLabel else null
+            )
+            if (result == SnackbarResult.ActionPerformed) msg.undo?.invoke()
+        } finally {
+            // 正常结束或离开页面（协程取消）都消费本条：返回不再重放
+            viewModel.consumeMessage(msg)
+        }
     }
 
     // 立即同步的一次性提示（尚未配置 / 正在同步中 / 未选 Vault 等）
@@ -427,6 +444,32 @@ fun HomeScreen(
                     onSearchHistoryClear = { viewModel.clearSearchHistory() },
                     onLoadMore = { viewModel.loadMore() }
                 )
+                // 回到顶部：下滑后浮现于页面顶部右侧（搜索 / 多选态同样可用）
+                AnimatedVisibility(
+                    visible = showBackTop,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(top = 8.dp, end = 16.dp),
+                    enter = fadeIn() + scaleIn(),
+                    exit = fadeOut() + scaleOut()
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(44.dp)
+                            .shadow(4.dp, CircleShape)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.primary)
+                            .clickable { scope.launch { listState.animateScrollToItem(0) } },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.VerticalAlignTop,
+                            contentDescription = stringResource(R.string.home_back_to_top),
+                            tint = MaterialTheme.colorScheme.onPrimary,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                }
                 // 拖拽悬停提示：松开即把内容保存为新笔记
                 if (dragActive) {
                     Surface(

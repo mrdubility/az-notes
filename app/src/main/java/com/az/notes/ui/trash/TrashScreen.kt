@@ -80,12 +80,16 @@ fun TrashScreen(
     val undoLabel = stringResource(R.string.action_undo)
     LaunchedEffect(state.message) {
         val msg = state.message ?: return@LaunchedEffect
-        val result = snackbarHostState.showTimedSnackbar(
-            message = msg.text.resolve(context),
-            actionLabel = if (msg.undo != null) undoLabel else null
-        )
-        if (result == SnackbarResult.ActionPerformed) msg.undo?.invoke()
-        viewModel.consumeMessage()
+        try {
+            val result = snackbarHostState.showTimedSnackbar(
+                message = msg.text.resolve(context),
+                actionLabel = if (msg.undo != null) undoLabel else null
+            )
+            if (result == SnackbarResult.ActionPerformed) msg.undo?.invoke()
+        } finally {
+            // 正常结束或离开页面（协程取消）都消费本条：返回不再重放
+            viewModel.consumeMessage(msg)
+        }
     }
 
     Scaffold(

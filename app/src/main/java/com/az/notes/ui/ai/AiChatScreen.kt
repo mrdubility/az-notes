@@ -336,26 +336,34 @@ fun AiChatScreen(
         if (uri != null) viewModel.attachImage(uri)
     }
 
-    // 一次性 Snackbar 文案（自动压缩 / 图片失败 / 导出失败等；展示后消费）
-    val snackbarText = snackbarMessage?.resolve()
+    // 一次性 Snackbar 文案（自动压缩 / 图片失败 / 导出失败等；展示后消费；
+    // snackbarSource 为组合时快照，离开页面/协程取消时兜底消费本条，不误清新提示）
+    val snackbarSource = snackbarMessage
+    val snackbarText = snackbarSource?.resolve()
     LaunchedEffect(snackbarText) {
         if (snackbarText != null) {
-            snackbarHostState.showTimedSnackbar(snackbarText)
-            viewModel.consumeMessage()
+            try {
+                snackbarHostState.showTimedSnackbar(snackbarText)
+            } finally {
+                viewModel.consumeMessage(snackbarSource)
+            }
         }
     }
 
-    // 导出完成提示（含导出位置）；「查看」跳预览页（§8.2）
+    // 导出完成提示（含导出位置）；「查看」跳预览页（§8.2）；离开页面（协程取消）时兜底消费，返回不重放
     LaunchedEffect(exportDone) {
         val done = exportDone ?: return@LaunchedEffect
         val location = done.locationLabel ?: context.getString(R.string.ai_chat_export_root)
-        val result = snackbarHostState.showTimedSnackbar(
-            message = context.getString(R.string.ai_chat_export_done, location),
-            actionLabel = context.getString(R.string.ai_chat_export_view),
-            withDismissAction = true
-        )
-        if (result == SnackbarResult.ActionPerformed) onOpenNote(done.absolutePath)
-        viewModel.consumeExportDone()
+        try {
+            val result = snackbarHostState.showTimedSnackbar(
+                message = context.getString(R.string.ai_chat_export_done, location),
+                actionLabel = context.getString(R.string.ai_chat_export_view),
+                withDismissAction = true
+            )
+            if (result == SnackbarResult.ActionPerformed) onOpenNote(done.absolutePath)
+        } finally {
+            viewModel.consumeExportDone(done)
+        }
     }
 
     Scaffold(

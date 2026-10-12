@@ -142,8 +142,12 @@ class BackupViewModel @Inject constructor(
         }
     }
 
-    fun consumeMessage() {
-        _state.update { it.copy(message = null) }
+    /**
+     * 清除已展示的一次性提示。传入 [current] 时仅当仍是同一条才清除：
+     * 横幅协程因离开页面被取消时于 finally 兜底消费本条，且不误清被替换的新提示。
+     */
+    fun consumeMessage(current: UiText? = null) {
+        _state.update { s -> if (current == null || s.message == current) s.copy(message = null) else s }
     }
 
     fun consumeLanguageChanged() {

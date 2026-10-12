@@ -69,8 +69,12 @@ fun BackupScreen(
     // 一次性提示（导出结果 / 导入统计）
     LaunchedEffect(state.message) {
         val msg = state.message ?: return@LaunchedEffect
-        snackbarHostState.showTimedSnackbar(msg.resolve(context))
-        viewModel.consumeMessage()
+        try {
+            snackbarHostState.showTimedSnackbar(msg.resolve(context))
+        } finally {
+            // 正常结束或离开页面（协程取消）都消费本条：返回不再重放
+            viewModel.consumeMessage(msg)
+        }
     }
 
     // 导入后语言变更：提示展示片刻后重建界面（recreate 随 Snackbar 一起销毁，故先延时）

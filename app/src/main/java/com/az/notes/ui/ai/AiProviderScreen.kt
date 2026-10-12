@@ -79,11 +79,15 @@ fun AiProviderScreen(
     // 表单态：系统返回键先回列表，而不是退出页面
     BackHandler(enabled = draft != null) { viewModel.cancelEdit() }
 
-    // 一次性提示 → Snackbar
-    LaunchedEffect(message) {
-        val current = message ?: return@LaunchedEffect
-        snackbarHostState.showTimedSnackbar(current.resolve(context))
-        viewModel.consumeMessage()
+    // 一次性提示 → Snackbar（bannerMessage 为组合时快照：离开页面/协程取消时兜底消费本条，不误清新提示）
+    val bannerMessage = message
+    LaunchedEffect(bannerMessage) {
+        val current = bannerMessage ?: return@LaunchedEffect
+        try {
+            snackbarHostState.showTimedSnackbar(current.resolve(context))
+        } finally {
+            viewModel.consumeMessage(current)
+        }
     }
 
     val currentDraft = draft

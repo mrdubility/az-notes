@@ -103,12 +103,17 @@ fun ReaderScreen(
     // 正文块下标偏移：文件名 header（与属性面板）占据列表前几项
     val blockOffset = if (otherAttributes.isNotEmpty()) 2 else 1
 
-    // 待办保存失败等一次性提示：展示后清除，避免重组重复弹出
-    val toastMessage = state.message?.let { it.resolve() }
+    // 待办保存失败等一次性提示：展示后清除，避免重组重复弹出；
+    // 离开页面（协程取消）时兜底消费本条（messageSource 为组合时快照），返回不重放
+    val messageSource = state.message
+    val toastMessage = messageSource?.let { it.resolve() }
     LaunchedEffect(toastMessage) {
         if (toastMessage != null) {
-            snackbarHostState.showTimedSnackbar(toastMessage)
-            viewModel.consumeMessage()
+            try {
+                snackbarHostState.showTimedSnackbar(toastMessage)
+            } finally {
+                viewModel.consumeMessage(messageSource)
+            }
         }
     }
 
