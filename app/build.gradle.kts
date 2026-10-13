@@ -47,9 +47,9 @@ android {
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
         // versionCode 跟随 CI 运行号单调递增（保证覆盖安装成功；
-        // release.yml 不注入运行号，发布构建回退到 3，发版时需手动 +1）
-        versionCode = buildRunNumber ?: 3
-        versionName = "1.3.0"
+        // release.yml 不注入运行号，发布构建回退到 4：v1.3.0 发布已用 3，本次递增）
+        versionCode = buildRunNumber ?: 4
+        versionName = "1.3.1"
         // 构建 commit（短哈希）：排障时与 Actions 运行号核对「装的是哪版包」
         buildConfigField("String", "BUILD_COMMIT", "\"$buildCommit\"")
 
