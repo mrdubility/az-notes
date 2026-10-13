@@ -1,16 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- 自适应图标前景层：红色折页 + 白色笔记卡片 + a/z 字形（Arial Bold 轮廓矢量化为纯路径，无文字依赖）。
-     卡片左缘收窄紧凑，a/z 字母组合与卡片 + 折页整体均居中于画布；全部内容位于 72x72dp 可见区内。 -->
+     卡片左缘收窄紧凑，a/z 字母组合与卡片 + 折页整体均居中于画布；卡片与折页二框
+     以 57.61 为界共边、互不重叠；全部内容位于 72x72dp 可见区内。 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
 
-    <!-- 红色折页（斜顶） -->
+    <!-- 红色折页（斜顶；左缘右移至与卡片右缘共边，二框不重叠） -->
     <path
         android:fillColor="#D94836"
-        android:pathData="M56.67,35.44 L74.53,45.78 Q76.65,46.96 76.65,49.54 L76.65,73.04 Q76.65,75.39 74.30,75.39 L59.02,75.39 Q56.67,75.39 56.67,73.04 Z" />
+        android:pathData="M57.61,35.44 L74.53,45.78 Q76.65,46.96 76.65,49.54 L76.65,73.04 Q76.65,75.39 74.30,75.39 L59.02,75.39 Q57.61,75.39 57.61,73.04 Z" />
 
     <!-- 白色卡片 -->
     <path
