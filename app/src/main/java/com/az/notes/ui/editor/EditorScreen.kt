@@ -96,9 +96,7 @@ fun EditorScreen(
     /** 分享独立页模式：返回即退出应用（回到分享来源）；入页后的「已保存」横幅提供「回列表」出路 */
     fromShare: Boolean = false,
     onExitApp: () -> Unit = {},
-    onBackToHome: () -> Unit = {},
-    /** 重命名 / 移动导致文件路径变化时上报（供返回的预览页同步新路径） */
-    onPathChanged: (String) -> Unit = {}
+    onBackToHome: () -> Unit = {}
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val readingStyle = LocalReadingStyle.current
@@ -111,17 +109,6 @@ fun EditorScreen(
     var renameDialog by remember { mutableStateOf(false) }
     var moveDialog by remember { mutableStateOf(false) }
     var insertImageDialog by remember { mutableStateOf(false) }
-
-    // 重命名 / 移动导致路径变化时上报一次（初始路径不计；供返回的预览页同步）
-    var reportedPath by rememberSaveable { mutableStateOf("") }
-    LaunchedEffect(state.path) {
-        if (reportedPath.isEmpty()) {
-            reportedPath = state.path
-        } else if (state.path != reportedPath) {
-            reportedPath = state.path
-            onPathChanged(state.path)
-        }
-    }
 
     // —— 编辑器文本状态：内建 undo/redo 栈与自滚动 ——
     val textState = rememberTextFieldState()

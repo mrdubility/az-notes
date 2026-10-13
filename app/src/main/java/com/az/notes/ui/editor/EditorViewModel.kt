@@ -9,6 +9,7 @@ import com.az.notes.data.media.AttachmentRepository
 import com.az.notes.data.media.ImageImportRepository
 import com.az.notes.data.media.ImportedMedia
 import com.az.notes.data.settings.SettingsRepository
+import com.az.notes.data.storage.PathUpdateBus
 import com.az.notes.data.storage.VaultNameIndex
 import com.az.notes.data.storage.VaultRepository
 import com.az.notes.data.sync.SyncEngine
@@ -64,7 +65,8 @@ class EditorViewModel @Inject constructor(
     private val syncScheduler: SyncScheduler,
     private val imageImportRepository: ImageImportRepository,
     private val attachmentRepository: AttachmentRepository,
-    private val vaultNameIndex: VaultNameIndex
+    private val vaultNameIndex: VaultNameIndex,
+    private val pathUpdateBus: PathUpdateBus
 ) : ViewModel() {
 
     private var absolutePath: String =
@@ -220,6 +222,8 @@ class EditorViewModel @Inject constructor(
                         message = UiText.of(R.string.editor_renamed_to, newName)
                     )
                 }
+                // 广播路径变更：预览页从本页返回时按旧路径跟进新路径，避免报「找不到文件」
+                pathUpdateBus.post(oldPath, absolutePath)
                 syncRemoteRename(oldPath, absolutePath)
             } else {
                 _state.update { it.copy(message = UiText.of(R.string.msg_rename_failed_exists)) }
@@ -356,6 +360,8 @@ class EditorViewModel @Inject constructor(
                         message = movedMessage
                     )
                 }
+                // 广播路径变更：预览页从本页返回时按旧路径跟进新路径，避免报「找不到文件」
+                pathUpdateBus.post(oldPath, absolutePath)
                 if (crossVault) schedulePostSaveSync() else syncRemoteRename(oldPath, absolutePath)
             } else {
                 _state.update { it.copy(message = UiText.of(R.string.msg_move_failed)) }

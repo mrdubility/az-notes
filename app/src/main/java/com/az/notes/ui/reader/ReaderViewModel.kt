@@ -9,6 +9,7 @@ import com.az.notes.data.debug.DebugLogLevel
 import com.az.notes.data.debug.DebugLogRepository
 import com.az.notes.data.debug.DebugLogType
 import com.az.notes.data.settings.SettingsRepository
+import com.az.notes.data.storage.PathUpdateBus
 import com.az.notes.data.storage.VaultNameIndex
 import com.az.notes.data.storage.VaultRepository
 import com.az.notes.domain.markdown.FrontmatterAttribute
@@ -35,8 +36,6 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.nio.file.Files
-import java.nio.file.attribute.BasicFileAttributes
 import javax.inject.Inject
 
 /**
@@ -88,6 +87,7 @@ class ReaderViewModel @Inject constructor(
     private val settingsRepository: SettingsRepository,
     private val debugLogRepository: DebugLogRepository,
     private val vaultNameIndex: VaultNameIndex,
+    private val pathUpdateBus: PathUpdateBus,
     private val aiSession: AiChatSession
 ) : ViewModel() {
 
@@ -133,15 +133,20 @@ class ReaderViewModel @Inject constructor(
     }
 
     /**
-     * 应用编辑页重命名 / 移动回传的新路径（写入本 entry 的 savedStateHandle）：
-     * 在本轮重读前生效，避免拿已不存在的旧路径报「找不到文件」。
+     * 应用编辑页重命名 / 移动广播的新路径（PathUpdateBus）：在本轮重读前生效，
+     * 避免拿已不存在的旧路径报「找不到文件」。连续改名 / 移动会形成链式映射
+     * （A→B→C），逐跳跟进（跳数上限仅防御异常数据）。
      */
     private fun applyPathUpdate() {
-        val updated = savedStateHandle.get<String>("pathUpdate")
-        if (updated.isNullOrEmpty() || updated == absolutePath) return
-        savedStateHandle["pathUpdate"] = ""
-        absolutePath = updated
-        _state.update { it.copy(path = updated) }
+        var target = pathUpdateBus.consume(absolutePath) ?: return
+        var hops = 0
+        while (hops < 8) {
+            val next = pathUpdateBus.consume(target) ?: break
+            target = next
+            hops++
+        }
+        absolutePath = target
+        _state.update { it.copy(path = target) }
     }
 
     private fun load(showLoading: Boolean) {
@@ -283,10 +288,18 @@ class ReaderViewModel @Inject constructor(
         }
     }
 
-    /** 文件系统创建时间（btime）；文件系统不支持 / 读取失败 / 值无效时返回 null。 */
+    /**
+     * 文件创建时间（btime，epoch 毫秒）。Android 的 Java NIO 拿不到真实 btime：
+     * libcore 仅在 Darwin 置位 SUPPORTS_BIRTHTIME（AOSP UnixNativeDispatcher.c），
+     * Linux 上 BasicFileAttributes.creationTime() 恒等于修改时间。故改用系统
+     * toybox `stat -c %W`（epoch 秒）读取；设备 / 文件系统不支持 btime 时返回
+     * null（界面隐藏该行），不以修改时间冒充。
+     */
     private fun creationTimeOf(file: File): Long? = runCatching {
-        Files.readAttributes(file.toPath(), BasicFileAttributes::class.java)
-            .creationTime().toMillis().takeIf { it > 0 }
+        val process = ProcessBuilder("toybox", "stat", "-c", "%W", file.absolutePath).start()
+        val seconds = process.inputStream.bufferedReader().use { it.readText() }.trim().toLongOrNull()
+        process.waitFor()
+        seconds?.takeIf { it > 0 }?.times(1000L)
     }.getOrNull()
 
     /** 关闭“文档信息”对话框。 */
