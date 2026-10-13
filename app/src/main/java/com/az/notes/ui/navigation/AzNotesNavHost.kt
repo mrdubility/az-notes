@@ -172,7 +172,15 @@ fun AzNotesNavHost(
                 // 分享独立页：返回即退出应用（回到分享来源应用）
                 onExitApp = { (context as? Activity)?.finish() },
                 // 回列表：直接弹回主页（分享场景的栈为 [HOME, EDITOR]）
-                onBackToHome = { navController.popBackStack(Routes.HOME, inclusive = false) }
+                onBackToHome = { navController.popBackStack(Routes.HOME, inclusive = false) },
+                // 重命名 / 移动后把新路径回传到上一个预览页 entry：
+                // 返回时 ReaderViewModel 先应用新路径再重读，避免拿旧路径报「找不到文件」
+                onPathChanged = { newPath ->
+                    val previous = navController.previousBackStackEntry
+                    if (previous?.destination?.route == Routes.READER) {
+                        previous.savedStateHandle["pathUpdate"] = newPath
+                    }
+                }
             )
         }
 

@@ -54,6 +54,8 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.res.stringResource
@@ -94,7 +96,9 @@ fun EditorScreen(
     /** 分享独立页模式：返回即退出应用（回到分享来源）；入页后的「已保存」横幅提供「回列表」出路 */
     fromShare: Boolean = false,
     onExitApp: () -> Unit = {},
-    onBackToHome: () -> Unit = {}
+    onBackToHome: () -> Unit = {},
+    /** 重命名 / 移动导致文件路径变化时上报（供返回的预览页同步新路径） */
+    onPathChanged: (String) -> Unit = {}
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val readingStyle = LocalReadingStyle.current
@@ -108,12 +112,24 @@ fun EditorScreen(
     var moveDialog by remember { mutableStateOf(false) }
     var insertImageDialog by remember { mutableStateOf(false) }
 
+    // 重命名 / 移动导致路径变化时上报一次（初始路径不计；供返回的预览页同步）
+    var reportedPath by rememberSaveable { mutableStateOf("") }
+    LaunchedEffect(state.path) {
+        if (reportedPath.isEmpty()) {
+            reportedPath = state.path
+        } else if (state.path != reportedPath) {
+            reportedPath = state.path
+            onPathChanged(state.path)
+        }
+    }
+
     // —— 编辑器文本状态：内建 undo/redo 栈与自滚动 ——
     val textState = rememberTextFieldState()
     val scrollState = rememberScrollState()
     var layoutResult by remember { mutableStateOf<TextLayoutResult?>(null) }
 
-    // —— `[[` 双链内联补全：光标处于未闭合 `[[` 上下文时在工具栏上方弹候选条 ——
+    // —— `[[` 双链内联补全：光标处于未闭合 `[[` 上下文时弹出选择浮层 ——
+    val editorFocus = remember { FocusRequester() }
     val linkQuery by remember {
         derivedStateOf {
             val selection = textState.selection
@@ -126,15 +142,22 @@ fun EditorScreen(
     LaunchedEffect(linkQuery != null, state.vaultPath) {
         if (linkQuery != null) viewModel.ensureLinkCandidates()
     }
-    val completionItems = remember(linkQuery, linkCandidates) {
+    // 浮层上下文（非空 = 打开）；[pickerDismissed] 记录本次 `[[` 上下文已被手动关闭：
+    // 继续手打不重弹，直到 `[[` 关闭后重新进入
+    var pickerCtx by remember { mutableStateOf<WikiLinkQuery?>(null) }
+    var pickerDismissed by remember { mutableStateOf(false) }
+    LaunchedEffect(linkQuery) {
         val query = linkQuery
-        val all = linkCandidates
-        if (query == null || all == null) emptyList()
-        else filterWikiLinkCandidates(all, query.text, WIKI_COMPLETE_LIMIT)
+        if (query == null) {
+            pickerDismissed = false
+        } else if (pickerCtx == null && !pickerDismissed) {
+            pickerCtx = query
+        }
     }
-    // 点选候选：以 `[[插入串]]` 替换查询片段（光标停到闭合后）；单次文本编辑可一步撤销
-    val pickWikiLink: (WikiLinkCandidate) -> Unit = { candidate ->
-        val ctx = wikiLinkQueryAt(textState.text, textState.selection.min)
+    // 点选候选：以 `[[插入串]]` 替换查询片段（光标停到闭合后）；单次文本编辑可一步撤销；
+    // 关闭后焦点回编辑器，键盘不收起
+    val pickWikiCandidate: (WikiLinkCandidate) -> Unit = { candidate ->
+        val ctx = pickerCtx
         if (ctx != null) {
             textState.edit {
                 val snippet = "[[${candidate.insertText}]]"
@@ -142,6 +165,14 @@ fun EditorScreen(
                 selection = TextRange(ctx.start + snippet.length)
             }
         }
+        pickerCtx = null
+        pickerDismissed = true
+        editorFocus.requestFocus()
+    }
+    val dismissWikiPicker: () -> Unit = {
+        pickerCtx = null
+        pickerDismissed = true
+        editorFocus.requestFocus()
     }
     // 笔记文本是否已灌入编辑器；配置重建时经 rememberSaveable 恢复，避免重复灌入
     var initialized by rememberSaveable { mutableStateOf(false) }
@@ -367,6 +398,7 @@ fun EditorScreen(
                             modifier = Modifier
                                 .fillMaxSize()
                                 .padding(16.dp)
+                                .focusRequester(editorFocus)
                                 // 视口高度 = 文本可滚动区尺寸（padding 之后）；供输入法遮挡校正
                                 .onSizeChanged { viewportHeightPx = it.height }
                                 .drawBehind {
@@ -382,11 +414,6 @@ fun EditorScreen(
                             onTextLayout = { getResult -> layoutResult = getResult() }
                         )
                     }
-                }
-
-                // `[[` 补全候选条：紧贴工具栏上方（键盘上方），点选即插入闭合
-                if (linkQuery != null && completionItems.isNotEmpty()) {
-                    WikiLinkSuggestionBar(items = completionItems, onPick = pickWikiLink)
                 }
 
                 HorizontalDivider()
@@ -405,6 +432,15 @@ fun EditorScreen(
                 viewModel.rename(newName)
                 renameDialog = false
             }
+        )
+    }
+
+    pickerCtx?.let { ctx ->
+        WikiLinkPickerDialog(
+            initialQuery = ctx.text,
+            candidates = linkCandidates,
+            onPick = pickWikiCandidate,
+            onDismiss = dismissWikiPicker
         )
     }
 

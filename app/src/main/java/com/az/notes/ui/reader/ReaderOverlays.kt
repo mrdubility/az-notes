@@ -376,7 +376,7 @@ private fun SaveToGalleryButton(file: File, modifier: Modifier = Modifier) {
     }
 }
 
-/** 文档信息对话框：文件名 / 位置 / 大小 / 修改时间 / 字数统计。 */
+/** 文档信息对话框：文件名 / 位置 / 大小 / 创建与修改时间 / 字数统计。 */
 @Composable
 internal fun DocInfoDialog(info: DocInfo, onDismiss: () -> Unit) {
     AlertDialog(
@@ -387,6 +387,9 @@ internal fun DocInfoDialog(info: DocInfo, onDismiss: () -> Unit) {
                 DocInfoRow(stringResource(R.string.reader_info_name), info.name)
                 DocInfoRow(stringResource(R.string.reader_info_path), info.path)
                 DocInfoRow(stringResource(R.string.reader_info_size), formatSize(info.sizeBytes))
+                info.createdAt?.let {
+                    DocInfoRow(stringResource(R.string.reader_info_created), formatDateTimeSeconds(it))
+                }
                 DocInfoRow(
                     stringResource(R.string.reader_info_modified),
                     formatDateTimeSeconds(info.lastModified)

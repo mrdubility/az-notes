@@ -35,6 +35,8 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.nio.file.Files
+import java.nio.file.attribute.BasicFileAttributes
 import javax.inject.Inject
 
 /**
@@ -45,6 +47,8 @@ data class DocInfo(
     val path: String,
     val sizeBytes: Long,
     val lastModified: Long,
+    /** 文件系统创建时间（btime）；不可得时为 null（界面隐藏该行）。 */
+    val createdAt: Long?,
     /** 非空白字符数 */
     val charCount: Int,
     val lineCount: Int,
@@ -87,7 +91,7 @@ class ReaderViewModel @Inject constructor(
     private val aiSession: AiChatSession
 ) : ViewModel() {
 
-    private val absolutePath: String =
+    private var absolutePath: String =
         savedStateHandle.get<String>("path") ?: ""
 
     private val _state = MutableStateFlow(ReaderUiState(path = absolutePath))
@@ -124,7 +128,20 @@ class ReaderViewModel @Inject constructor(
      * 不显示 loading，避免画面闪一下。
      */
     fun reload() {
+        applyPathUpdate()
         if (loadedOnce) load(showLoading = false)
+    }
+
+    /**
+     * 应用编辑页重命名 / 移动回传的新路径（写入本 entry 的 savedStateHandle）：
+     * 在本轮重读前生效，避免拿已不存在的旧路径报「找不到文件」。
+     */
+    private fun applyPathUpdate() {
+        val updated = savedStateHandle.get<String>("pathUpdate")
+        if (updated.isNullOrEmpty() || updated == absolutePath) return
+        savedStateHandle["pathUpdate"] = ""
+        absolutePath = updated
+        _state.update { it.copy(path = updated) }
     }
 
     private fun load(showLoading: Boolean) {
@@ -256,6 +273,7 @@ class ReaderViewModel @Inject constructor(
                     path = absolutePath,
                     sizeBytes = file.length(),
                     lastModified = file.lastModified(),
+                    createdAt = creationTimeOf(file),
                     charCount = content.count { !it.isWhitespace() },
                     lineCount = if (content.isEmpty()) 0 else content.count { it == '\n' } + 1,
                     headingCount = snapshot.headings.size
@@ -264,6 +282,12 @@ class ReaderViewModel @Inject constructor(
             _state.update { it.copy(docInfo = info) }
         }
     }
+
+    /** 文件系统创建时间（btime）；文件系统不支持 / 读取失败 / 值无效时返回 null。 */
+    private fun creationTimeOf(file: File): Long? = runCatching {
+        Files.readAttributes(file.toPath(), BasicFileAttributes::class.java)
+            .creationTime().toMillis().takeIf { it > 0 }
+    }.getOrNull()
 
     /** 关闭“文档信息”对话框。 */
     fun clearDocInfo() {

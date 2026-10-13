@@ -198,14 +198,16 @@ fun ReaderScreen(
         onCreate = viewModel::createWikiNote
     )
 
-    // 锚点滚动：`[[笔记#标题]]` 进入后 / `[[#标题]]` 页内点击后，定位到标题所在块
+    // 锚点滚动：`[[笔记#标题]]` 进入后 / `[[#标题]]` 页内点击后，定位到标题所在块。
+    // 先滚动后消费：首帧列表尚未测量时 scrollToItem 需挂起等待，若先置空锚点会触发
+    // 键变更取消本协程，滚动指令随之丢失（跨笔记跳转不滚动的根因）
     val pendingAnchor by viewModel.pendingAnchor.collectAsStateWithLifecycle()
     LaunchedEffect(pendingAnchor, state.loading, state.headings) {
         val anchor = pendingAnchor ?: return@LaunchedEffect
         if (state.loading) return@LaunchedEffect
         val block = HeadingExtractor.findBlockByTitle(state.headings, anchor)
-        viewModel.consumeAnchor()
         if (block != null) listState.scrollToItem(block + blockOffset)
+        viewModel.consumeAnchor()
     }
     // LazyColumn 单侧水平内边距：与下方 contentPadding 共用；同时传给 transformer 以修正
     // 库从 parentLayoutCoordinates 拿到的 containerSize 包含 padding 导致的竖图右侧溢出。

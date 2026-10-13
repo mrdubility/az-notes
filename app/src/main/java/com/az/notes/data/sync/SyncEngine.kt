@@ -397,14 +397,14 @@ class SyncEngine @Inject constructor(
 
         // 执行顺序：改名先于其他操作（后续操作以新路径为准）；冲突副本先于同路径的覆盖
         val ordered = ops.sortedBy { opPriority(it.type) }
-        // 已处理的冲突记录清理：副本已被合并 / 删除（记录早于本轮）→ 移除该条，角标随之
-        // 消失；副本尚在的记录保留（未处理）。不能按「空计划」整体清空：冲突副本本身在
-        // 下一轮就会达成两端一致（空计划），会把尚未查看的记录一并误清——此前实现即如此，
-        // 导致冲突记录几乎从未可见
+        // 已处理的冲突记录清理：副本已被合并 / 删除，或无副本（二进制 / 图片冲突不可合并，
+        // 记录仅作告知）→ 移除该条，角标随之消失；副本尚在的文本冲突记录保留（未处理）。
+        // 不能按「空计划」整体清空：冲突副本本身在下一轮就会达成两端一致（空计划），
+        // 会把尚未查看的记录一并误清
         withContext(Dispatchers.IO) {
             val stale = conflictRecordDao.getAll(ref.id).filter {
                 it.createdAt < planStartedAt &&
-                    it.backupPath.isNotEmpty() && !File(vault, it.backupPath).exists()
+                    (it.backupPath.isEmpty() || !File(vault, it.backupPath).exists())
             }
             if (stale.isNotEmpty()) conflictRecordDao.deleteByIds(stale.map { it.id })
         }

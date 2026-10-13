@@ -162,6 +162,8 @@
     <string name="editor_tool_unindent">Outdent</string>
     <string name="editor_tool_link">Link</string>
     <string name="editor_tool_wikilink">Wikilink</string>
+    <string name="editor_wikilink_search">Search notes or aliases</string>
+    <string name="editor_wikilink_empty">No matches</string>
     <string name="editor_tool_image">Image</string>
     <string name="editor_tool_property">Property</string>
 
@@ -530,6 +532,7 @@
     <string name="reader_info_name">File name</string>
     <string name="reader_info_path">Location</string>
     <string name="reader_info_size">Size</string>
+    <string name="reader_info_created">Created</string>
     <string name="reader_info_modified">Modified</string>
     <string name="reader_info_chars">Characters</string>
     <string name="reader_info_lines">Lines</string>

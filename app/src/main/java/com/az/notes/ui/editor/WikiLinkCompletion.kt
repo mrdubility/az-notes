@@ -2,43 +2,64 @@ package com.az.notes.ui.editor
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Label
+import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import com.az.notes.R
 import com.az.notes.domain.markdown.NoteAlias
 
 /**
- * `[[` 内联补全：编辑器光标处于未闭合 `[[` 上下文时，在键盘上方给出
- * 「文件名 + aliases 别名」候选条，点选即以 `[[目标]]` 替换查询片段并闭合。
+ * `[[` 内联补全：编辑器光标处于未闭合 `[[` 上下文时弹出浮层（搜索框 + 竖向候选列表），
+ * 点选即以 `[[目标]]` 替换查询片段并闭合。
  *
  * 与渲染链同套保护口径（见 [com.az.notes.domain.markdown.WikiLinkTransformer]）：
  * 转义 `\[[`、行内代码、围栏代码块内不触发；查询片段跨行 / 已闭合 / 含
  * `#` `|` `[` `]` 时也不触发（避免与显示别名、标题锚点语法歧义）。
  */
 
-/** `[[` 补全的候选条一次最多展示的条数。 */
-internal const val WIKI_COMPLETE_LIMIT = 20
+/** `[[` 补全浮层的候选列表一次最多展示的条数。 */
+private const val WIKI_PICKER_LIMIT = 200
 
 /**
  * 补全查询上下文：[start] 为 `[[` 起始偏移，[end] 为替换终点（光标；光标后紧随
@@ -143,72 +164,146 @@ fun filterWikiLinkCandidates(
 }
 
 /**
- * `[[` 补全候选条（工具栏上方一行，横向滚动）：点选即插入并闭合。
- * 别名条目带标签图标并以独立底色区分（副显对应真名）。
+ * `[[` 补全浮层：搜索框（自动聚焦）+ 竖向候选列表。点选回传 [onPick]（由调用方完成
+ * 文本替换与闭合）；点遮罩 / 系统返回关闭（继续手打）。
+ * [candidates] 为 null 表示索引构建中（显示加载指示）。
  */
 @Composable
-internal fun WikiLinkSuggestionBar(
-    items: List<WikiLinkCandidate>,
-    onPick: (WikiLinkCandidate) -> Unit
+internal fun WikiLinkPickerDialog(
+    initialQuery: String,
+    candidates: List<WikiLinkCandidate>?,
+    onPick: (WikiLinkCandidate) -> Unit,
+    onDismiss: () -> Unit
 ) {
-    LazyRow(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surfaceVariant),
-        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    var search by remember { mutableStateOf(initialQuery) }
+    val searchFocus = remember { FocusRequester() }
+    // 等一帧布局完成后再请求焦点，避免输入框未就绪焦点被吞（同搜索页做法）
+    LaunchedEffect(Unit) {
+        withFrameNanos { }
+        searchFocus.requestFocus()
+    }
+    val filtered = remember(search, candidates) {
+        candidates?.let { filterWikiLinkCandidates(it, search, WIKI_PICKER_LIMIT) }
+    }
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            decorFitsSystemWindows = false
+        )
     ) {
-        items(
-            items = items,
-            key = { "${it.isAlias}\u0000${it.label}\u0000${it.insertText}" }
-        ) { item ->
-            Surface(
-                shape = RoundedCornerShape(10.dp),
-                color = if (item.isAlias) {
-                    MaterialTheme.colorScheme.secondaryContainer
-                } else {
-                    MaterialTheme.colorScheme.surface
-                },
+        Box(
+            Modifier
+                .fillMaxSize()
+                .imePadding()
+        ) {
+            Box(
                 modifier = Modifier
-                    .widthIn(max = 220.dp)
-                    .clickable { onPick(item) }
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.32f))
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = onDismiss
+                    )
+            )
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surface,
+                shadowElevation = 8.dp,
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .statusBarsPadding()
+                    .navigationBarsPadding()
+                    .fillMaxWidth(0.92f)
+                    .fillMaxHeight(0.66f)
+                    // 卡片内点击不穿透到遮罩（空动作仅消费事件）
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) {}
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
-                ) {
-                    if (item.isAlias) {
-                        Icon(
-                            Icons.Filled.Label,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onSecondaryContainer,
-                            modifier = Modifier.size(14.dp)
-                        )
-                        Spacer(Modifier.width(4.dp))
-                    }
-                    Column {
-                        Text(
-                            text = item.label,
-                            style = MaterialTheme.typography.labelLarge,
-                            color = if (item.isAlias) {
-                                MaterialTheme.colorScheme.onSecondaryContainer
-                            } else {
-                                MaterialTheme.colorScheme.onSurface
-                            },
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        item.detail?.let { detail ->
+                Column {
+                    OutlinedTextField(
+                        value = search,
+                        onValueChange = { search = it },
+                        singleLine = true,
+                        placeholder = { Text(stringResource(R.string.editor_wikilink_search)) },
+                        leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 12.dp)
+                            .focusRequester(searchFocus)
+                    )
+                    HorizontalDivider()
+                    when {
+                        filtered == null -> Box(
+                            Modifier.fillMaxSize(),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            CircularProgressIndicator()
+                        }
+
+                        filtered.isEmpty() -> Box(
+                            Modifier.fillMaxSize(),
+                            contentAlignment = Alignment.Center
+                        ) {
                             Text(
-                                text = detail,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
+                                text = stringResource(R.string.editor_wikilink_empty),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
+                        }
+
+                        else -> LazyColumn(Modifier.fillMaxSize()) {
+                            items(
+                                items = filtered,
+                                key = { "${it.isAlias}\u0000${it.label}\u0000${it.insertText}" }
+                            ) { item ->
+                                WikiLinkPickerRow(item = item, onClick = { onPick(item) })
+                            }
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+/** 补全浮层行：主名称 + 副信息（目录 / 别名对应真名），别名条目带标签图标。 */
+@Composable
+private fun WikiLinkPickerRow(item: WikiLinkCandidate, onClick: () -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 10.dp)
+    ) {
+        if (item.isAlias) {
+            Icon(
+                Icons.Filled.Label,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(16.dp)
+            )
+            Spacer(Modifier.width(8.dp))
+        }
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = item.label,
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            item.detail?.let { detail ->
+                Text(
+                    text = detail,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
         }
     }

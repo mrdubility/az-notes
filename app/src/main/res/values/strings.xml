@@ -162,6 +162,8 @@
     <string name="editor_tool_unindent">反缩进</string>
     <string name="editor_tool_link">链接</string>
     <string name="editor_tool_wikilink">双链</string>
+    <string name="editor_wikilink_search">搜索笔记或别名</string>
+    <string name="editor_wikilink_empty">无匹配结果</string>
     <string name="editor_tool_image">图片</string>
     <string name="editor_tool_property">属性</string>
 
@@ -530,6 +532,7 @@
     <string name="reader_info_name">文件名</string>
     <string name="reader_info_path">位置</string>
     <string name="reader_info_size">大小</string>
+    <string name="reader_info_created">创建时间</string>
     <string name="reader_info_modified">修改时间</string>
     <string name="reader_info_chars">字符数</string>
     <string name="reader_info_lines">行数</string>

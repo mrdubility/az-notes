@@ -203,7 +203,10 @@ class EditorViewModel @Inject constructor(
                     if (target.exists()) return@withContext false
                     // 先保存未落盘内容，避免改名后丢失编辑
                     if (current.dirty) vaultRepository.writeTextAtomically(absolutePath, current.text)
-                    vaultRepository.rename(absolutePath, target.absolutePath)
+                    if (!vaultRepository.rename(absolutePath, target.absolutePath)) return@withContext false
+                    // 改名视为一次修改：刷新修改时间（文件系统 rename 默认保留旧 mtime）
+                    target.setLastModified(System.currentTimeMillis())
+                    true
                 }
             }.getOrDefault(false)
             if (ok) {
@@ -307,7 +310,10 @@ class EditorViewModel @Inject constructor(
                 withContext(Dispatchers.IO) {
                     // 先保存未落盘内容，避免移动后丢失编辑
                     if (current.dirty) vaultRepository.writeTextAtomically(absolutePath, current.text)
-                    vaultRepository.rename(absolutePath, target.absolutePath)
+                    if (!vaultRepository.rename(absolutePath, target.absolutePath)) return@withContext false
+                    // 移动视为一次修改：刷新修改时间（文件系统 rename 默认保留旧 mtime）
+                    target.setLastModified(System.currentTimeMillis())
+                    true
                 }
             }.getOrDefault(false)
             if (ok) {
