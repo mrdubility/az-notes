@@ -183,12 +183,14 @@ fun HomeScreen(
             }
     }
 
-    // 回到顶部：列表下滑离开顶部一定距离后于页面顶部右侧浮现，点按平滑滚回列表顶部
+    // 回到顶部：与新建浮层同步显隐——向上回划（浮层出现）且列表离开顶部一定距离后于页面顶部居中浮现；
+    // 回到列表顶部即消失
     val backTopThresholdPx = with(LocalDensity.current) { 48.dp.roundToPx() }
     val showBackTop by remember(listState) {
         derivedStateOf {
-            listState.firstVisibleItemIndex > 0 ||
-                listState.firstVisibleItemScrollOffset > backTopThresholdPx
+            fabVisible &&
+                (listState.firstVisibleItemIndex > 0 ||
+                    listState.firstVisibleItemScrollOffset > backTopThresholdPx)
         }
     }
 
@@ -444,7 +446,8 @@ fun HomeScreen(
                     onSearchHistoryClear = { viewModel.clearSearchHistory() },
                     onLoadMore = { viewModel.loadMore() }
                 )
-                // 回到顶部：下滑后浮现于页面顶部居中（搜索 / 多选态同样可用）
+                // 回到顶部：与新建浮层同步（向上回划出现）、离开顶部后浮现于页面顶部居中；
+                // 尺寸与下拉刷新指示器一致（容器 40dp、内部旋转图标 20dp）
                 AnimatedVisibility(
                     visible = showBackTop,
                     modifier = Modifier
@@ -455,7 +458,7 @@ fun HomeScreen(
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(36.dp)
+                            .size(40.dp)
                             .shadow(3.dp, CircleShape)
                             .clip(CircleShape)
                             .background(MaterialTheme.colorScheme.surfaceVariant)
@@ -466,7 +469,7 @@ fun HomeScreen(
                             imageVector = Icons.Outlined.VerticalAlignTop,
                             contentDescription = stringResource(R.string.home_back_to_top),
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(18.dp)
+                            modifier = Modifier.size(20.dp)
                         )
                     }
                 }
