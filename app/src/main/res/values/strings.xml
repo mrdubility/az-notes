@@ -161,6 +161,7 @@
     <string name="editor_tool_indent">缩进</string>
     <string name="editor_tool_unindent">反缩进</string>
     <string name="editor_tool_link">链接</string>
+    <string name="editor_tool_wikilink">双链</string>
     <string name="editor_tool_image">图片</string>
     <string name="editor_tool_property">属性</string>
 
@@ -606,8 +607,8 @@
     <string name="image_missing_placeholder">图片未找到</string>
     <string name="reader_image_loading">图片加载中…</string>
     <string name="reader_image_load_failed">图片加载失败</string>
-    <string name="reader_wiki_note_missing">未找到笔记：%1$s</string>
-    <string name="reader_wiki_create_note">新建笔记</string>
+    <string name="wiki_note_missing">未找到笔记：%1$s</string>
+    <string name="wiki_create_note">新建笔记</string>
     <string name="remote_image_disabled">已关闭网络图片加载</string>
     <string name="remote_image_private">已拒绝加载内网地址图片</string>
     <string name="remote_image_redirect">图片发生重定向，已阻止加载</string>

@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.HorizontalRule
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.InsertLink
 import androidx.compose.material.icons.filled.Label
+import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.StrikethroughS
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -97,6 +98,7 @@ private fun EditorTool.icon(): ImageVector = when (this) {
     EditorTool.INDENT -> Icons.AutoMirrored.Filled.FormatIndentIncrease
     EditorTool.UNINDENT -> Icons.AutoMirrored.Filled.FormatIndentDecrease
     EditorTool.LINK -> Icons.Filled.InsertLink
+    EditorTool.WIKILINK -> Icons.Filled.Link
     EditorTool.IMAGE -> Icons.Filled.Image
     EditorTool.PROPERTY -> Icons.Filled.Label
 }
@@ -123,6 +125,7 @@ private fun EditorTool.perform(textState: TextFieldState) {
         EditorTool.INDENT -> textState.indentLines()
         EditorTool.UNINDENT -> textState.unindentLines()
         EditorTool.LINK -> textState.wrapSelection("[", "](https://)")
+        EditorTool.WIKILINK -> textState.wrapSelection("[[", "]]")
         EditorTool.IMAGE -> textState.insertAtCursor("![]()", 2)
         EditorTool.PROPERTY -> textState.insertProperty()
     }

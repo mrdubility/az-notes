@@ -83,6 +83,7 @@ import com.az.notes.domain.ai.SystemNote
 import com.az.notes.domain.ai.SystemNoteMode
 import com.az.notes.domain.ai.ToolCallRecord
 import com.az.notes.domain.ai.ToolSpecs
+import com.az.notes.domain.markdown.WikiLinkTransformer
 import com.az.notes.ui.common.UiText
 import com.az.notes.ui.common.azNotesMarkdownTypography
 import com.az.notes.ui.common.resolve
@@ -617,6 +618,7 @@ private fun StreamingMarkdownBlocks(
  * 成本 <1ms）并直接构造 [State.Success]，首帧即就绪，消除 mikepenz 默认路径
  * 「重建 state → Loading 空帧 → 异步解析完成」的周期性高度塌陷（流式跳动根因）；
  * 内容不变时 remember 命中，重组零解析开销。解析异常兜底渲染纯文本（保内容可见）。
+ * Wikilink（`[[笔记]]`）在解析前转标准链接语法（点击经所在页 UriHandler 拦截跳转）；
  * 引用式链接定义经 [collectLinkDefinitions] 同步收集后交由渲染期解析。
  * 超长单块（罕见）若出现主线程卡顿，再降级为大块异步策略。
  */
@@ -630,9 +632,10 @@ private fun MarkdownBlock(
 ) {
     val state = remember(block) {
         runCatching {
-            val ast = parser.buildMarkdownTreeFromString(block)
-            collectLinkDefinitions(ast, block) { label, destination -> linkHandler.store(label, destination) }
-            State.Success(ast, block, linksLookedUp = true, referenceLinkHandler = linkHandler)
+            val content = WikiLinkTransformer.transform(block)
+            val ast = parser.buildMarkdownTreeFromString(content)
+            collectLinkDefinitions(ast, content) { label, destination -> linkHandler.store(label, destination) }
+            State.Success(ast, content, linksLookedUp = true, referenceLinkHandler = linkHandler)
         }.getOrNull()
     }
     if (state == null) {

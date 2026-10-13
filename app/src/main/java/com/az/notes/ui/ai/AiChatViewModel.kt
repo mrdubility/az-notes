@@ -15,6 +15,7 @@ import com.az.notes.data.ai.ImagePrepResult
 import com.az.notes.data.ai.LastChatSelection
 import com.az.notes.data.media.AttachmentRepository
 import com.az.notes.data.settings.SettingsRepository
+import com.az.notes.data.storage.VaultNameIndex
 import com.az.notes.data.storage.VaultRepository
 import com.az.notes.domain.ai.AiError
 import com.az.notes.domain.ai.AiModel
@@ -27,6 +28,7 @@ import com.az.notes.domain.ai.StreamEvent
 import com.az.notes.domain.ai.SystemNoteMode
 import com.az.notes.domain.ai.ToolCallRecord
 import com.az.notes.domain.markdown.ImageReference
+import com.az.notes.domain.markdown.WikiLinkResolver
 import com.az.notes.domain.model.AppSettings
 import com.az.notes.domain.model.FileNode
 import com.az.notes.ui.common.UiText
@@ -99,6 +101,7 @@ class AiChatViewModel @Inject constructor(
     private val imagePreparer: AiImagePreparer,
     private val syncScheduler: SyncScheduler,
     private val vaultRepository: VaultRepository,
+    private val vaultNameIndex: VaultNameIndex,
     private val attachmentRepository: AttachmentRepository,
     private val settingsRepository: SettingsRepository
 ) : ViewModel() {
@@ -816,6 +819,31 @@ class AiChatViewModel @Inject constructor(
     /** 消费导出完成数据（Snackbar 展示后置空）；传入 [current] 时仅当仍是同一条才清除。 */
     fun consumeExportDone(current: ExportDone? = null) {
         if (current == null || _exportDone.value == current) _exportDone.value = null
+    }
+
+    /**
+     * Wikilink 点击解析：目标原文（可含 `#锚点`）→ 仓库内笔记绝对路径；未命中返回 null
+     * （UI 层提示并提供新建入口）。对话页无「当前笔记」上下文，同目录维度不参与。
+     */
+    suspend fun resolveWikiTarget(target: String): String? = withContext(Dispatchers.IO) {
+        val filePart = target.substringBefore('#').trim()
+        if (filePart.isEmpty()) return@withContext null
+        val vaultPath = runCatching { settingsRepository.settings.first().vaultPath }.getOrNull()
+            ?: return@withContext null
+        val root = File(vaultPath).normalize()
+        WikiLinkResolver.resolve(filePart, root, null, vaultNameIndex.names(root))?.absolutePath
+    }
+
+    /** 未解析链接的「新建笔记」：按目标相对路径落盘空文件；越界 / 失败返回 null。 */
+    suspend fun createWikiNote(target: String): String? = withContext(Dispatchers.IO) {
+        val vaultPath = runCatching { settingsRepository.settings.first().vaultPath }.getOrNull()
+            ?: return@withContext null
+        val root = File(vaultPath).normalize()
+        val file = WikiLinkResolver.createNotePath(target, root) ?: return@withContext null
+        val ok = file.isFile || vaultRepository.createFile(file.absolutePath, "")
+        if (!ok) return@withContext null
+        vaultNameIndex.invalidate()
+        file.absolutePath
     }
 
     // ---------------------------------------------------------------- 会话与模型

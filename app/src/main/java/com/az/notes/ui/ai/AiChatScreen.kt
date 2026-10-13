@@ -48,6 +48,7 @@ import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -67,6 +68,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -75,6 +77,7 @@ import com.az.notes.R
 import com.az.notes.data.ai.AiDiag
 import com.az.notes.domain.ai.ChatRole
 import com.az.notes.domain.ai.MessageStatus
+import com.az.notes.ui.common.rememberWikiLinkUriHandler
 import com.az.notes.ui.common.resolve
 import com.az.notes.ui.common.showTimedSnackbar
 import com.az.notes.ui.components.MoveTargetDialog
@@ -142,6 +145,13 @@ fun AiChatScreen(
     )
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
+    // Wikilink 点击：az-note: 目标经 ViewModel 解析跳转；未命中给出「新建笔记」入口
+    val wikiUriHandler = rememberWikiLinkUriHandler(
+        snackbarHostState = snackbarHostState,
+        resolve = viewModel::resolveWikiTarget,
+        onOpen = onOpenNote,
+        onCreate = viewModel::createWikiNote
+    )
     // 底部输入区实测高度（px）：Snackbar 据此抬高，避免遮挡输入卡与功能行
     var inputAreaHeightPx by remember { mutableStateOf(0) }
     // 输入卡焦点目标（错误条 / 外部入口聚焦复用）
@@ -471,51 +481,53 @@ fun AiChatScreen(
                 } else {
                     // 普通布局：最早在上、最新在下。底部最新消息流式增长由顶部锚定自然
                     // 吸收（翻看上文画面静止），贴底跟随由内容驱动的快照滚动保持
-                    LazyColumn(
-                        state = listState,
-                        modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(vertical = 8.dp)
-                    ) {
-                        items(items = messages, key = { it.id }) { message ->
-                            when (message.role) {
-                                ChatRole.USER -> UserBubble(
-                                    message = message,
-                                    busy = generating,
-                                    onCopy = { copyToClipboard(message.text) },
-                                    onEditResend = {
-                                        // 主动重发路径同样强制跟随
-                                        resumeFollow("edit_resend")
-                                        viewModel.editResend(message.id)
-                                    },
-                                    onExportSelect = { viewModel.openExport(message.id) }
-                                )
+                    CompositionLocalProvider(LocalUriHandler provides wikiUriHandler) {
+                        LazyColumn(
+                            state = listState,
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding = PaddingValues(vertical = 8.dp)
+                        ) {
+                            items(items = messages, key = { it.id }) { message ->
+                                when (message.role) {
+                                    ChatRole.USER -> UserBubble(
+                                        message = message,
+                                        busy = generating,
+                                        onCopy = { copyToClipboard(message.text) },
+                                        onEditResend = {
+                                            // 主动重发路径同样强制跟随
+                                            resumeFollow("edit_resend")
+                                            viewModel.editResend(message.id)
+                                        },
+                                        onExportSelect = { viewModel.openExport(message.id) }
+                                    )
 
-                                ChatRole.SYSTEM -> message.systemNote?.let { note ->
-                                    SystemNoteRow(note)
+                                    ChatRole.SYSTEM -> message.systemNote?.let { note ->
+                                        SystemNoteRow(note)
+                                    }
+
+                                    else -> AssistantBlock(
+                                        message = message,
+                                        error = error,
+                                        busy = generating,
+                                        toolRunning = if (message.status == MessageStatus.STREAMING) {
+                                            toolStatus
+                                        } else {
+                                            null
+                                        },
+                                        onCopy = { copyToClipboard(message.text) },
+                                        onRegenerate = {
+                                            // 主动重新生成路径同样强制跟随
+                                            resumeFollow("regenerate")
+                                            viewModel.regenerate(message.id)
+                                        },
+                                        onRetry = {
+                                            resumeFollow("retry")
+                                            viewModel.regenerate(message.id)
+                                        },
+                                        onOpenSettings = onOpenProviders,
+                                        onExportSelect = { viewModel.openExport(message.id) }
+                                    )
                                 }
-
-                                else -> AssistantBlock(
-                                    message = message,
-                                    error = error,
-                                    busy = generating,
-                                    toolRunning = if (message.status == MessageStatus.STREAMING) {
-                                        toolStatus
-                                    } else {
-                                        null
-                                    },
-                                    onCopy = { copyToClipboard(message.text) },
-                                    onRegenerate = {
-                                        // 主动重新生成路径同样强制跟随
-                                        resumeFollow("regenerate")
-                                        viewModel.regenerate(message.id)
-                                    },
-                                    onRetry = {
-                                        resumeFollow("retry")
-                                        viewModel.regenerate(message.id)
-                                    },
-                                    onOpenSettings = onOpenProviders,
-                                    onExportSelect = { viewModel.openExport(message.id) }
-                                )
                             }
                         }
                     }

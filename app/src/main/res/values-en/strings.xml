@@ -161,6 +161,7 @@
     <string name="editor_tool_indent">Indent</string>
     <string name="editor_tool_unindent">Outdent</string>
     <string name="editor_tool_link">Link</string>
+    <string name="editor_tool_wikilink">Wikilink</string>
     <string name="editor_tool_image">Image</string>
     <string name="editor_tool_property">Property</string>
 
@@ -568,8 +569,8 @@
     <string name="image_missing_placeholder">Image not found</string>
     <string name="reader_image_loading">Loading image…</string>
     <string name="reader_image_load_failed">Failed to load image</string>
-    <string name="reader_wiki_note_missing">Note not found: %1$s</string>
-    <string name="reader_wiki_create_note">Create note</string>
+    <string name="wiki_note_missing">Note not found: %1$s</string>
+    <string name="wiki_create_note">Create note</string>
     <string name="remote_image_disabled">Remote image loading is turned off</string>
     <string name="remote_image_private">Refused to load an image from a private address</string>
     <string name="remote_image_redirect">Image was redirected; loading blocked</string>

@@ -209,15 +209,7 @@ class ReaderViewModel @Inject constructor(
     /** 未解析链接的「新建笔记」：按目标相对路径落盘空文件；越界 / 失败返回 null。 */
     suspend fun createWikiNote(target: String): String? = withContext(Dispatchers.IO) {
         val root = wikiRoot ?: return@withContext null
-        val raw = target.substringBefore('#').trim().trimStart('/').replace('\\', '/')
-        val name = raw.substringAfterLast('/')
-        if (name.isEmpty()) return@withContext null
-        val rel = if (VaultRepository.isMarkdownName(name)) raw else "$raw.md"
-        val rootAbs = root.absolutePath
-        val file = File(root, rel).normalize()
-        if (file.absolutePath == rootAbs || !file.absolutePath.startsWith("$rootAbs${File.separator}")) {
-            return@withContext null
-        }
+        val file = WikiLinkResolver.createNotePath(target, root) ?: return@withContext null
         val ok = file.isFile || vaultRepository.createFile(file.absolutePath, "")
         if (!ok) return@withContext null
         vaultNameIndex.invalidate()

@@ -23,7 +23,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -38,7 +37,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -47,8 +45,8 @@ import coil3.compose.LocalPlatformContext
 import coil3.request.ImageRequest
 import coil3.size.Size as CoilSize
 import com.az.notes.R
-import com.az.notes.ui.common.WikiLinkUriHandler
 import com.az.notes.ui.common.azNotesMarkdownTypography
+import com.az.notes.ui.common.rememberWikiLinkUriHandler
 import com.az.notes.ui.common.resolve
 import com.az.notes.ui.common.showTimedSnackbar
 import com.mikepenz.markdown.compose.MarkdownElement
@@ -185,29 +183,12 @@ fun ReaderScreen(
     val remoteMaxBytes = state.remoteImageMaxBytes
 
     // Wikilink 点击：az-note: 目标经 ViewModel 解析跳转；未命中给出「新建笔记」入口
-    val context = LocalContext.current
-    val platformUriHandler = LocalUriHandler.current
-    val wikiUriHandler = remember(vaultRoot, state.path, snackbarHostState, onOpenNote) {
-        WikiLinkUriHandler(platformUriHandler) { target ->
-            val path = viewModel.resolveWikiTarget(target)
-            if (path != null) {
-                onOpenNote(path)
-            } else {
-                scope.launch {
-                    val result = snackbarHostState.showSnackbar(
-                        message = context.getString(
-                            R.string.reader_wiki_note_missing,
-                            target.substringBefore('#').trim()
-                        ),
-                        actionLabel = context.getString(R.string.reader_wiki_create_note)
-                    )
-                    if (result == SnackbarResult.ActionPerformed) {
-                        viewModel.createWikiNote(target)?.let(onOpenNote)
-                    }
-                }
-            }
-        }
-    }
+    val wikiUriHandler = rememberWikiLinkUriHandler(
+        snackbarHostState = snackbarHostState,
+        resolve = viewModel::resolveWikiTarget,
+        onOpen = onOpenNote,
+        onCreate = viewModel::createWikiNote
+    )
     // LazyColumn 单侧水平内边距：与下方 contentPadding 共用；同时传给 transformer 以修正
     // 库从 parentLayoutCoordinates 拿到的 containerSize 包含 padding 导致的竖图右侧溢出。
     val contentHPad = 16.dp

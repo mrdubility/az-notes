@@ -47,6 +47,24 @@ object WikiLinkResolver {
         return ordered.firstOrNull { it.isFile }
     }
 
+    /**
+     * 「新建笔记」目标路径：[target] 的仓库内落点（前导 `/` 与子路径按仓库根相对，
+     * 无 `.md` 后缀自动补齐）；越界或名称为空返回 null。仅做路径计算，不落盘。
+     */
+    fun createNotePath(target: String, vaultRoot: File): File? {
+        val raw = target.substringBefore('#').trim().trimStart('/').replace('\\', '/')
+        val name = raw.substringAfterLast('/')
+        if (name.isEmpty()) return null
+        val rel = if (VaultRepository.isMarkdownName(name)) raw else "$raw.md"
+        val root = vaultRoot.normalize()
+        val rootAbs = root.absolutePath
+        val file = File(root, rel).normalize()
+        if (file.absolutePath == rootAbs || !file.absolutePath.startsWith("$rootAbs${File.separator}")) {
+            return null
+        }
+        return file
+    }
+
     // ---------------------------------------------------------------- 内部
 
     /** 名称补 `.md` 后的文件（已带 Markdown 扩展则原样）。 */

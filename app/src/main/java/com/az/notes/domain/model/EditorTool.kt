@@ -21,6 +21,7 @@ enum class EditorTool(val id: String) {
     INDENT("indent"),
     UNINDENT("unindent"),
     LINK("link"),
+    WIKILINK("wikilink"),
     IMAGE("image"),
     PROPERTY("property");
 

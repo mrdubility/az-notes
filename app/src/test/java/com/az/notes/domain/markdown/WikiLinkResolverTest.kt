@@ -77,4 +77,28 @@ class WikiLinkResolverTest {
         assertNull(WikiLinkResolver.resolve("nope", vault, vault))
         assertNull(WikiLinkResolver.resolve("../outside", vault, vault))
     }
+
+    @Test
+    fun `createNotePath appends md and resolves from vault root`() {
+        val vault = temp.newFolder("vault")
+        assertEquals(
+            File(vault, "folder/my note.md").absolutePath,
+            WikiLinkResolver.createNotePath("folder/my note", vault)?.absolutePath
+        )
+        assertEquals(
+            File(vault, "note.md").absolutePath,
+            WikiLinkResolver.createNotePath("/note", vault)?.absolutePath
+        )
+        assertEquals(
+            File(vault, "x.md").absolutePath,
+            WikiLinkResolver.createNotePath("x.md#标题", vault)?.absolutePath
+        )
+    }
+
+    @Test
+    fun `createNotePath rejects empty and escaping targets`() {
+        val vault = temp.newFolder("vault")
+        assertNull(WikiLinkResolver.createNotePath("", vault))
+        assertNull(WikiLinkResolver.createNotePath("../outside", vault))
+    }
 }
