@@ -444,29 +444,29 @@ fun HomeScreen(
                     onSearchHistoryClear = { viewModel.clearSearchHistory() },
                     onLoadMore = { viewModel.loadMore() }
                 )
-                // 回到顶部：下滑后浮现于页面顶部右侧（搜索 / 多选态同样可用）
+                // 回到顶部：下滑后浮现于页面顶部居中（搜索 / 多选态同样可用）
                 AnimatedVisibility(
                     visible = showBackTop,
                     modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(top = 8.dp, end = 16.dp),
+                        .align(Alignment.TopCenter)
+                        .padding(top = 8.dp),
                     enter = fadeIn() + scaleIn(),
                     exit = fadeOut() + scaleOut()
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(44.dp)
-                            .shadow(4.dp, CircleShape)
+                            .size(36.dp)
+                            .shadow(3.dp, CircleShape)
                             .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.primary)
+                            .background(MaterialTheme.colorScheme.surfaceVariant)
                             .clickable { scope.launch { listState.animateScrollToItem(0) } },
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
                             imageVector = Icons.Outlined.VerticalAlignTop,
                             contentDescription = stringResource(R.string.home_back_to_top),
-                            tint = MaterialTheme.colorScheme.onPrimary,
-                            modifier = Modifier.size(22.dp)
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(18.dp)
                         )
                     }
                 }
