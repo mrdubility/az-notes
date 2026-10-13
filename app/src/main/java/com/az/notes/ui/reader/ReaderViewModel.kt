@@ -9,14 +9,18 @@ import com.az.notes.data.debug.DebugLogLevel
 import com.az.notes.data.debug.DebugLogRepository
 import com.az.notes.data.debug.DebugLogType
 import com.az.notes.data.settings.SettingsRepository
+import com.az.notes.data.storage.VaultNameIndex
 import com.az.notes.data.storage.VaultRepository
 import com.az.notes.domain.markdown.FrontmatterAttribute
 import com.az.notes.domain.markdown.FrontmatterParser
 import com.az.notes.domain.markdown.Heading
 import com.az.notes.domain.markdown.HeadingExtractor
+import com.az.notes.domain.markdown.ImageReference
 import com.az.notes.domain.markdown.MarkdownImageLifter
 import com.az.notes.domain.markdown.TaskExtractor
 import com.az.notes.domain.markdown.TaskItem
+import com.az.notes.domain.markdown.WikiLinkResolver
+import com.az.notes.domain.markdown.WikiLinkTransformer
 import com.az.notes.ui.common.UiText
 import com.az.notes.ui.common.toUiText
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -77,6 +81,7 @@ class ReaderViewModel @Inject constructor(
     private val vaultRepository: VaultRepository,
     private val settingsRepository: SettingsRepository,
     private val debugLogRepository: DebugLogRepository,
+    private val vaultNameIndex: VaultNameIndex,
     private val aiSession: AiChatSession
 ) : ViewModel() {
 
@@ -91,6 +96,13 @@ class ReaderViewModel @Inject constructor(
 
     /** 退出清理防重入（读盘 / 删除为异步，双击返回时避免重复执行）。 */
     private var exiting = false
+
+    /** Wikilink 解析上下文：打开笔记时建好，点击解析零 IO 等待。 */
+    @Volatile
+    private var wikiRoot: File? = null
+
+    @Volatile
+    private var wikiIndex: Map<String, List<String>> = emptyMap()
 
     init {
         load(showLoading = true)
@@ -119,7 +131,7 @@ class ReaderViewModel @Inject constructor(
                 withContext(Dispatchers.IO) {
                     val text = vaultRepository.readText(absolutePath)
                     val split = FrontmatterParser.split(text)
-                    val previewBody = MarkdownImageLifter.lift(split.body)
+                    val previewBody = preparePreviewBody(split.body, vault)
                     val noteType = split.value("note_type")?.trim()?.lowercase()
                     val parsed = HeadingExtractor.parse(previewBody)
                     val tasks = if (noteType == "task") TaskExtractor.extract(split.body) else emptyList()
@@ -156,6 +168,60 @@ class ReaderViewModel @Inject constructor(
         val prefix = vault.trimEnd('/') + "/"
         if (!absPath.startsWith(prefix)) return null
         return absPath.removePrefix(prefix)
+    }
+
+    /**
+     * 预览正文预处理：Wikilink 转标准语法 → 段落内图片抽离。转换在抽离之前——
+     * `![[图]]` 需先产出标准 `![](...)` 才能被 [MarkdownImageLifter] 识别；与
+     * [HeadingExtractor] 共用同一份产物，保证大纲 blockIndex 与列表下标不漂移。
+     */
+    private fun preparePreviewBody(body: String, vault: String?): String {
+        if (!body.contains("[[") || vault.isNullOrBlank()) return MarkdownImageLifter.lift(body)
+        val root = File(vault).normalize()
+        val index = vaultNameIndex.names(root)
+        val noteDir = File(absolutePath).parentFile
+        wikiRoot = root
+        wikiIndex = index
+        val transformed = WikiLinkTransformer.transform(body) { target ->
+            val file = ImageReference.resolveExisting(target, root, noteDir, index)
+                ?: WikiLinkResolver.resolve(target, root, noteDir, index)
+            file?.let { vaultRelativeOf(root, it) }
+        }
+        return MarkdownImageLifter.lift(transformed)
+    }
+
+    /** 绝对路径 → 相对 [root] 的仓库内路径（正斜杠分隔）。 */
+    private fun vaultRelativeOf(root: File, file: File): String =
+        file.absolutePath.removePrefix(root.absolutePath).trimStart('/', '\\')
+
+    /**
+     * Wikilink 点击解析：目标原文（可含 `#锚点`）→ 仓库内笔记绝对路径；
+     * 本文锚点（`#标题`）回到当前笔记；未命中返回 null（UI 层提示并提供新建入口）。
+     */
+    fun resolveWikiTarget(target: String): String? {
+        val filePart = target.substringBefore('#').trim()
+        if (filePart.isEmpty()) return if ('#' in target) absolutePath else null
+        val root = wikiRoot ?: return null
+        val noteDir = File(absolutePath).parentFile
+        return WikiLinkResolver.resolve(filePart, root, noteDir, wikiIndex)?.absolutePath
+    }
+
+    /** 未解析链接的「新建笔记」：按目标相对路径落盘空文件；越界 / 失败返回 null。 */
+    suspend fun createWikiNote(target: String): String? = withContext(Dispatchers.IO) {
+        val root = wikiRoot ?: return@withContext null
+        val raw = target.substringBefore('#').trim().trimStart('/').replace('\\', '/')
+        val name = raw.substringAfterLast('/')
+        if (name.isEmpty()) return@withContext null
+        val rel = if (VaultRepository.isMarkdownName(name)) raw else "$raw.md"
+        val rootAbs = root.absolutePath
+        val file = File(root, rel).normalize()
+        if (file.absolutePath == rootAbs || !file.absolutePath.startsWith("$rootAbs${File.separator}")) {
+            return@withContext null
+        }
+        val ok = file.isFile || vaultRepository.createFile(file.absolutePath, "")
+        if (!ok) return@withContext null
+        vaultNameIndex.invalidate()
+        file.absolutePath
     }
 
     /** 打开“文档信息”对话框：读取文件属性并统计正文字数（一次读取，关闭后清除）。 */

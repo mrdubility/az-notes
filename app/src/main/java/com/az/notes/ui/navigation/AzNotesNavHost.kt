@@ -127,6 +127,12 @@ fun AzNotesNavHost(
                 },
                 // 加入 AI 对话（B3）：附件已入待发列表，跳转聊天页
                 onAddToAiChat = { navController.navigate(Routes.AI_CHAT) },
+                // Wikilink 跳转：目标即当前笔记（如本文锚点）时不重复入栈
+                onOpenNote = { path ->
+                    if (path != entry.arguments?.getString("path")) {
+                        navController.navigateOrBack(entry, Routes.READER_BASE, path, Routes.reader(path))
+                    }
+                },
                 fresh = entry.arguments?.getBoolean("fresh") ?: false
             )
         }

@@ -23,9 +23,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -36,6 +38,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -43,6 +47,7 @@ import coil3.compose.LocalPlatformContext
 import coil3.request.ImageRequest
 import coil3.size.Size as CoilSize
 import com.az.notes.R
+import com.az.notes.ui.common.WikiLinkUriHandler
 import com.az.notes.ui.common.azNotesMarkdownTypography
 import com.az.notes.ui.common.resolve
 import com.az.notes.ui.common.showTimedSnackbar
@@ -78,6 +83,8 @@ fun ReaderScreen(
     onEdit: (String) -> Unit,
     /** 「加入 AI 对话」：附件已入待发列表后导航到聊天页 */
     onAddToAiChat: () -> Unit,
+    /** Wikilink 跳转：接收仓库内笔记绝对路径 */
+    onOpenNote: (String) -> Unit,
     /** 刚从“新建待办”进入：退出（顶栏返回 / 系统返回键）时若无条目则清理占位文件 */
     fresh: Boolean = false
 ) {
@@ -176,6 +183,31 @@ fun ReaderScreen(
     val vaultRoot = state.vaultPath
     val noteDir = remember(state.path) { File(state.path).parentFile }
     val remoteMaxBytes = state.remoteImageMaxBytes
+
+    // Wikilink 点击：az-note: 目标经 ViewModel 解析跳转；未命中给出「新建笔记」入口
+    val context = LocalContext.current
+    val platformUriHandler = LocalUriHandler.current
+    val wikiUriHandler = remember(vaultRoot, state.path, snackbarHostState, onOpenNote) {
+        WikiLinkUriHandler(platformUriHandler) { target ->
+            val path = viewModel.resolveWikiTarget(target)
+            if (path != null) {
+                onOpenNote(path)
+            } else {
+                scope.launch {
+                    val result = snackbarHostState.showSnackbar(
+                        message = context.getString(
+                            R.string.reader_wiki_note_missing,
+                            target.substringBefore('#').trim()
+                        ),
+                        actionLabel = context.getString(R.string.reader_wiki_create_note)
+                    )
+                    if (result == SnackbarResult.ActionPerformed) {
+                        viewModel.createWikiNote(target)?.let(onOpenNote)
+                    }
+                }
+            }
+        }
+    }
     // LazyColumn 单侧水平内边距：与下方 contentPadding 共用；同时传给 transformer 以修正
     // 库从 parentLayoutCoordinates 拿到的 containerSize 包含 padding 导致的竖图右侧溢出。
     val contentHPad = 16.dp
@@ -259,68 +291,70 @@ fun ReaderScreen(
                         onReorder = viewModel::reorderTasks
                     )
                 } else {
-                    Markdown(
-                        markdownState = markdownState,
-                        modifier = Modifier.fillMaxSize(),
-                        typography = azNotesMarkdownTypography(),
-                        imageTransformer = imageTransformer,
-                        annotator = annotator,
-                        animations = staticAnimations,
-                        success = { success, components, _ ->
-                            // 官方 success 插槽为 Column(不虚拟化)；此处换成 LazyColumn：
-                            // 块下标与 AST 顶层块一一对应，大文档只渲染可见块；
-                            // 文件名作首项（下标 0），正文块整体后移 1 位
-                            LazyColumn(
-                                state = listState,
-                                modifier = Modifier.fillMaxSize(),
-                                contentPadding = PaddingValues(horizontal = contentHPad, vertical = 12.dp)
-                            ) {
-                                item(key = "file_name_header") {
-                                    FileNameHeader(state.path.substringAfterLast('/'))
-                                }
-                                if (otherAttributes.isNotEmpty()) {
-                                    item(key = "note_attrs") {
-                                        NoteAttributesPanel(
-                                            attributes = otherAttributes,
-                                            expanded = attrsExpanded,
-                                            onToggleExpanded = { attrsExpanded = !attrsExpanded },
-                                            modifier = Modifier.padding(bottom = 12.dp)
-                                        )
+                    CompositionLocalProvider(LocalUriHandler provides wikiUriHandler) {
+                        Markdown(
+                            markdownState = markdownState,
+                            modifier = Modifier.fillMaxSize(),
+                            typography = azNotesMarkdownTypography(),
+                            imageTransformer = imageTransformer,
+                            annotator = annotator,
+                            animations = staticAnimations,
+                            success = { success, components, _ ->
+                                // 官方 success 插槽为 Column(不虚拟化)；此处换成 LazyColumn：
+                                // 块下标与 AST 顶层块一一对应，大文档只渲染可见块；
+                                // 文件名作首项（下标 0），正文块整体后移 1 位
+                                LazyColumn(
+                                    state = listState,
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentPadding = PaddingValues(horizontal = contentHPad, vertical = 12.dp)
+                                ) {
+                                    item(key = "file_name_header") {
+                                        FileNameHeader(state.path.substringAfterLast('/'))
                                     }
-                                }
-                                items(
-                                    items = success.node.children,
-                                    key = { node -> node.startOffset }
-                                ) { node ->
-                                    // 独立图片段落（lift 产物 `![](link)` 独占一段）自渲染：
-                                    // 首帧即按预读尺寸定盒，消除库占位两帧链（兜底 180sp →
-                                    // 真实尺寸）在向上回滚时引起的滚动锚点位移；其余块（含
-                                    // 图文混排 / 列表 / 引用内图片、远程图）仍走渲染库路径
-                                    val imageLink = remember(node, success.content) {
-                                        standaloneImageLink(success.content, node)
+                                    if (otherAttributes.isNotEmpty()) {
+                                        item(key = "note_attrs") {
+                                            NoteAttributesPanel(
+                                                attributes = otherAttributes,
+                                                expanded = attrsExpanded,
+                                                onToggleExpanded = { attrsExpanded = !attrsExpanded },
+                                                modifier = Modifier.padding(bottom = 12.dp)
+                                            )
+                                        }
                                     }
-                                    if (imageLink != null &&
-                                        !vaultRoot.isNullOrBlank() &&
-                                        noteDir != null
-                                    ) {
-                                        AzImageBlock(
-                                            link = imageLink,
-                                            vaultRoot = vaultRoot,
-                                            baseDir = noteDir,
-                                            onImageClick = { file -> previewImage = file }
-                                        )
-                                    } else {
-                                        MarkdownElement(
-                                            node = node,
-                                            components = components,
-                                            content = success.content,
-                                            skipLinkDefinition = success.linksLookedUp
-                                        )
+                                    items(
+                                        items = success.node.children,
+                                        key = { node -> node.startOffset }
+                                    ) { node ->
+                                        // 独立图片段落（lift 产物 `![](link)` 独占一段）自渲染：
+                                        // 首帧即按预读尺寸定盒，消除库占位两帧链（兜底 180sp →
+                                        // 真实尺寸）在向上回滚时引起的滚动锚点位移；其余块（含
+                                        // 图文混排 / 列表 / 引用内图片、远程图）仍走渲染库路径
+                                        val imageLink = remember(node, success.content) {
+                                            standaloneImageLink(success.content, node)
+                                        }
+                                        if (imageLink != null &&
+                                            !vaultRoot.isNullOrBlank() &&
+                                            noteDir != null
+                                        ) {
+                                            AzImageBlock(
+                                                link = imageLink,
+                                                vaultRoot = vaultRoot,
+                                                baseDir = noteDir,
+                                                onImageClick = { file -> previewImage = file }
+                                            )
+                                        } else {
+                                            MarkdownElement(
+                                                node = node,
+                                                components = components,
+                                                content = success.content,
+                                                skipLinkDefinition = success.linksLookedUp
+                                            )
+                                        }
                                     }
                                 }
                             }
-                        }
-                    )
+                        )
+                    }
                 }
             }
         }
