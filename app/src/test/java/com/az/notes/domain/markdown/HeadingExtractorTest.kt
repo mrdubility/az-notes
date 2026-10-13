@@ -1,6 +1,7 @@
 package com.az.notes.domain.markdown
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 /**
@@ -44,5 +45,28 @@ class HeadingExtractorTest {
         assertEquals(2, headings.size)
         assertEquals("Real", headings[0].text)
         assertEquals("Also real", headings[1].text)
+    }
+
+    @Test
+    fun `findBlockByTitle matches exact then case-insensitive then prefix`() {
+        val headings = HeadingExtractor.extract(
+            """
+            # 安装
+            body
+            # 安装步骤
+            body
+            # Install Guide
+            body
+            """.trimIndent()
+        )
+        // 精确命中优先于前缀
+        assertEquals(headings[0].blockIndex, HeadingExtractor.findBlockByTitle(headings, "安装"))
+        // 忽略大小写
+        assertEquals(headings[2].blockIndex, HeadingExtractor.findBlockByTitle(headings, "install guide"))
+        // 无精确命中时前缀命中
+        assertEquals(headings[1].blockIndex, HeadingExtractor.findBlockByTitle(headings, "安装步"))
+        // 无命中 / 空串返回 null
+        assertNull(HeadingExtractor.findBlockByTitle(headings, "不存在"))
+        assertNull(HeadingExtractor.findBlockByTitle(headings, "  "))
     }
 }

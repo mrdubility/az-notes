@@ -32,6 +32,7 @@ import coil3.request.ImageRequest
 import coil3.size.Size as CoilSize
 import com.az.notes.R
 import com.az.notes.domain.markdown.ImageReference
+import com.az.notes.domain.markdown.WikiLinkTransformer
 import org.intellij.markdown.MarkdownElementTypes
 import org.intellij.markdown.ast.ASTNode
 import java.io.File
@@ -102,18 +103,37 @@ internal fun AzImageBlock(
         ?.painter?.intrinsicSize?.takeIf { it.isSpecified }
     val imgSize: Size? = preSize ?: decodedSize
 
-    val boxModifier = if (imgSize != null && imgSize.width > 0f && imgSize.height > 0f) {
-        // 盒宽 = min(图宽, 容器宽)：widthIn 先把内层 maxWidth 收到图宽（不放大父约束），
-        // fillMaxWidth 再取满；aspectRatio 以宽定高。首帧即最终尺寸 → 滚动锚点零位移。
-        Modifier
-            .widthIn(max = imgSize.width.dp)
-            .fillMaxWidth()
-            .aspectRatio(imgSize.width / imgSize.height)
-    } else {
-        // 尺寸完全未知（预读失败且解码未完成）：沿用库兜底盒高度，解码后收敛
-        Modifier
-            .fillMaxWidth()
-            .height(180.dp)
+    // `![[图|宽]]` / `![[图|宽x高]]` 的尺寸参数（转换产物挂在链接 fragment 上）
+    val wikiSize = remember(link) { WikiLinkTransformer.sizeSpecOf(link) }
+
+    val boxModifier = when {
+        wikiSize != null -> {
+            // 指定宽度：盒宽 = min(指定宽, 容器宽)；高度按指定值或原图比例
+            val (specWidth, specHeight) = wikiSize
+            val base = Modifier.widthIn(max = specWidth.dp).fillMaxWidth()
+            when {
+                specHeight != null -> base.height(specHeight.dp)
+                imgSize != null && imgSize.width > 0f && imgSize.height > 0f ->
+                    base.aspectRatio(imgSize.width / imgSize.height)
+                else -> base.height(specWidth.dp)
+            }
+        }
+
+        imgSize != null && imgSize.width > 0f && imgSize.height > 0f -> {
+            // 盒宽 = min(图宽, 容器宽)：widthIn 先把内层 maxWidth 收到图宽（不放大父约束），
+            // fillMaxWidth 再取满；aspectRatio 以宽定高。首帧即最终尺寸 → 滚动锚点零位移。
+            Modifier
+                .widthIn(max = imgSize.width.dp)
+                .fillMaxWidth()
+                .aspectRatio(imgSize.width / imgSize.height)
+        }
+
+        else -> {
+            // 尺寸完全未知（预读失败且解码未完成）：沿用库兜底盒高度，解码后收敛
+            Modifier
+                .fillMaxWidth()
+                .height(180.dp)
+        }
     }
 
     when (state) {

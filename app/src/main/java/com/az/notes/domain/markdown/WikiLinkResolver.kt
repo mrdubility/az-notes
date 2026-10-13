@@ -3,11 +3,18 @@ package com.az.notes.domain.markdown
 import com.az.notes.data.storage.VaultRepository
 import java.io.File
 
+/** 别名索引条目：别名原文 + 声明该别名的笔记相对路径。 */
+data class NoteAlias(val name: String, val relativePath: String)
+
+/** Wikilink 解析命中的跳转目标：仓库内绝对路径 + 可选标题锚点（`[[X#标题]]` 的标题段）。 */
+data class WikiLinkTarget(val path: String, val anchor: String?)
+
 /**
  * Wikilink 笔记目标解析：目标串（已去别名 / 锚点）→ 仓库内笔记文件。
  *
  * 解析链（对齐 Obsidian 行为）：
- *  - 裸文件名：笔记同目录 → 仓库根 → [nameIndex] 全库文件名匹配（同名多个时消歧）；
+ *  - 裸文件名：笔记同目录 → 仓库根 → [nameIndex] 全库文件名匹配 → aliases
+ *    frontmatter 声明的别名匹配（同名多个时消歧）；
  *  - 含 `/` 或前导 `/`：从仓库根起算（Obsidian 语义），无 `.md` 后缀自动补齐。
  *
  * 同名消歧（确定性规则）：同目录优先 → 路径层级最少 → 路径字典序最小。Obsidian 的
@@ -24,12 +31,14 @@ object WikiLinkResolver {
      * @param nameIndex 文件名（小写）→ 仓库内相对路径列表（见
      *                  [com.az.notes.data.storage.VaultNameIndex]）；不传时只做
      *                  同目录 / 仓库根两处局部解析。
+     * @param aliasIndex 别名（小写）→ 声明条目的列表；仅裸名目标参与（别名不表达路径）。
      */
     fun resolve(
         target: String,
         vaultRoot: File,
         noteDir: File?,
-        nameIndex: Map<String, List<String>> = emptyMap()
+        nameIndex: Map<String, List<String>> = emptyMap(),
+        aliasIndex: Map<String, List<NoteAlias>> = emptyMap()
     ): File? {
         val cleaned = target.trim().trimStart('/').replace('\\', '/')
         if (cleaned.isEmpty()) return null
@@ -43,6 +52,7 @@ object WikiLinkResolver {
         noteFile(root, cleaned).within(root)?.let { ordered += it }
         if (!slashed) {
             ordered += indexedHits(cleaned, root, nameIndex)
+            ordered += aliasHits(cleaned, root, noteDir, aliasIndex)
         }
         return ordered.firstOrNull { it.isFile }
     }
@@ -85,6 +95,26 @@ object WikiLinkResolver {
             .map { File(root, it).normalize() }
             .filter { it.within(root) != null && it.isFile }
             .sortedWith(compareBy({ it.absolutePath.count { c -> c == '/' } }, { it.absolutePath }))
+    }
+
+    /** 别名全库匹配：消歧同规则（额外先按同目录优先）。 */
+    private fun aliasHits(
+        name: String,
+        root: File,
+        noteDir: File?,
+        aliasIndex: Map<String, List<NoteAlias>>
+    ): List<File> {
+        if (aliasIndex.isEmpty()) return emptyList()
+        return aliasIndex[name.lowercase()].orEmpty()
+            .map { File(root, it.relativePath).normalize() }
+            .filter { it.within(root) != null && it.isFile }
+            .sortedWith(
+                compareBy(
+                    { if (noteDir != null && it.parentFile?.absolutePath == noteDir.absolutePath) 0 else 1 },
+                    { it.absolutePath.count { c -> c == '/' } },
+                    { it.absolutePath }
+                )
+            )
     }
 
     /** 越界护栏：路径不在仓库内时返回 null（与 [ImageReference] 同一判定）。 */

@@ -42,6 +42,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -111,6 +112,37 @@ fun EditorScreen(
     val textState = rememberTextFieldState()
     val scrollState = rememberScrollState()
     var layoutResult by remember { mutableStateOf<TextLayoutResult?>(null) }
+
+    // —— `[[` 双链内联补全：光标处于未闭合 `[[` 上下文时在工具栏上方弹候选条 ——
+    val linkQuery by remember {
+        derivedStateOf {
+            val selection = textState.selection
+            if (!selection.collapsed) null
+            else wikiLinkQueryAt(textState.text, selection.min)
+        }
+    }
+    val linkCandidates by viewModel.linkCandidates.collectAsStateWithLifecycle()
+    // 候选数据惰性加载：首次出现 `[[`（或 vaultPath 刚就绪）时后台构建一次
+    LaunchedEffect(linkQuery != null, state.vaultPath) {
+        if (linkQuery != null) viewModel.ensureLinkCandidates()
+    }
+    val completionItems = remember(linkQuery, linkCandidates) {
+        val query = linkQuery
+        val all = linkCandidates
+        if (query == null || all == null) emptyList()
+        else filterWikiLinkCandidates(all, query.text, WIKI_COMPLETE_LIMIT)
+    }
+    // 点选候选：以 `[[插入串]]` 替换查询片段（光标停到闭合后）；单次文本编辑可一步撤销
+    val pickWikiLink: (WikiLinkCandidate) -> Unit = { candidate ->
+        val ctx = wikiLinkQueryAt(textState.text, textState.selection.min)
+        if (ctx != null) {
+            textState.edit {
+                val snippet = "[[${candidate.insertText}]]"
+                replace(ctx.start, ctx.end, snippet)
+                selection = TextRange(ctx.start + snippet.length)
+            }
+        }
+    }
     // 笔记文本是否已灌入编辑器；配置重建时经 rememberSaveable 恢复，避免重复灌入
     var initialized by rememberSaveable { mutableStateOf(false) }
     // —— 输入法遮挡校正相关状态 ——
@@ -350,6 +382,11 @@ fun EditorScreen(
                             onTextLayout = { getResult -> layoutResult = getResult() }
                         )
                     }
+                }
+
+                // `[[` 补全候选条：紧贴工具栏上方（键盘上方），点选即插入闭合
+                if (linkQuery != null && completionItems.isNotEmpty()) {
+                    WikiLinkSuggestionBar(items = completionItems, onPick = pickWikiLink)
                 }
 
                 HorizontalDivider()

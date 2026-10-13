@@ -26,6 +26,12 @@ object WikiLinkTransformer {
     /** 笔记链接的私有 scheme：转换产物经它携带原始目标，点击时由 UI 层拦截。 */
     const val LINK_SCHEME = "az-note:"
 
+    /** 图片嵌入尺寸在链接上的标注前缀（fragment 形式：`/path#az-size=100x245`）。 */
+    const val SIZE_FRAGMENT_PREFIX = "az-size="
+
+    /** 尺寸参数（`100` / `100x245`）。 */
+    private val SIZE_SPEC = Regex("""(\d{1,4})(?:x(\d{1,4}))?""")
+
     /** `[[目标#锚点|别名]]` / `![[目标|参数]]`：分组依次为 嵌入标记 / 目标 / 锚点 / 别名。 */
     private val WIKI = Regex("""(!?)\[\[([^\[\]|\n#]*)(?:#([^\[\]|\n]*))?(?:\|([^\[\]\n]*))?]]""")
 
@@ -70,6 +76,22 @@ object WikiLinkTransformer {
         runCatching { URLDecoder.decode(encoded.replace("+", "%2B"), "UTF-8") }
             .getOrDefault(encoded)
 
+    /** `|100` / `|100x245` 形式的嵌入参数 → (宽, 高?)；非尺寸形式返回 null。 */
+    fun parseSizeSpec(param: String?): Pair<Int, Int?>? {
+        val match = SIZE_SPEC.matchEntire(param?.trim().orEmpty()) ?: return null
+        val width = match.groupValues[1].toIntOrNull() ?: return null
+        val height = match.groupValues[2].toIntOrNull()
+        if (width <= 0 || (height != null && height <= 0)) return null
+        return width to height
+    }
+
+    /** 读取图片嵌入产物 link 上的尺寸标注（见 [SIZE_FRAGMENT_PREFIX]）；无标注返回 null。 */
+    fun sizeSpecOf(link: String): Pair<Int, Int?>? {
+        val fragment = link.substringAfter('#', "")
+        if (!fragment.startsWith(SIZE_FRAGMENT_PREFIX)) return null
+        return parseSizeSpec(fragment.removePrefix(SIZE_FRAGMENT_PREFIX))
+    }
+
     // ---------------------------------------------------------------- 内部
 
     private fun transformLine(line: String, resolveEmbed: ((String) -> String?)?): String {
@@ -109,7 +131,12 @@ object WikiLinkTransformer {
                 return if (resolveEmbed == null) link(alias ?: target, full(target, anchor)) else null
             }
             if (VaultRepository.isImageName(resolved)) {
-                return "![](${encode("/$resolved")})"
+                // 尺寸参数（`|宽` / `|宽x高`）以 fragment 随链接传递，由独立图片块解析
+                val size = parseSizeSpec(alias)
+                val suffix = size?.let { (w, h) ->
+                    "#" + SIZE_FRAGMENT_PREFIX + w + (h?.let { "x$it" } ?: "")
+                } ?: ""
+                return "![](${encode("/$resolved")}$suffix)"
             }
             // 解析到笔记等非图片：嵌入降级为链接
             return link(alias ?: target, full(target, anchor))

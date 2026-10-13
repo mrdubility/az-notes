@@ -115,6 +115,10 @@ fun AzNotesNavHost(
                 navArgument("fresh") {
                     type = NavType.BoolType
                     defaultValue = false
+                },
+                navArgument("anchor") {
+                    type = NavType.StringType
+                    defaultValue = ""
                 }
             )
         ) { entry ->
@@ -127,10 +131,14 @@ fun AzNotesNavHost(
                 },
                 // 加入 AI 对话（B3）：附件已入待发列表，跳转聊天页
                 onAddToAiChat = { navController.navigate(Routes.AI_CHAT) },
-                // Wikilink 跳转：目标即当前笔记（如本文锚点）时不重复入栈
-                onOpenNote = { path ->
-                    if (path != entry.arguments?.getString("path")) {
+                // Wikilink 跳转（当前笔记的自锚点已由阅读器就地滚动，这里均为跨笔记目标）：
+                // 带锚点时直接入栈新页面（使目标页执行滚动，不复用栈内旧实例）；
+                // 无锚点走既有去重（上一页即目标时回退复用）
+                onOpenNote = { path, anchor ->
+                    if (anchor == null) {
                         navController.navigateOrBack(entry, Routes.READER_BASE, path, Routes.reader(path))
+                    } else {
+                        navController.navigate(Routes.reader(path, anchor = anchor))
                     }
                 },
                 fresh = entry.arguments?.getBoolean("fresh") ?: false
@@ -208,8 +216,8 @@ fun AzNotesNavHost(
                 onBack = { navController.popBackStackSafely(entry) },
                 // 空态 / 错误条的「去设置」：直达供应商管理页
                 onOpenProviders = { navController.navigate(Routes.AI_PROVIDERS) },
-                // 导出完成 Snackbar 的「查看」：跳阅读器（接收绝对路径）
-                onOpenNote = { path -> navController.navigate(Routes.reader(path)) }
+                // 导出完成 Snackbar 的「查看」与 AI 回答中的 wikilink：跳阅读器
+                onOpenNote = { path, anchor -> navController.navigate(Routes.reader(path, anchor = anchor)) }
             )
         }
 

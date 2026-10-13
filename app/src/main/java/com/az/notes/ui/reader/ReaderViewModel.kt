@@ -17,9 +17,11 @@ import com.az.notes.domain.markdown.Heading
 import com.az.notes.domain.markdown.HeadingExtractor
 import com.az.notes.domain.markdown.ImageReference
 import com.az.notes.domain.markdown.MarkdownImageLifter
+import com.az.notes.domain.markdown.NoteAlias
 import com.az.notes.domain.markdown.TaskExtractor
 import com.az.notes.domain.markdown.TaskItem
 import com.az.notes.domain.markdown.WikiLinkResolver
+import com.az.notes.domain.markdown.WikiLinkTarget
 import com.az.notes.domain.markdown.WikiLinkTransformer
 import com.az.notes.ui.common.UiText
 import com.az.notes.ui.common.toUiText
@@ -104,6 +106,15 @@ class ReaderViewModel @Inject constructor(
     @Volatile
     private var wikiIndex: Map<String, List<String>> = emptyMap()
 
+    @Volatile
+    private var wikiAliases: Map<String, List<NoteAlias>> = emptyMap()
+
+    /** 待滚动锚点：路由入参（`[[笔记#标题]]`）或页内点击（`[[#标题]]`）设置，滚动后消费。 */
+    private val _pendingAnchor = MutableStateFlow(
+        savedStateHandle.get<String>("anchor")?.ifEmpty { null }
+    )
+    val pendingAnchor: StateFlow<String?> = _pendingAnchor.asStateFlow()
+
     init {
         load(showLoading = true)
     }
@@ -179,12 +190,14 @@ class ReaderViewModel @Inject constructor(
         if (!body.contains("[[") || vault.isNullOrBlank()) return MarkdownImageLifter.lift(body)
         val root = File(vault).normalize()
         val index = vaultNameIndex.names(root)
+        val aliases = vaultNameIndex.aliases(root)
         val noteDir = File(absolutePath).parentFile
         wikiRoot = root
         wikiIndex = index
+        wikiAliases = aliases
         val transformed = WikiLinkTransformer.transform(body) { target ->
             val file = ImageReference.resolveExisting(target, root, noteDir, index)
-                ?: WikiLinkResolver.resolve(target, root, noteDir, index)
+                ?: WikiLinkResolver.resolve(target, root, noteDir, index, aliases)
             file?.let { vaultRelativeOf(root, it) }
         }
         return MarkdownImageLifter.lift(transformed)
@@ -195,15 +208,30 @@ class ReaderViewModel @Inject constructor(
         file.absolutePath.removePrefix(root.absolutePath).trimStart('/', '\\')
 
     /**
-     * Wikilink 点击解析：目标原文（可含 `#锚点`）→ 仓库内笔记绝对路径；
+     * Wikilink 点击解析：目标原文（可含 `#锚点`）→ 跳转目标（路径 + 标题锚点）；
      * 本文锚点（`#标题`）回到当前笔记；未命中返回 null（UI 层提示并提供新建入口）。
      */
-    fun resolveWikiTarget(target: String): String? {
+    fun resolveWikiTarget(target: String): WikiLinkTarget? {
+        val anchor = target.substringAfter('#', "").trim().ifEmpty { null }
         val filePart = target.substringBefore('#').trim()
-        if (filePart.isEmpty()) return if ('#' in target) absolutePath else null
+        if (filePart.isEmpty()) {
+            return if (anchor != null) WikiLinkTarget(absolutePath, anchor) else null
+        }
         val root = wikiRoot ?: return null
         val noteDir = File(absolutePath).parentFile
-        return WikiLinkResolver.resolve(filePart, root, noteDir, wikiIndex)?.absolutePath
+        val file = WikiLinkResolver.resolve(filePart, root, noteDir, wikiIndex, wikiAliases)
+            ?: return null
+        return WikiLinkTarget(file.absolutePath, anchor)
+    }
+
+    /** 请求滚动到本文指定标题（`[[#标题]]` 自锚点点击）。 */
+    fun requestAnchorScroll(anchor: String) {
+        _pendingAnchor.value = anchor
+    }
+
+    /** 锚点已消费（滚动执行或判定无命中后调用，避免重入页面时重放）。 */
+    fun consumeAnchor() {
+        _pendingAnchor.value = null
     }
 
     /** 未解析链接的「新建笔记」：按目标相对路径落盘空文件；越界 / 失败返回 null。 */

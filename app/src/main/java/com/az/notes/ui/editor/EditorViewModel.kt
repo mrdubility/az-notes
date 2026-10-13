@@ -9,6 +9,7 @@ import com.az.notes.data.media.AttachmentRepository
 import com.az.notes.data.media.ImageImportRepository
 import com.az.notes.data.media.ImportedMedia
 import com.az.notes.data.settings.SettingsRepository
+import com.az.notes.data.storage.VaultNameIndex
 import com.az.notes.data.storage.VaultRepository
 import com.az.notes.data.sync.SyncEngine
 import com.az.notes.domain.model.EditorTool
@@ -62,7 +63,8 @@ class EditorViewModel @Inject constructor(
     private val syncEngine: SyncEngine,
     private val syncScheduler: SyncScheduler,
     private val imageImportRepository: ImageImportRepository,
-    private val attachmentRepository: AttachmentRepository
+    private val attachmentRepository: AttachmentRepository,
+    private val vaultNameIndex: VaultNameIndex
 ) : ViewModel() {
 
     private var absolutePath: String =
@@ -73,6 +75,12 @@ class EditorViewModel @Inject constructor(
 
     private val _state = MutableStateFlow(EditorUiState(path = absolutePath))
     val state: StateFlow<EditorUiState> = _state.asStateFlow()
+
+    /** `[[` 补全候选全量列表（首次触发时后台构建；null = 尚未加载）。 */
+    private val _linkCandidates = MutableStateFlow<List<WikiLinkCandidate>?>(null)
+    val linkCandidates: StateFlow<List<WikiLinkCandidate>?> = _linkCandidates.asStateFlow()
+
+    private var linkCandidatesLoading = false
 
     private var autoSaveJob: Job? = null
 
@@ -236,6 +244,27 @@ class EditorViewModel @Inject constructor(
             if (vault.isNullOrBlank()) return@launch
             val dirs = withContext(Dispatchers.IO) { vaultRepository.listAllDirectories(vault) }
             _state.update { it.copy(moveTargets = dirs) }
+        }
+    }
+
+    /**
+     * 惰性加载 `[[` 补全候选（首次敲出 `[[` 时调用；含文件名与 aliases 声明，
+     * 全库扫描入 IO；失败静默留空，下次触发重试）。
+     */
+    fun ensureLinkCandidates() {
+        if (_linkCandidates.value != null || linkCandidatesLoading) return
+        val vault = _state.value.vaultPath
+        if (vault.isNullOrBlank()) return
+        linkCandidatesLoading = true
+        viewModelScope.launch {
+            val built = withContext(Dispatchers.IO) {
+                runCatching {
+                    val root = File(vault).normalize()
+                    buildWikiLinkCandidates(vaultNameIndex.names(root), vaultNameIndex.aliases(root))
+                }.getOrDefault(emptyList())
+            }
+            _linkCandidates.value = built
+            linkCandidatesLoading = false
         }
     }
 

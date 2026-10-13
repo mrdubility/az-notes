@@ -1,6 +1,7 @@
 package com.az.notes.domain.markdown
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 /**
@@ -43,8 +44,35 @@ class WikiLinkTransformerTest {
     fun `embed resolves image to standard syntax`() {
         val embed: (String) -> String? = { target -> if (target == "img.png") "assets/img.png" else null }
         assertEquals("![](/assets/img.png)", WikiLinkTransformer.transform("![[img.png]]", embed))
-        // 尺寸参数（`|宽` / `|宽x高`）不参与解析，渲染按原始尺寸
-        assertEquals("![](/assets/img.png)", WikiLinkTransformer.transform("![[img.png|100x245]]", embed))
+    }
+
+    @Test
+    fun `embed size param rides as fragment`() {
+        val embed: (String) -> String? = { target -> if (target == "img.png") "assets/img.png" else null }
+        assertEquals(
+            "![](/assets/img.png#az-size=100)",
+            WikiLinkTransformer.transform("![[img.png|100]]", embed)
+        )
+        assertEquals(
+            "![](/assets/img.png#az-size=100x245)",
+            WikiLinkTransformer.transform("![[img.png|100x245]]", embed)
+        )
+        // 非尺寸参数（如 alt 文本）忽略，渲染按原始尺寸
+        assertEquals("![](/assets/img.png)", WikiLinkTransformer.transform("![[img.png|alt]]", embed))
+    }
+
+    @Test
+    fun `size spec parse and read back`() {
+        assertEquals(100 to null, WikiLinkTransformer.parseSizeSpec("100"))
+        assertEquals(100 to 245, WikiLinkTransformer.parseSizeSpec("100x245"))
+        assertEquals(100 to 245, WikiLinkTransformer.parseSizeSpec(" 100x245 "))
+        assertNull(WikiLinkTransformer.parseSizeSpec("abc"))
+        assertNull(WikiLinkTransformer.parseSizeSpec("0"))
+        assertNull(WikiLinkTransformer.parseSizeSpec("100x0"))
+        assertNull(WikiLinkTransformer.parseSizeSpec(null))
+        assertEquals(100 to 245, WikiLinkTransformer.sizeSpecOf("/a/b.png#az-size=100x245"))
+        assertNull(WikiLinkTransformer.sizeSpecOf("/a/b.png"))
+        assertNull(WikiLinkTransformer.sizeSpecOf("/a/b.png#other"))
     }
 
     @Test

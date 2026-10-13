@@ -45,6 +45,7 @@ import coil3.compose.LocalPlatformContext
 import coil3.request.ImageRequest
 import coil3.size.Size as CoilSize
 import com.az.notes.R
+import com.az.notes.domain.markdown.HeadingExtractor
 import com.az.notes.ui.common.azNotesMarkdownTypography
 import com.az.notes.ui.common.rememberWikiLinkUriHandler
 import com.az.notes.ui.common.resolve
@@ -81,8 +82,8 @@ fun ReaderScreen(
     onEdit: (String) -> Unit,
     /** 「加入 AI 对话」：附件已入待发列表后导航到聊天页 */
     onAddToAiChat: () -> Unit,
-    /** Wikilink 跳转：接收仓库内笔记绝对路径 */
-    onOpenNote: (String) -> Unit,
+    /** Wikilink 跳转：接收仓库内笔记绝对路径与可选标题锚点 */
+    onOpenNote: (String, String?) -> Unit,
     /** 刚从“新建待办”进入：退出（顶栏返回 / 系统返回键）时若无条目则清理占位文件 */
     fresh: Boolean = false
 ) {
@@ -182,13 +183,30 @@ fun ReaderScreen(
     val noteDir = remember(state.path) { File(state.path).parentFile }
     val remoteMaxBytes = state.remoteImageMaxBytes
 
-    // Wikilink 点击：az-note: 目标经 ViewModel 解析跳转；未命中给出「新建笔记」入口
+    // Wikilink 点击：az-note: 目标经 ViewModel 解析跳转；未命中给出「新建笔记」入口。
+    // 目标为当前笔记的自锚点（`[[#标题]]`）就地滚动，不重复入栈
     val wikiUriHandler = rememberWikiLinkUriHandler(
         snackbarHostState = snackbarHostState,
         resolve = viewModel::resolveWikiTarget,
-        onOpen = onOpenNote,
+        onOpen = { target ->
+            if (target.path == state.path) {
+                target.anchor?.let(viewModel::requestAnchorScroll)
+            } else {
+                onOpenNote(target.path, target.anchor)
+            }
+        },
         onCreate = viewModel::createWikiNote
     )
+
+    // 锚点滚动：`[[笔记#标题]]` 进入后 / `[[#标题]]` 页内点击后，定位到标题所在块
+    val pendingAnchor by viewModel.pendingAnchor.collectAsStateWithLifecycle()
+    LaunchedEffect(pendingAnchor, state.loading, state.headings) {
+        val anchor = pendingAnchor ?: return@LaunchedEffect
+        if (state.loading) return@LaunchedEffect
+        val block = HeadingExtractor.findBlockByTitle(state.headings, anchor)
+        viewModel.consumeAnchor()
+        if (block != null) listState.scrollToItem(block + blockOffset)
+    }
     // LazyColumn 单侧水平内边距：与下方 contentPadding 共用；同时传给 transformer 以修正
     // 库从 parentLayoutCoordinates 拿到的 containerSize 包含 padding 导致的竖图右侧溢出。
     val contentHPad = 16.dp

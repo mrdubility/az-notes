@@ -53,8 +53,9 @@ object Routes {
     const val EDITOR_BASE = "editor"
 
     /** 阅读器：path 为编码后的绝对路径；fresh=true 表示刚从“新建待办”进入
-     *  （退出时若正文仍为空则清理占位文件，与空笔记 fresh 清理一致）。 */
-    const val READER = "$READER_BASE/{path}?fresh={fresh}"
+     *  （退出时若正文仍为空则清理占位文件，与空笔记 fresh 清理一致）；
+     *  anchor 为可选的标题锚点（`[[笔记#标题]]` 跳转后滚动到该标题）。 */
+    const val READER = "$READER_BASE/{path}?fresh={fresh}&anchor={anchor}"
 
     /** 编辑器：fresh=true 表示刚从“新建笔记”进入（退出时若仍无内容则清理空文件）；
      *  share=true 表示从系统分享进入（独立页面：返回即退出应用，顶栏提供回列表）。 */
@@ -62,8 +63,10 @@ object Routes {
 
     // Uri.encode 会把 '/' 编成 %2F（保持单一路径段），空格编成 %20；
     // NavType.StringType 读取时会自动 Uri.decode 还原为原始路径，故 VM 侧无需再解码。
-    fun reader(path: String, fresh: Boolean = false): String =
-        "$READER_BASE/${Uri.encode(path)}?fresh=$fresh"
+    fun reader(path: String, fresh: Boolean = false, anchor: String? = null): String {
+        val base = "$READER_BASE/${Uri.encode(path)}?fresh=$fresh"
+        return if (anchor.isNullOrEmpty()) base else "$base&anchor=${Uri.encode(anchor)}"
+    }
     fun editor(path: String, fresh: Boolean = false, fromShare: Boolean = false): String =
         "$EDITOR_BASE/${Uri.encode(path)}?fresh=$fresh&share=$fromShare"
 }

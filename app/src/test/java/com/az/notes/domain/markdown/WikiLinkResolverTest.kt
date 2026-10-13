@@ -79,6 +79,46 @@ class WikiLinkResolverTest {
     }
 
     @Test
+    fun `alias index resolves note by declared alias`() {
+        val vault = temp.newFolder("vault")
+        val note = File(vault, "notes/番茄工作法.md").apply {
+            parentFile!!.mkdirs()
+            writeText("---\naliases:\n  - 番茄钟\n  - Pomodoro\n---\n")
+        }
+        val elsewhere = File(vault, "other").apply { mkdirs() }
+        val aliases = mapOf(
+            "番茄钟" to listOf(NoteAlias("番茄钟", "notes/番茄工作法.md")),
+            "pomodoro" to listOf(NoteAlias("Pomodoro", "notes/番茄工作法.md"))
+        )
+        // 别名大小写不敏感命中
+        assertEquals(note.absolutePath, WikiLinkResolver.resolve("番茄钟", vault, elsewhere, emptyMap(), aliases)?.absolutePath)
+        assertEquals(note.absolutePath, WikiLinkResolver.resolve("pomodoro", vault, elsewhere, emptyMap(), aliases)?.absolutePath)
+    }
+
+    @Test
+    fun `filename wins over alias`() {
+        val vault = temp.newFolder("vault")
+        File(vault, "other").mkdirs()
+        val realFile = File(vault, "x.md").apply { writeText("a") }
+        File(vault, "other/真名.md").writeText("b")
+        val aliases = mapOf("x" to listOf(NoteAlias("x", "other/真名.md")))
+        assertEquals(realFile.absolutePath, WikiLinkResolver.resolve("x", vault, vault, emptyMap(), aliases)?.absolutePath)
+    }
+
+    @Test
+    fun `alias disambiguation prefers same directory`() {
+        val vault = temp.newFolder("vault")
+        val targetDir = File(vault, "a").apply { mkdirs() }
+        File(vault, "b").mkdirs()
+        val near = File(targetDir, "near.md").apply { writeText("a") }
+        File(vault, "b/far.md").writeText("b")
+        val aliases = mapOf(
+            "短链" to listOf(NoteAlias("短链", "b/far.md"), NoteAlias("短链", "a/near.md"))
+        )
+        assertEquals(near.absolutePath, WikiLinkResolver.resolve("短链", vault, targetDir, emptyMap(), aliases)?.absolutePath)
+    }
+
+    @Test
     fun `createNotePath appends md and resolves from vault root`() {
         val vault = temp.newFolder("vault")
         assertEquals(

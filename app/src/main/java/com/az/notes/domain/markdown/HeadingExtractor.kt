@@ -52,6 +52,18 @@ object HeadingExtractor {
     /** 兼容旧入口：仅取标题列表。 */
     fun extract(markdown: String): List<Heading> = parse(markdown).headings
 
+    /**
+     * 按锚点文本定位标题（精确 → 忽略大小写 → 前缀），返回首个命中的块下标；
+     * 无命中返回 null（调用方静默停留在原位）。
+     */
+    fun findBlockByTitle(headings: List<Heading>, title: String): Int? {
+        val t = title.trim()
+        if (t.isEmpty()) return null
+        headings.firstOrNull { it.text.trim() == t }?.let { return it.blockIndex }
+        headings.firstOrNull { it.text.trim().equals(t, ignoreCase = true) }?.let { return it.blockIndex }
+        return headings.firstOrNull { it.text.trim().startsWith(t, ignoreCase = true) }?.blockIndex
+    }
+
     /** 标题级别：ATX_1..6 / SETEXT_1..2，非标题返回 null。 */
     private fun ASTNode.headingLevel(): Int? = when (type) {
         MarkdownElementTypes.ATX_1 -> 1

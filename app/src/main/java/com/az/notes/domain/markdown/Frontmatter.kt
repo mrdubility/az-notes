@@ -18,6 +18,23 @@ data class FrontmatterSplit(
     /** 查询属性的首个值（如 note_type）；无该属性时返回 null。 */
     fun value(key: String): String? =
         entries.firstOrNull { it.key == key }?.values?.firstOrNull()
+
+    /**
+     * aliases 属性值：兼容块列表与 `aliases: [a, b]` 行内列表写法，
+     * 去除引号包裹；无声明返回空列表。
+     */
+    fun aliases(): List<String> {
+        val attr = entries.firstOrNull { it.key.equals("aliases", ignoreCase = true) }
+            ?: return emptyList()
+        return attr.values.flatMap { raw ->
+            val v = raw.trim()
+            if (v.startsWith("[") && v.endsWith("]")) {
+                v.substring(1, v.length - 1).split(',').map { it.trim() }
+            } else {
+                listOf(v)
+            }
+        }.map { it.trim().trim('"', '\'') }.filter { it.isNotEmpty() }
+    }
 }
 
 /**

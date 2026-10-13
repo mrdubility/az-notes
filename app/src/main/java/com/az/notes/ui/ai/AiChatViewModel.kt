@@ -29,6 +29,7 @@ import com.az.notes.domain.ai.SystemNoteMode
 import com.az.notes.domain.ai.ToolCallRecord
 import com.az.notes.domain.markdown.ImageReference
 import com.az.notes.domain.markdown.WikiLinkResolver
+import com.az.notes.domain.markdown.WikiLinkTarget
 import com.az.notes.domain.model.AppSettings
 import com.az.notes.domain.model.FileNode
 import com.az.notes.ui.common.UiText
@@ -822,16 +823,25 @@ class AiChatViewModel @Inject constructor(
     }
 
     /**
-     * Wikilink 点击解析：目标原文（可含 `#锚点`）→ 仓库内笔记绝对路径；未命中返回 null
-     * （UI 层提示并提供新建入口）。对话页无「当前笔记」上下文，同目录维度不参与。
+     * Wikilink 点击解析：目标原文（可含 `#锚点`）→ 跳转目标（路径 + 标题锚点）；
+     * 未命中返回 null（UI 层提示并提供新建入口）。对话页无「当前笔记」上下文，
+     * 同目录维度不参与。
      */
-    suspend fun resolveWikiTarget(target: String): String? = withContext(Dispatchers.IO) {
+    suspend fun resolveWikiTarget(target: String): WikiLinkTarget? = withContext(Dispatchers.IO) {
+        val anchor = target.substringAfter('#', "").trim().ifEmpty { null }
         val filePart = target.substringBefore('#').trim()
         if (filePart.isEmpty()) return@withContext null
         val vaultPath = runCatching { settingsRepository.settings.first().vaultPath }.getOrNull()
             ?: return@withContext null
         val root = File(vaultPath).normalize()
-        WikiLinkResolver.resolve(filePart, root, null, vaultNameIndex.names(root))?.absolutePath
+        val file = WikiLinkResolver.resolve(
+            filePart,
+            root,
+            null,
+            vaultNameIndex.names(root),
+            vaultNameIndex.aliases(root)
+        ) ?: return@withContext null
+        WikiLinkTarget(file.absolutePath, anchor)
     }
 
     /** 未解析链接的「新建笔记」：按目标相对路径落盘空文件；越界 / 失败返回 null。 */

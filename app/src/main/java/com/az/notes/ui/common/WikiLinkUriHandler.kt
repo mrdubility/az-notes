@@ -9,6 +9,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.UriHandler
 import com.az.notes.R
+import com.az.notes.domain.markdown.WikiLinkTarget
 import com.az.notes.domain.markdown.WikiLinkTransformer
 import kotlinx.coroutines.launch
 
@@ -38,13 +39,13 @@ class WikiLinkUriHandler(
 /**
  * 构造带兜底的 Wikilink 点击处理器（阅读器 / 对话页共用）：`az-note:` 目标经
  * [resolve] 解析 → [onOpen] 跳转；未命中 → Snackbar 提示 +「新建笔记」
- * （[onCreate] 成功后经 [onOpen] 打开）；其余协议回交平台 UriHandler。
+ * （[onCreate] 成功后经 [onOpen] 打开，无锚点）；其余协议回交平台 UriHandler。
  */
 @Composable
 fun rememberWikiLinkUriHandler(
     snackbarHostState: SnackbarHostState,
-    resolve: suspend (String) -> String?,
-    onOpen: (String) -> Unit,
+    resolve: suspend (String) -> WikiLinkTarget?,
+    onOpen: (WikiLinkTarget) -> Unit,
     onCreate: suspend (String) -> String?
 ): WikiLinkUriHandler {
     val context = LocalContext.current
@@ -53,9 +54,9 @@ fun rememberWikiLinkUriHandler(
     return remember(fallback, snackbarHostState, resolve, onOpen, onCreate) {
         WikiLinkUriHandler(fallback) { target ->
             scope.launch {
-                val path = resolve(target)
-                if (path != null) {
-                    onOpen(path)
+                val resolved = resolve(target)
+                if (resolved != null) {
+                    onOpen(resolved)
                     return@launch
                 }
                 val result = snackbarHostState.showSnackbar(
@@ -66,7 +67,7 @@ fun rememberWikiLinkUriHandler(
                     actionLabel = context.getString(R.string.wiki_create_note)
                 )
                 if (result == SnackbarResult.ActionPerformed) {
-                    onCreate(target)?.let(onOpen)
+                    onCreate(target)?.let { path -> onOpen(WikiLinkTarget(path, null)) }
                 }
             }
         }

@@ -101,7 +101,7 @@ fun AiChatScreen(
     viewModel: AiChatViewModel,
     onBack: () -> Unit,
     onOpenProviders: () -> Unit,
-    onOpenNote: (String) -> Unit
+    onOpenNote: (String, String?) -> Unit
 ) {
     // 保留 State 而非 by 解构：滚动协程内需同步读取最新消息构建指纹
     val messagesState = viewModel.messages.collectAsStateWithLifecycle()
@@ -149,7 +149,7 @@ fun AiChatScreen(
     val wikiUriHandler = rememberWikiLinkUriHandler(
         snackbarHostState = snackbarHostState,
         resolve = viewModel::resolveWikiTarget,
-        onOpen = onOpenNote,
+        onOpen = { target -> onOpenNote(target.path, target.anchor) },
         onCreate = viewModel::createWikiNote
     )
     // 底部输入区实测高度（px）：Snackbar 据此抬高，避免遮挡输入卡与功能行
@@ -370,7 +370,7 @@ fun AiChatScreen(
                 actionLabel = context.getString(R.string.ai_chat_export_view),
                 withDismissAction = true
             )
-            if (result == SnackbarResult.ActionPerformed) onOpenNote(done.absolutePath)
+            if (result == SnackbarResult.ActionPerformed) onOpenNote(done.absolutePath, null)
         } finally {
             viewModel.consumeExportDone(done)
         }
