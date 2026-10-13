@@ -83,7 +83,7 @@ data class ReaderUiState(
  */
 @HiltViewModel
 class ReaderViewModel @Inject constructor(
-    savedStateHandle: SavedStateHandle,
+    private val savedStateHandle: SavedStateHandle,
     private val vaultRepository: VaultRepository,
     private val settingsRepository: SettingsRepository,
     private val debugLogRepository: DebugLogRepository,
