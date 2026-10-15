@@ -1,6 +1,7 @@
 package com.az.notes.ui.reader
 
 import android.Manifest
+import android.content.Context
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
@@ -71,12 +72,16 @@ import coil3.request.ImageRequest
 import coil3.request.crossfade
 import com.az.notes.R
 import com.az.notes.data.media.GallerySaver
+import com.az.notes.data.media.RemoteImageDownloader
+import com.az.notes.di.CoilHolderEntryPoint
 import com.az.notes.domain.markdown.Heading
 import com.az.notes.ui.common.formatDateTimeSeconds
 import com.az.notes.ui.common.formatSize
+import dagger.hilt.android.EntryPointAccessors
 import java.io.File
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import okhttp3.OkHttpClient
 
 /**
  * 预览页浮层与对话框：大纲面板 / 全屏图片预览 / 文档信息。
@@ -207,6 +212,12 @@ private fun OutlineItem(h: Heading, active: Boolean, onClick: () -> Unit) {
     }
 }
 
+/** 预览浮层的保存来源：本地文件直读；网络图经受控客户端拉取原图字节。 */
+internal sealed interface PreviewSaveSource {
+    data class Local(val file: File) : PreviewSaveSource
+    data class Remote(val url: String) : PreviewSaveSource
+}
+
 /** 全屏图片预览（本地文件入口）：黑底 + 点按关闭 + 捏合缩放（1–5 倍，放大后可拖动）。
  *  图库 / 阅读器本地图共用；网络图请走 request 重载（需复用行内解码尺寸）。 */
 @Composable
@@ -222,7 +233,7 @@ internal fun ImagePreviewDialog(file: File, onDismiss: () -> Unit) {
         request = request,
         contentDescription = file.name,
         onDismiss = onDismiss,
-        saveSource = file
+        saveSource = PreviewSaveSource.Local(file)
     )
 }
 
@@ -234,8 +245,8 @@ internal fun ImagePreviewDialog(
     request: ImageRequest,
     contentDescription: String?,
     onDismiss: () -> Unit,
-    /** 本地图片来源文件（非 null 时显示「保存到相册」按钮；网络图传 null）。 */
-    saveSource: File? = null
+    /** 保存来源（非 null 时显示「保存到相册」按钮）：本地文件或网络图 URL。 */
+    saveSource: PreviewSaveSource? = null
 ) {
     var scale by remember { mutableFloatStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
@@ -268,9 +279,9 @@ internal fun ImagePreviewDialog(
                         translationY = offset.y
                     )
             )
-            saveSource?.let { file ->
+            saveSource?.let { source ->
                 SaveToGalleryButton(
-                    file = file,
+                    source = source,
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .navigationBarsPadding()
@@ -287,9 +298,10 @@ private enum class GallerySaveUiState { IDLE, SAVING, SAVED, FAILED, DENIED }
 /**
  * 「保存到相册」按钮（黑底预览浮层专用，胶囊形）：写入 Pictures/AzNotes。
  * Android 8.0–9.0 写公共相册需 WRITE 权限（运行时请求）；Android 10+ 零权限。
+ * 本地文件直读；网络图经受控客户端拉取原图字节（与行内加载同一护栏）。
  */
 @Composable
-private fun SaveToGalleryButton(file: File, modifier: Modifier = Modifier) {
+private fun SaveToGalleryButton(source: PreviewSaveSource, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var state by remember { mutableStateOf(GallerySaveUiState.IDLE) }
@@ -309,7 +321,15 @@ private fun SaveToGalleryButton(file: File, modifier: Modifier = Modifier) {
         if (state != GallerySaveUiState.SAVING) {
             state = GallerySaveUiState.SAVING
             scope.launch {
-                val uri = GallerySaver.save(context, file)
+                val uri = when (source) {
+                    is PreviewSaveSource.Local -> GallerySaver.save(context, source.file)
+                    is PreviewSaveSource.Remote -> RemoteImageDownloader.saveToGallery(
+                        context = context,
+                        client = coilClient(context),
+                        url = source.url,
+                        defaultBase = context.getString(R.string.image_default_base_name)
+                    )
+                }
                 state = if (uri != null) GallerySaveUiState.SAVED else GallerySaveUiState.FAILED
             }
         }
@@ -375,6 +395,13 @@ private fun SaveToGalleryButton(file: File, modifier: Modifier = Modifier) {
         )
     }
 }
+
+/** 取受控 OkHttp 客户端（Hilt EntryPoint；仅网络图保存路径使用，与行内加载同一护栏）。 */
+private fun coilClient(context: Context): OkHttpClient =
+    EntryPointAccessors
+        .fromApplication(context.applicationContext, CoilHolderEntryPoint::class.java)
+        .coilHolder()
+        .client()
 
 /** 文档信息对话框：文件名 / 位置 / 大小 / 创建与修改时间 / 字数统计。 */
 @Composable

@@ -5,6 +5,9 @@ import com.az.notes.data.debug.DebugLogType
 import com.az.notes.data.debug.DebugLogLevel
 import com.az.notes.data.settings.SettingsRepository
 import com.az.notes.ui.reader.NetworkImageGuard
+import dagger.hilt.EntryPoint
+import dagger.hilt.InstallIn
+import dagger.hilt.components.SingletonComponent
 import okhttp3.OkHttpClient
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -78,4 +81,14 @@ class CoilHolder @Inject constructor(
 
     /** 护栏配置快照。 */
     data class GuardConfig(val maxBytes: Long, val timeoutSeconds: Int)
+}
+
+/**
+ * 组合层取用受控客户端的 EntryPoint：UI 直接触发的动作（如「保存网络图到相册」
+ * 的受控下载）经此获取 [CoilHolder]，避免为单点交互引入 ViewModel 管道。
+ */
+@EntryPoint
+@InstallIn(SingletonComponent::class)
+interface CoilHolderEntryPoint {
+    fun coilHolder(): CoilHolder
 }

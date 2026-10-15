@@ -9,14 +9,15 @@ import android.provider.MediaStore
 import android.webkit.MimeTypeMap
 import java.io.File
 import java.io.IOException
+import java.io.InputStream
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /**
  * 图片保存到系统相册（Pictures/AzNotes/）。
  *
- * 数据流向：Vault 内图片（读）→ MediaStore / ContentResolver（写），应用自身不直接以
- * java.io.File 写公共存储路径。
+ * 数据流向：Vault 内图片或网络原图字节（读）→ MediaStore / ContentResolver（写），
+ * 应用自身不直接以 java.io.File 写公共存储路径。
  * - Android 10+（API 29+）：RELATIVE_PATH + IS_PENDING 发布流程，零权限；
  * - Android 8.0–9.0（API 26–28）：DATA 列指向 Pictures/AzNotes（写入的是固定常量
  *   路径的相册目录，不涉及用户其他文件），需 WRITE 权限（Manifest 已声明
@@ -36,14 +37,36 @@ object GallerySaver {
         val name = source.name
         val mime = mimeOf(name)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            saveModern(context, source, name, mime)
+            saveModern(context, { source.inputStream() }, name, mime)
         } else {
-            saveLegacy(context, source, name, mime)
+            saveLegacy(context, { source.inputStream() }, name, mime)
+        }
+    }
+
+    /**
+     * 保存流式来源（网络原图等）到系统相册：媒体库行插入成功后才打开 [openStream]
+     * （仅被调用一次，字节写完后由本方法关闭）；失败清理逻辑与文件版一致。
+     */
+    suspend fun save(
+        context: Context,
+        openStream: () -> InputStream,
+        name: String,
+        mime: String?
+    ): Uri? = withContext(Dispatchers.IO) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            saveModern(context, openStream, name, mime)
+        } else {
+            saveLegacy(context, openStream, name, mime)
         }
     }
 
     /** API 29+：插入占位行（IS_PENDING）→ 写流 → 发布（相册立即可见）。 */
-    private fun saveModern(context: Context, source: File, name: String, mime: String?): Uri? {
+    private fun saveModern(
+        context: Context,
+        openStream: () -> InputStream,
+        name: String,
+        mime: String?
+    ): Uri? {
         val values = ContentValues().apply {
             put(MediaStore.Images.Media.DISPLAY_NAME, name)
             if (mime != null) put(MediaStore.Images.Media.MIME_TYPE, mime)
@@ -56,12 +79,17 @@ object GallerySaver {
         val uri = runCatching {
             context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
         }.getOrNull() ?: return null
-        return writeAndPublish(context, source, uri, publishPending = true)
+        return writeAndPublish(context, openStream, uri, publishPending = true)
     }
 
     /** API 26–28：DATA 列定位 Pictures/AzNotes；目录缺失时创建固定相册目录。 */
     @Suppress("DEPRECATION")
-    private fun saveLegacy(context: Context, source: File, name: String, mime: String?): Uri? {
+    private fun saveLegacy(
+        context: Context,
+        openStream: () -> InputStream,
+        name: String,
+        mime: String?
+    ): Uri? {
         val album = File(
             Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES),
             ALBUM_NAME
@@ -76,20 +104,20 @@ object GallerySaver {
         val uri = runCatching {
             context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
         }.getOrNull() ?: return null
-        return writeAndPublish(context, source, uri, publishPending = false)
+        return writeAndPublish(context, openStream, uri, publishPending = false)
     }
 
-    /** 写入源文件内容并按需发布；失败时清理本次插入的媒体库记录（仅限刚创建的行）。 */
+    /** 写入来源字节并按需发布；失败时清理本次插入的媒体库记录（仅限刚创建的行）。 */
     private fun writeAndPublish(
         context: Context,
-        source: File,
+        openStream: () -> InputStream,
         uri: Uri,
         publishPending: Boolean
     ): Uri? {
         val resolver = context.contentResolver
         return try {
             val out = resolver.openOutputStream(uri) ?: throw IOException("openOutputStream null")
-            out.use { target -> source.inputStream().use { it.copyTo(target) } }
+            out.use { target -> openStream().use { it.copyTo(target) } }
             if (publishPending) {
                 val publish = ContentValues().apply {
                     put(MediaStore.Images.Media.IS_PENDING, 0)

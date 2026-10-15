@@ -378,7 +378,8 @@ fun ReaderScreen(
         ImagePreviewDialog(
             request = request,
             contentDescription = url.substringAfterLast('/'),
-            onDismiss = { previewRemote = null }
+            onDismiss = { previewRemote = null },
+            saveSource = PreviewSaveSource.Remote(url)
         )
     }
 
