@@ -1,6 +1,7 @@
 package com.az.notes.data.media
 
 import android.content.Context
+import android.net.Uri
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -36,7 +37,8 @@ object RemoteImageDownloader {
         runCatching {
             client.newCall(Request.Builder().url(url).build()).execute().use { resp ->
                 if (!resp.isSuccessful) return@runCatching null
-                val body = resp.body
+                // OkHttp 4.x 侧 body 为可空类型（与 NetworkImageGuard 同口径）
+                val body = resp.body ?: return@runCatching null
                 val contentType = resp.header("Content-Type")
                     ?.substringBefore(';')?.trim()?.takeIf { it.isNotEmpty() }
                 val name = inferName(url, contentType, defaultBase)
