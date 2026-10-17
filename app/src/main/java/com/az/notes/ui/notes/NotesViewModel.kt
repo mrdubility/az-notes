@@ -18,6 +18,8 @@ import com.az.notes.domain.model.NoteSortOrder
 import com.az.notes.domain.model.VaultInfo
 import com.az.notes.ui.common.UiMessage
 import com.az.notes.ui.common.UiText
+import com.az.notes.ui.common.CreateFolderResult
+import com.az.notes.ui.common.createVaultSubfolder
 import com.az.notes.ui.common.toUiText
 import com.az.notes.work.SyncScheduler
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -681,6 +683,29 @@ class NotesViewModel @Inject constructor(
                 if (s.moveTargetVaultId == vaultId) s.copy(moveTargets = dirs) else s
             }
         }
+    }
+
+    /**
+     * 移动对话框内「新建文件夹」：在 [parentPath] 下创建（名称清洗 + 重名保护），
+     * 成功后刷新目标仓库的目录树（组件随后把新目录作为移动目标回调）并调度保存同步。
+     */
+    suspend fun createMoveTargetFolder(parentPath: String, input: String): CreateFolderResult {
+        val result = createVaultSubfolder(vaultRepository, parentPath, input)
+        if (result is CreateFolderResult.Created) {
+            val vaultId = _state.value.moveTargetVaultId
+            val vault = currentSettings.vaults.firstOrNull { it.id == vaultId }
+            if (vault != null) {
+                val dirs = withContext(Dispatchers.IO) {
+                    runCatching { vaultRepository.listAllDirectories(vault.path) }
+                        .getOrDefault(emptyList())
+                }
+                _state.update { s ->
+                    if (s.moveTargetVaultId == vaultId) s.copy(moveTargets = dirs) else s
+                }
+            }
+            scheduleSaveSync()
+        }
+        return result
     }
 
     /**

@@ -10,6 +10,9 @@ import com.az.notes.domain.model.DefaultNoteMode
 import com.az.notes.domain.model.FileNode
 import com.az.notes.domain.model.NoteSortOrder
 import com.az.notes.domain.model.ThemeMode
+import com.az.notes.ui.common.CreateFolderResult
+import com.az.notes.ui.common.createVaultSubfolder
+import com.az.notes.work.SyncScheduler
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -25,7 +28,8 @@ import javax.inject.Inject
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
     private val settingsRepository: SettingsRepository,
-    private val vaultRepository: VaultRepository
+    private val vaultRepository: VaultRepository,
+    private val syncScheduler: SyncScheduler
 ) : ViewModel() {
 
     val settings: StateFlow<AppSettings> = settingsRepository.settings
@@ -43,6 +47,26 @@ class SettingsViewModel @Inject constructor(
             val dirs = withContext(Dispatchers.IO) { vaultRepository.listAllDirectories(vault) }
             _moveTargets.value = dirs
         }
+    }
+
+    /**
+     * 分享目录选择器内「新建文件夹」：在 [parentPath] 下创建（名称清洗 + 重名保护），
+     * 成功后刷新目录列表（组件随后把新目录作为分享目录回调）并调度保存同步。
+     */
+    suspend fun createShareFolder(parentPath: String, input: String): CreateFolderResult {
+        val result = createVaultSubfolder(vaultRepository, parentPath, input)
+        if (result is CreateFolderResult.Created) {
+            val vault = settings.value.vaultPath
+            if (!vault.isNullOrBlank()) {
+                val dirs = withContext(Dispatchers.IO) {
+                    runCatching { vaultRepository.listAllDirectories(vault) }
+                        .getOrDefault(emptyList())
+                }
+                _moveTargets.value = dirs
+            }
+            runCatching { syncScheduler.scheduleSaveSync() }
+        }
+        return result
     }
 
     /** 分享新建笔记的默认进入文件夹：选择目标目录（绝对路径），Vault 根 → null。 */

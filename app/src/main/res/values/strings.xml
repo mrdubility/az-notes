@@ -60,6 +60,9 @@
     <string name="home_select_move">移动</string>
     <string name="home_move_title">移动到文件夹</string>
     <string name="home_move_root">根目录</string>
+    <string name="folder_new_subfolder">在此文件夹中新建</string>
+    <string name="folder_create_in">在「%1$s」中新建文件夹</string>
+    <string name="folder_name">文件夹名称</string>
     <string name="home_moved_count">已移动 %1$d 项</string>
     <string name="home_move_partial">已移动 %1$d 项，%2$d 项失败</string>
 
@@ -75,6 +78,7 @@
     <string name="share_image_failed">导入分享图片失败</string>
     <string name="msg_note_create_failed">新建笔记失败</string>
     <string name="msg_folder_created">已创建文件夹「%1$s」</string>
+    <string name="msg_folder_exists">同名文件夹已存在</string>
     <string name="msg_folder_create_failed">新建文件夹失败</string>
     <string name="msg_list_load_failed">列表加载失败</string>
     <string name="msg_read_failed">读取失败</string>

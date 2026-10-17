@@ -60,6 +60,9 @@
     <string name="home_select_move">Move</string>
     <string name="home_move_title">Move to folder</string>
     <string name="home_move_root">Root</string>
+    <string name="folder_new_subfolder">Create folder here</string>
+    <string name="folder_create_in">Create folder in "%1$s"</string>
+    <string name="folder_name">Folder name</string>
     <string name="home_moved_count">Moved %1$d item(s)</string>
     <string name="home_move_partial">Moved %1$d, failed %2$d</string>
 
@@ -75,6 +78,7 @@
     <string name="share_image_failed">Failed to import the shared image</string>
     <string name="msg_note_create_failed">Failed to create note</string>
     <string name="msg_folder_created">Created folder "%1$s"</string>
+    <string name="msg_folder_exists">A folder with this name already exists</string>
     <string name="msg_folder_create_failed">Failed to create folder</string>
     <string name="msg_list_load_failed">Failed to load the list</string>
     <string name="msg_read_failed">Failed to read</string>

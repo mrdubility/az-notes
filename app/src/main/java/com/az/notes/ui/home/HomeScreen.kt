@@ -546,7 +546,8 @@ fun HomeScreen(
             },
             vaults = state.vaults.filterNot { it.hidden },
             selectedVaultId = state.moveTargetVaultId,
-            onSelectVault = { viewModel.loadMoveTargetsFor(it) }
+            onSelectVault = { viewModel.loadMoveTargetsFor(it) },
+            onCreateFolder = viewModel::createMoveTargetFolder
         )
     }
 

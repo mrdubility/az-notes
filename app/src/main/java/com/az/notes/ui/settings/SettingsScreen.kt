@@ -447,7 +447,8 @@ fun SettingsScreen(
                 viewModel.setShareFolderAbsolute(dir)
                 shareFolderDialog = false
             },
-            title = stringResource(R.string.settings_share_folder)
+            title = stringResource(R.string.settings_share_folder),
+            onCreateFolder = viewModel::createShareFolder
         )
     }
 

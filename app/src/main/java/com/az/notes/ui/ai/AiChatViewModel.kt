@@ -32,7 +32,9 @@ import com.az.notes.domain.markdown.WikiLinkResolver
 import com.az.notes.domain.markdown.WikiLinkTarget
 import com.az.notes.domain.model.AppSettings
 import com.az.notes.domain.model.FileNode
+import com.az.notes.ui.common.CreateFolderResult
 import com.az.notes.ui.common.UiText
+import com.az.notes.ui.common.createVaultSubfolder
 import com.az.notes.work.SyncScheduler
 import dagger.hilt.android.lifecycle.HiltViewModel
 import java.io.File
@@ -786,6 +788,26 @@ class AiChatViewModel @Inject constructor(
     /** 关闭（取消）导出位置选择器。 */
     fun dismissExportFolderPicker() {
         _exportFolderPicker.value = null
+    }
+
+    /**
+     * 导出位置选择器内「新建文件夹」：在 [parentPath] 下创建（名称清洗 + 重名保护），
+     * 成功后刷新目录列表（组件随后把新目录作为导出目标回调 [pickExportFolder]）并调度保存同步。
+     */
+    suspend fun createExportFolder(parentPath: String, input: String): CreateFolderResult {
+        val result = createVaultSubfolder(vaultRepository, parentPath, input)
+        if (result is CreateFolderResult.Created) {
+            val picker = _exportFolderPicker.value
+            if (picker != null) {
+                val dirs = withContext(Dispatchers.IO) {
+                    runCatching { vaultRepository.listAllDirectories(picker.vaultPath) }
+                        .getOrDefault(emptyList())
+                }
+                _exportFolderPicker.value = ExportFolderPickerState(picker.vaultPath, dirs)
+            }
+            runCatching { syncScheduler.scheduleSaveSync() }
+        }
+        return result
     }
 
     /** 导出勾选消息：按文件名栏名称（空则回落设置模板）写入所选目录（null = 仓库根）+ 调度保存同步 + 完成后弹「查看」入口（§8.2）。 */

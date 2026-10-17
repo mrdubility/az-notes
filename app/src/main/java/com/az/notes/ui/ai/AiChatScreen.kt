@@ -54,6 +54,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -176,7 +177,10 @@ fun AiChatScreen(
     // 位置同帧渲染，零可见闪动）。
     // 跟随意图：手势（拖拽/惯性）期间实时判定「贴底才跟随」（末项完全可见 = 滚到尽头）；
     // 上滑离开尽头立即暂停（画面停在哪就在哪，绝不拉回），滑回尽头自动恢复。
-    var following by remember { mutableStateOf(true) }
+    // 用 rememberSaveable 随目的地状态保存：点 AI 回答中的笔记 / 进设置后返回时恢复
+    // 离开时的跟随意图（配合 LazyListState 自身保存的可见位置），非贴底离开则原样停在
+    // 原处、不拉回底部；首次进入仍默认贴底。
+    var following by rememberSaveable { mutableStateOf(true) }
     // 程序动画守卫：「回到底部」平滑动画期间抑制位置观察，防动画中间态互夺跟随状态
     var programmaticScroll by remember { mutableStateOf(false) }
 
@@ -688,7 +692,8 @@ fun AiChatScreen(
             targets = picker.targets,
             title = stringResource(R.string.ai_chat_export_location),
             onDismiss = viewModel::dismissExportFolderPicker,
-            onSelect = viewModel::pickExportFolder
+            onSelect = viewModel::pickExportFolder,
+            onCreateFolder = viewModel::createExportFolder
         )
     }
 

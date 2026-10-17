@@ -439,7 +439,8 @@ fun EditorScreen(
             onSelect = { target ->
                 moveDialog = false
                 viewModel.moveTo(target)
-            }
+            },
+            onCreateFolder = viewModel::createMoveTargetFolder
         )
     }
 
