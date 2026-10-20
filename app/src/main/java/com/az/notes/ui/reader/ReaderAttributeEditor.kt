@@ -390,7 +390,7 @@ private fun AttributeEditRow(
         modifier = Modifier
             .fillMaxWidth()
             .onGloballyPositioned { rowBounds = it.boundsInWindow() }
-            .padding(end = 8.dp, vertical = 4.dp)
+            .padding(end = 8.dp, top = 4.dp, bottom = 4.dp)
     ) {
         Box(Modifier.weight(0.4f)) {
             OutlinedTextField(
