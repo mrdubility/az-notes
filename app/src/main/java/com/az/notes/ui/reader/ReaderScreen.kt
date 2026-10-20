@@ -430,6 +430,7 @@ fun ReaderScreen(
             history = propertyHistory,
             onSetValues = viewModel::setAttributeValues,
             onRemove = viewModel::removeAttribute,
+            onReplace = viewModel::replaceAttribute,
             onDismiss = { showAttrEditor = false }
         )
     }

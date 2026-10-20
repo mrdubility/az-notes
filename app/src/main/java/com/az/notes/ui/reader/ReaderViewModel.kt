@@ -36,6 +36,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
 import javax.inject.Inject
@@ -97,6 +99,9 @@ class ReaderViewModel @Inject constructor(
 
     private var absolutePath: String =
         savedStateHandle.get<String>("path") ?: ""
+
+    /** 属性写回串行化：防止并发的读-改-写互相覆盖（如键改名 + 新建同时提交）。 */
+    private val attrMutex = Mutex()
 
     private val _state = MutableStateFlow(ReaderUiState(path = absolutePath))
     val state: StateFlow<ReaderUiState> = _state.asStateFlow()
@@ -389,6 +394,23 @@ class ReaderViewModel @Inject constructor(
         }
     }
 
+    /** 属性键改名：一次写盘内删旧键 + 建新键（避免两次写回出现中间态）。 */
+    fun replaceAttribute(oldKey: String, newKey: String, values: List<String>) {
+        val name = newKey.trim()
+        if (name.isEmpty()) return
+        mutateAttributes { entries ->
+            val cleaned = values.map { it.trim() }.filter { it.isNotEmpty() }
+            val attr = FrontmatterAttribute(name, cleaned)
+            val without = entries.filterNot { it.key == oldKey }
+            val index = without.indexOfFirst { it.key == name }
+            if (index >= 0) {
+                without.toMutableList().apply { set(index, attr) }
+            } else {
+                without + attr
+            }
+        }
+    }
+
     /** 删除整条属性（不存在时忽略）。 */
     fun removeAttribute(key: String) {
         mutateAttributes { entries ->
@@ -460,21 +482,23 @@ class ReaderViewModel @Inject constructor(
      */
     private fun mutateAttributes(transform: (List<FrontmatterAttribute>) -> List<FrontmatterAttribute>?) {
         viewModelScope.launch {
-            val result = withContext(Dispatchers.IO) {
-                runCatching {
-                    val current = vaultRepository.readText(absolutePath)
-                    val split = FrontmatterParser.split(current)
-                    val entries = transform(split.entries)
-                    if (entries == null) {
-                        Result.success<List<FrontmatterAttribute>?>(null)
-                    } else {
-                        vaultRepository.writeTextAtomically(
-                            absolutePath,
-                            FrontmatterParser.build(entries, split.body)
-                        )
-                        Result.success<List<FrontmatterAttribute>?>(entries)
-                    }
-                }.getOrElse { Result.failure(it) }
+            val result = attrMutex.withLock {
+                withContext(Dispatchers.IO) {
+                    runCatching {
+                        val current = vaultRepository.readText(absolutePath)
+                        val split = FrontmatterParser.split(current)
+                        val entries = transform(split.entries)
+                        if (entries == null) {
+                            Result.success<List<FrontmatterAttribute>?>(null)
+                        } else {
+                            vaultRepository.writeTextAtomically(
+                                absolutePath,
+                                FrontmatterParser.build(entries, split.body)
+                            )
+                            Result.success<List<FrontmatterAttribute>?>(entries)
+                        }
+                    }.getOrElse { Result.failure(it) }
+                }
             }
             val newEntries = result.getOrNull()
             if (result.isSuccess) {

@@ -4,7 +4,6 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
-import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -65,7 +64,6 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
@@ -84,9 +82,7 @@ import com.mikepenz.markdown.model.ReferenceLinkHandlerImpl
 import com.mikepenz.markdown.model.State
 import org.intellij.markdown.flavours.gfm.GFMFlavourDescriptor
 import org.intellij.markdown.parser.MarkdownParser
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 /**
@@ -248,7 +244,7 @@ private enum class TaskFilter { ALL, INCOMPLETE, COMPLETE }
  * 点击勾选完成（写回 `- [x]`），底部输入栏追加新条目（写回 `- [ ]`）。
  * 顶部「未完成 / 已完成」按钮切换筛选，再次点击已选按钮取消筛选；
  * 行尾菜单支持编辑 / 删除 / 复制文字；长按条目拖动排序（过滤态下只在可见子集内重排），
- * 拖到列表顶 / 底之外自动滚动，添加待办后列表自动滚动到新条目。
+ * 添加待办后列表自动滚动到新条目。
  */
 @Composable
 internal fun TaskListPane(
@@ -290,12 +286,9 @@ internal fun TaskListPane(
     var dragOrder by remember { mutableStateOf<List<TaskItem>?>(null) }
     var draggedLine by remember { mutableStateOf<Int?>(null) }
     var dragOffsetY by remember { mutableFloatStateOf(0f) }
-    var pointerLocalY by remember { mutableFloatStateOf(0f) }
-    var autoScrollJob by remember { mutableStateOf<Job?>(null) }
     val itemHeights = remember { mutableStateMapOf<Int, Float>() }
     val displayTasks = dragOrder ?: visibleTasks
     val latestTasks by rememberUpdatedState(visibleTasks)
-    val density = LocalDensity.current
 
     // 稳定 key：写回重载后待办行号全部变化（以 lineIndex 作 key 会整列置换 → item 被
     // 重建、Checkbox 勾选动画重播，出现「排序后勾闪一下」）。改用「文本 + 同文本出现
@@ -313,6 +306,15 @@ internal fun TaskListPane(
             task.lineIndex to "$n\u0000${task.text}"
         }
     }
+
+    // 拖动期间冻结 key 表：key 跟随条目而非位置（相同文本条目交换后 key 互换会
+    // 造成 item 身份置换、被拖项焦点丢失）；拖动结束收敛后解冻，回到按渲染列表建表
+    var frozenKeys by remember { mutableStateOf<Map<Int, String>?>(null) }
+    LaunchedEffect(dragOrder) {
+        if (dragOrder != null && frozenKeys == null) frozenKeys = stableKeys
+        if (dragOrder == null) frozenKeys = null
+    }
+    val keyTable = frozenKeys ?: stableKeys
 
     // 列表前导项数：文件名 + （属性面板）+ 过滤行
     val leadingCount = 2 + if (attrs.isNotEmpty()) 1 else 0
@@ -425,7 +427,7 @@ internal fun TaskListPane(
             } else {
                 itemsIndexed(
                     items = displayTasks,
-                    key = { _, task -> stableKeys[task.lineIndex] ?: task.lineIndex.toString() }
+                    key = { _, task -> keyTable[task.lineIndex] ?: task.lineIndex.toString() }
                 ) { index, task ->
                     val isDragging = draggedLine != null && task.lineIndex == draggedLine
                     var menuOpen by remember { mutableStateOf(false) }
@@ -441,7 +443,9 @@ internal fun TaskListPane(
                                     isDragging -> Modifier
                                         .shadow(6.dp, RoundedCornerShape(8.dp))
                                         .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(8.dp))
-                                    // 拖动期间不做位移动画：动画与手动 translation 叠加会产生闪动
+                                    // 拖动期间非被拖项做位移动画（平滑掠过多行条目），被拖项只走
+                                    // graphicsLayer 位移，两套位移不叠加
+                                    dragOrder != null -> Modifier.animateItem()
                                     else -> Modifier
                                 }
                             )
@@ -454,59 +458,15 @@ internal fun TaskListPane(
                                         // 连续拖动沿用上一次未收敛的本地顺序作基准，避免起手瞬间重排跳位
                                         if (dragOrder == null) dragOrder = latestTasks
                                         dragOffsetY = 0f
-                                        pointerLocalY = 0f
-                                        autoScrollJob = scope.launch {
-                                            val edgePx = with(density) { 56.dp.toPx() }
-                                            while (isActive) {
-                                                val line = draggedLine ?: break
-                                                val order = dragOrder ?: break
-                                                val from = order.indexOfFirst { it.lineIndex == line }
-                                                if (from < 0) break
-                                                val layout = listState.layoutInfo
-                                                val info = layout.visibleItemsInfo
-                                                    .firstOrNull { it.index == leadingCount + from }
-                                                if (info == null) {
-                                                    delay(16)
-                                                    continue
-                                                }
-                                                // 手指在视口中的绝对位置（非相对被拖项），进入边缘区即滚动
-                                                val pointerY = info.offset + dragOffsetY + pointerLocalY
-                                                val raw = when {
-                                                    pointerY < layout.viewportStartOffset + edgePx &&
-                                                        listState.canScrollBackward ->
-                                                        pointerY - (layout.viewportStartOffset + edgePx)
-
-                                                    pointerY > layout.viewportEndOffset - edgePx &&
-                                                        listState.canScrollForward ->
-                                                        pointerY - (layout.viewportEndOffset - edgePx)
-
-                                                    else -> 0f
-                                                }
-                                                if (raw == 0f) {
-                                                    delay(16)
-                                                } else {
-                                                    // 越深入边缘越快并限速；滚动量同步补偿位移保持跟手
-                                                    val delta = (raw * 0.25f).coerceIn(-20f, 20f)
-                                                    listState.scrollBy(delta)
-                                                    dragOffsetY += delta
-                                                }
-                                            }
-                                        }
                                     },
                                     onDragCancel = {
-                                        autoScrollJob?.cancel()
-                                        autoScrollJob = null
                                         draggedLine = null
                                         dragOffsetY = 0f
-                                        pointerLocalY = 0f
                                         dragOrder = null
                                     },
                                     onDragEnd = {
-                                        autoScrollJob?.cancel()
-                                        autoScrollJob = null
                                         draggedLine = null
                                         dragOffsetY = 0f
-                                        pointerLocalY = 0f
                                         val order = dragOrder
                                         if (order != null) {
                                             val newOrder = order.map { it.lineIndex }
@@ -524,7 +484,6 @@ internal fun TaskListPane(
                                     },
                                     onDrag = { change, drag ->
                                         change.consume()
-                                        pointerLocalY = change.position.y
                                         dragOffsetY += drag.y
                                         val line = draggedLine ?: return@detectDragGesturesAfterLongPress
                                         val order = dragOrder ?: return@detectDragGesturesAfterLongPress

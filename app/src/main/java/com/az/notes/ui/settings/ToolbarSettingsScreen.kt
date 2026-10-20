@@ -2,7 +2,6 @@ package com.az.notes.ui.settings
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
-import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -42,7 +41,6 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -51,9 +49,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.az.notes.R
 import com.az.notes.domain.model.EditorTool
 import com.az.notes.ui.common.label
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 /**
@@ -75,14 +71,11 @@ fun ToolbarSettingsScreen(
     var dragOrder by remember { mutableStateOf<List<String>?>(null) }
     var draggedId by remember { mutableStateOf<String?>(null) }
     var dragOffsetY by remember { mutableFloatStateOf(0f) }
-    var pointerLocalY by remember { mutableFloatStateOf(0f) }
-    var autoScrollJob by remember { mutableStateOf<Job?>(null) }
     val itemHeights = remember { mutableStateMapOf<String, Float>() }
     val displayOrder = dragOrder ?: persistedOrder
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     val haptics = LocalHapticFeedback.current
-    val density = LocalDensity.current
     // 列表首项为说明文字，工具项从下标 1 开始
     val leadingCount = 1
 
@@ -131,7 +124,8 @@ fun ToolbarSettingsScreen(
                                 dragging -> Modifier
                                     .shadow(6.dp, RoundedCornerShape(8.dp))
                                     .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(8.dp))
-                                // 拖动期间不做位移动画：动画与手动 translation 叠加会产生闪动
+                                // 拖动期间非被拖项做位移动画，被拖项只走 graphicsLayer 位移
+                                dragOrder != null -> Modifier.animateItem()
                                 else -> Modifier
                             }
                         )
@@ -144,59 +138,15 @@ fun ToolbarSettingsScreen(
                                     // 连续拖动沿用上一次未收敛的本地顺序作基准，避免起手瞬间重排跳位
                                     if (dragOrder == null) dragOrder = persistedOrder
                                     dragOffsetY = 0f
-                                    pointerLocalY = 0f
-                                    autoScrollJob = scope.launch {
-                                        val edgePx = with(density) { 56.dp.toPx() }
-                                        while (isActive) {
-                                            val current = draggedId ?: break
-                                            val order = dragOrder ?: break
-                                            val from = order.indexOf(current)
-                                            if (from < 0) break
-                                            val layout = listState.layoutInfo
-                                            val info = layout.visibleItemsInfo
-                                                .firstOrNull { it.index == leadingCount + from }
-                                            if (info == null) {
-                                                delay(16)
-                                                continue
-                                            }
-                                            // 手指在视口中的绝对位置（非相对被拖项），进入边缘区即滚动
-                                            val pointerY = info.offset + dragOffsetY + pointerLocalY
-                                            val raw = when {
-                                                pointerY < layout.viewportStartOffset + edgePx &&
-                                                    listState.canScrollBackward ->
-                                                    pointerY - (layout.viewportStartOffset + edgePx)
-
-                                                pointerY > layout.viewportEndOffset - edgePx &&
-                                                    listState.canScrollForward ->
-                                                    pointerY - (layout.viewportEndOffset - edgePx)
-
-                                                else -> 0f
-                                            }
-                                            if (raw == 0f) {
-                                                delay(16)
-                                            } else {
-                                                // 越深入边缘越快并限速；滚动量同步补偿位移保持跟手
-                                                val delta = (raw * 0.25f).coerceIn(-20f, 20f)
-                                                listState.scrollBy(delta)
-                                                dragOffsetY += delta
-                                            }
-                                        }
-                                    }
                                 },
                                 onDragCancel = {
-                                    autoScrollJob?.cancel()
-                                    autoScrollJob = null
                                     draggedId = null
                                     dragOffsetY = 0f
-                                    pointerLocalY = 0f
                                     dragOrder = null
                                 },
                                 onDragEnd = {
-                                    autoScrollJob?.cancel()
-                                    autoScrollJob = null
                                     draggedId = null
                                     dragOffsetY = 0f
-                                    pointerLocalY = 0f
                                     val order = dragOrder
                                     if (order != null && order != persistedOrder) {
                                         viewModel.setEditorToolOrder(order)
@@ -211,7 +161,6 @@ fun ToolbarSettingsScreen(
                                 },
                                 onDrag = { change, drag ->
                                     change.consume()
-                                    pointerLocalY = change.position.y
                                     dragOffsetY += drag.y
                                     val current = draggedId ?: return@detectDragGesturesAfterLongPress
                                     val order = dragOrder ?: return@detectDragGesturesAfterLongPress
