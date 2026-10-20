@@ -455,28 +455,36 @@ class ReaderViewModel @Inject constructor(
 
     /**
      * 属性写回：重读磁盘 → 仅重建 frontmatter 属性块 → 原子写盘 → 失效名字 / 属性索引 →
-     * 调度保存同步 → 静默刷新。读 / 写失败时通过 [ReaderUiState.message] 提示。
+     * 调度保存同步；成功后用新属性就地更新状态（仅属性区变化，不做整篇重载，
+     * 复选框等操作立即反馈）。读 / 写失败时通过 [ReaderUiState.message] 提示。
      */
     private fun mutateAttributes(transform: (List<FrontmatterAttribute>) -> List<FrontmatterAttribute>?) {
         viewModelScope.launch {
-            val ok = withContext(Dispatchers.IO) {
+            val result = withContext(Dispatchers.IO) {
                 runCatching {
                     val current = vaultRepository.readText(absolutePath)
                     val split = FrontmatterParser.split(current)
-                    val entries = transform(split.entries) ?: return@runCatching true
-                    vaultRepository.writeTextAtomically(
-                        absolutePath,
-                        FrontmatterParser.build(entries, split.body)
-                    )
-                    true
-                }.getOrDefault(false)
+                    val entries = transform(split.entries)
+                    if (entries == null) {
+                        Result.success<List<FrontmatterAttribute>?>(null)
+                    } else {
+                        vaultRepository.writeTextAtomically(
+                            absolutePath,
+                            FrontmatterParser.build(entries, split.body)
+                        )
+                        Result.success<List<FrontmatterAttribute>?>(entries)
+                    }
+                }.getOrElse { Result.failure(it) }
             }
-            if (ok) {
-                vaultNameIndex.invalidate()
-                vaultPropertyIndex.invalidate()
-                _propertyHistory.value = null
-                runCatching { syncScheduler.scheduleSaveSync() }
-                load(showLoading = false)
+            val newEntries = result.getOrNull()
+            if (result.isSuccess) {
+                if (newEntries != null) {
+                    _state.update { it.copy(attributes = newEntries) }
+                    vaultNameIndex.invalidate()
+                    vaultPropertyIndex.invalidate()
+                    _propertyHistory.value = null
+                    runCatching { syncScheduler.scheduleSaveSync() }
+                }
             } else {
                 _state.update { it.copy(message = UiText.of(R.string.msg_attr_save_failed)) }
             }

@@ -65,6 +65,7 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
@@ -83,8 +84,9 @@ import com.mikepenz.markdown.model.ReferenceLinkHandlerImpl
 import com.mikepenz.markdown.model.State
 import org.intellij.markdown.flavours.gfm.GFMFlavourDescriptor
 import org.intellij.markdown.parser.MarkdownParser
-import kotlin.math.abs
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 /**
@@ -288,10 +290,12 @@ internal fun TaskListPane(
     var dragOrder by remember { mutableStateOf<List<TaskItem>?>(null) }
     var draggedLine by remember { mutableStateOf<Int?>(null) }
     var dragOffsetY by remember { mutableFloatStateOf(0f) }
-    var scrollAccum by remember { mutableFloatStateOf(0f) }
+    var pointerLocalY by remember { mutableFloatStateOf(0f) }
+    var autoScrollJob by remember { mutableStateOf<Job?>(null) }
     val itemHeights = remember { mutableStateMapOf<Int, Float>() }
     val displayTasks = dragOrder ?: visibleTasks
     val latestTasks by rememberUpdatedState(visibleTasks)
+    val density = LocalDensity.current
 
     // 稳定 key：写回重载后待办行号全部变化（以 lineIndex 作 key 会整列置换 → item 被
     // 重建、Checkbox 勾选动画重播，出现「排序后勾闪一下」）。改用「文本 + 同文本出现
@@ -447,28 +451,70 @@ internal fun TaskListPane(
                                     onDragStart = {
                                         haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                                         draggedLine = task.lineIndex
-                                        dragOrder = latestTasks
+                                        // 连续拖动沿用上一次未收敛的本地顺序作基准，避免起手瞬间重排跳位
+                                        if (dragOrder == null) dragOrder = latestTasks
                                         dragOffsetY = 0f
-                                        scrollAccum = 0f
+                                        pointerLocalY = 0f
+                                        autoScrollJob = scope.launch {
+                                            val edgePx = with(density) { 56.dp.toPx() }
+                                            while (isActive) {
+                                                val line = draggedLine ?: break
+                                                val order = dragOrder ?: break
+                                                val from = order.indexOfFirst { it.lineIndex == line }
+                                                if (from < 0) break
+                                                val layout = listState.layoutInfo
+                                                val info = layout.visibleItemsInfo
+                                                    .firstOrNull { it.index == leadingCount + from }
+                                                if (info == null) {
+                                                    delay(16)
+                                                    continue
+                                                }
+                                                // 手指在视口中的绝对位置（非相对被拖项），进入边缘区即滚动
+                                                val pointerY = info.offset + dragOffsetY + pointerLocalY
+                                                val raw = when {
+                                                    pointerY < layout.viewportStartOffset + edgePx &&
+                                                        listState.canScrollBackward ->
+                                                        pointerY - (layout.viewportStartOffset + edgePx)
+
+                                                    pointerY > layout.viewportEndOffset - edgePx &&
+                                                        listState.canScrollForward ->
+                                                        pointerY - (layout.viewportEndOffset - edgePx)
+
+                                                    else -> 0f
+                                                }
+                                                if (raw == 0f) {
+                                                    delay(16)
+                                                } else {
+                                                    // 越深入边缘越快并限速；滚动量同步补偿位移保持跟手
+                                                    val delta = (raw * 0.25f).coerceIn(-20f, 20f)
+                                                    listState.scrollBy(delta)
+                                                    dragOffsetY += delta
+                                                }
+                                            }
+                                        }
                                     },
                                     onDragCancel = {
+                                        autoScrollJob?.cancel()
+                                        autoScrollJob = null
                                         draggedLine = null
                                         dragOffsetY = 0f
-                                        scrollAccum = 0f
+                                        pointerLocalY = 0f
                                         dragOrder = null
                                     },
                                     onDragEnd = {
-                                        val order = dragOrder
+                                        autoScrollJob?.cancel()
+                                        autoScrollJob = null
                                         draggedLine = null
                                         dragOffsetY = 0f
-                                        scrollAccum = 0f
+                                        pointerLocalY = 0f
+                                        val order = dragOrder
                                         if (order != null) {
                                             val newOrder = order.map { it.lineIndex }
                                             if (newOrder != latestTasks.map { it.lineIndex }) {
                                                 onReorder(newOrder)
                                                 // 兜底：写回失败时避免本地顺序悬挂（正常由数据收敛清空）
                                                 scope.launch {
-                                                    delay(800)
+                                                    delay(2000)
                                                     if (dragOrder === order) dragOrder = null
                                                 }
                                             } else {
@@ -478,47 +524,36 @@ internal fun TaskListPane(
                                     },
                                     onDrag = { change, drag ->
                                         change.consume()
+                                        pointerLocalY = change.position.y
                                         dragOffsetY += drag.y
                                         val line = draggedLine ?: return@detectDragGesturesAfterLongPress
-                                        var order = dragOrder ?: return@detectDragGesturesAfterLongPress
-                                        // 越过相邻项高度即交换（官方 drag-to-reorder 同口径）；一次事件可连续交换多格
-                                        while (true) {
-                                            val from = order.indexOfFirst { it.lineIndex == line }
-                                            if (from < 0) break
-                                            val hDrag = itemHeights[order[from].lineIndex] ?: break
-                                            if (dragOffsetY > hDrag && from + 1 < order.size) {
-                                                val hNext = itemHeights[order[from + 1].lineIndex] ?: break
-                                                order = order.toMutableList().apply { add(from + 1, removeAt(from)) }
-                                                dragOffsetY -= hNext
-                                            } else if (dragOffsetY < 0f && from > 0) {
-                                                val hPrev = itemHeights[order[from - 1].lineIndex] ?: break
-                                                order = order.toMutableList().apply { add(from - 1, removeAt(from)) }
-                                                dragOffsetY += hPrev
-                                            } else {
-                                                break
-                                            }
-                                            dragOrder = order
-                                        }
-                                        // 拖到列表顶 / 底之外自动滚动；累计一定距离再滚，避免每帧派发
+                                        val order = dragOrder ?: return@detectDragGesturesAfterLongPress
                                         val from = order.indexOfFirst { it.lineIndex == line }
-                                        val h = itemHeights[line] ?: 0f
-                                        val y = change.position.y
-                                        val atTop = y < 0f && listState.canScrollBackward
-                                        val atBottom = y > h && listState.canScrollForward
-                                        if (atTop || atBottom) {
-                                            scrollAccum += drag.y
-                                            if (abs(scrollAccum) >= 12f) {
-                                                val delta = scrollAccum
-                                                scrollAccum = 0f
-                                                // 滚动使项在列表中的布局位置上移，同步补偿位移保持跟手
-                                                scope.launch {
-                                                    listState.scrollBy(delta)
-                                                    dragOffsetY += delta
-                                                }
-                                            }
-                                        } else {
-                                            scrollAccum = 0f
+                                        if (from < 0) return@detectDragGesturesAfterLongPress
+                                        val layout = listState.layoutInfo
+                                        val draggedInfo = layout.visibleItemsInfo
+                                            .firstOrNull { it.index == leadingCount + from }
+                                            ?: return@detectDragGesturesAfterLongPress
+                                        // 被拖项中心落进哪个可见项的范围，就移到该位置（reorderable 同口径）
+                                        val center = draggedInfo.offset + dragOffsetY + draggedInfo.size / 2f
+                                        val target = layout.visibleItemsInfo.firstOrNull { info ->
+                                            info.index >= leadingCount && info.index != draggedInfo.index &&
+                                                center >= info.offset && center < info.offset + info.size
+                                        } ?: return@detectDragGesturesAfterLongPress
+                                        val to = target.index - leadingCount
+                                        if (to < 0 || to >= order.size || to == from) {
+                                            return@detectDragGesturesAfterLongPress
                                         }
+                                        // 高度补偿：移动后布局位置改变，抵消差量保持视觉连续
+                                        var shift = 0f
+                                        if (to > from) {
+                                            for (i in from + 1..to) shift += itemHeights[order[i].lineIndex] ?: 0f
+                                            dragOffsetY -= shift
+                                        } else {
+                                            for (i in to until from) shift += itemHeights[order[i].lineIndex] ?: 0f
+                                            dragOffsetY += shift
+                                        }
+                                        dragOrder = order.toMutableList().apply { add(to, removeAt(from)) }
                                     }
                                 )
                             },

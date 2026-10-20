@@ -1,5 +1,6 @@
 package com.az.notes.ui.reader
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -11,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -31,6 +33,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -67,17 +70,19 @@ internal fun booleanAttrValue(values: List<String>): Boolean? {
     }
 }
 
-/** 新增属性行当前聚焦的输入（历史联想据此切换键 / 值列表）。 */
+/** 编辑行当前聚焦的输入（历史联想据此切换键 / 值列表）。 */
 private enum class AttrField { KEY, VALUE }
 
 /**
- * 属性编辑浮窗：列出当前 frontmatter 属性（布尔值渲染为可切换复选框、多值为可删标签），
- * 每行右侧可删除整条属性；右下角「+」在列表下方展开一栏左右排列的键值输入，
- * 值换行分隔即写成多值。
+ * 属性编辑浮窗：列出当前 frontmatter 属性（无图标，键列 40% / 值列 60%，行尾 x 删除
+ * 整条属性），点击任意属性行把键值带入下方编辑行修改（键改名 = 删旧键 + 建新键）。
+ * 右下角「点击添加属性」展开 / 聚焦编辑行；键值左右排列，值换行分隔即多值。
  *
  * 键输入弹出全库属性键历史，值输入只弹出当前键历史输入过的值（键值联动）；
- * 历史以非聚焦弹层展示（[PopupProperties.focusable] = false），不遮挡输入框、
- * 不抢输入焦点、不收起输入法。
+ * 历史分别锚定在键 / 值输入框下方，以非聚焦弹层展示（[PopupProperties.focusable]
+ * = false），不遮挡输入框、不抢输入焦点、不收起输入法。
+ * 浮窗整体限高并随输入法上移（[DialogProperties.decorFitsSystemWindows] = false +
+ * imePadding），属性很多时列表内部滚动，编辑行始终在键盘上方。
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -89,9 +94,11 @@ internal fun AttributeEditorDialog(
     onDismiss: () -> Unit
 ) {
     var adding by rememberSaveable { mutableStateOf(false) }
+    var editingKey by rememberSaveable { mutableStateOf<String?>(null) }
     var keyDraft by rememberSaveable { mutableStateOf("") }
     var valueDraft by rememberSaveable { mutableStateOf("") }
     var activeField by remember { mutableStateOf<AttrField?>(null) }
+    var focusTick by remember { mutableStateOf(0) }
     val keyFocus = remember { FocusRequester() }
     val valueFocus = remember { FocusRequester() }
 
@@ -105,44 +112,57 @@ internal fun AttributeEditorDialog(
             ?.value
             .orEmpty()
     }
-    val suggestions = when (activeField) {
-        AttrField.KEY -> keyHistory
-        AttrField.VALUE -> valueHistory
-        null -> emptyList()
-    }
 
-    fun resetDraft() {
+    fun clearDraft() {
         keyDraft = ""
         valueDraft = ""
-        activeField = null
     }
 
     fun submit() {
         val key = keyDraft.trim()
         if (key.isEmpty()) return
         val values = valueDraft.split('\n').map { it.trim() }.filter { it.isNotEmpty() }
+        val target = editingKey
+        if (target != null && target != key) onRemove(target)
         onSetValues(key, values)
-        resetDraft()
+        editingKey = null
+        clearDraft()
+        focusTick++
     }
 
-    LaunchedEffect(adding) {
-        if (adding) {
-            // 等一帧布局完成后再请求焦点，避免输入框未就绪焦点被吞
-            withFrameNanos { }
-            runCatching { keyFocus.requestFocus() }
-        }
+    fun startEdit(attr: FrontmatterAttribute) {
+        editingKey = attr.key
+        keyDraft = attr.key
+        valueDraft = attr.values.joinToString("\n")
+        adding = true
+        activeField = AttrField.KEY
+        focusTick++
+    }
+
+    // 输入行组合完成后再请求焦点，重复提交 / 新增也能持续弹出键历史
+    LaunchedEffect(adding, focusTick) {
+        if (!adding) return@LaunchedEffect
+        withFrameNanos { }
+        withFrameNanos { }
+        runCatching { keyFocus.requestFocus() }
+        activeField = AttrField.KEY
     }
 
     Dialog(
         onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            decorFitsSystemWindows = false
+        )
     ) {
         Surface(
             shape = RoundedCornerShape(20.dp),
             color = MaterialTheme.colorScheme.surface,
             modifier = Modifier
                 .fillMaxWidth(0.92f)
+                .heightIn(max = 520.dp)
                 .imePadding()
+                .navigationBarsPadding()
         ) {
             Column(Modifier.padding(start = 16.dp, end = 8.dp, top = 16.dp, bottom = 8.dp)) {
                 Text(
@@ -151,22 +171,23 @@ internal fun AttributeEditorDialog(
                     modifier = Modifier.padding(end = 8.dp)
                 )
                 Spacer(Modifier.height(8.dp))
-                if (attributes.isEmpty()) {
-                    Text(
-                        text = stringResource(R.string.reader_attr_empty),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(vertical = 8.dp)
-                    )
-                } else {
-                    Column(
-                        modifier = Modifier
-                            .heightIn(max = 340.dp)
-                            .verticalScroll(rememberScrollState())
-                    ) {
+                Column(
+                    modifier = Modifier
+                        .weight(1f, fill = false)
+                        .verticalScroll(rememberScrollState())
+                ) {
+                    if (attributes.isEmpty()) {
+                        Text(
+                            text = stringResource(R.string.reader_attr_empty),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(vertical = 8.dp)
+                        )
+                    } else {
                         attributes.forEach { attr ->
                             AttributeEditRow(
                                 attr = attr,
+                                onClick = { startEdit(attr) },
                                 onSetValues = onSetValues,
                                 onRemove = onRemove
                             )
@@ -175,11 +196,11 @@ internal fun AttributeEditorDialog(
                 }
                 if (adding) {
                     HorizontalDivider(Modifier.padding(top = 4.dp, bottom = 8.dp, end = 8.dp))
-                    Box {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(end = 8.dp)
-                        ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(end = 8.dp)
+                    ) {
+                        Box(Modifier.weight(0.42f)) {
                             OutlinedTextField(
                                 value = keyDraft,
                                 onValueChange = {
@@ -189,11 +210,31 @@ internal fun AttributeEditorDialog(
                                 singleLine = true,
                                 label = { Text(stringResource(R.string.reader_attr_key)) },
                                 modifier = Modifier
-                                    .weight(0.42f)
+                                    .fillMaxWidth()
                                     .focusRequester(keyFocus)
                                     .onFocusChanged { if (it.isFocused) activeField = AttrField.KEY }
                             )
-                            Spacer(Modifier.width(8.dp))
+                            DropdownMenu(
+                                expanded = activeField == AttrField.KEY && keyHistory.isNotEmpty(),
+                                onDismissRequest = { activeField = null },
+                                properties = PopupProperties(focusable = false)
+                            ) {
+                                keyHistory.take(8).forEach { item ->
+                                    DropdownMenuItem(
+                                        text = {
+                                            Text(item, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        },
+                                        onClick = {
+                                            keyDraft = item
+                                            activeField = AttrField.VALUE
+                                            runCatching { valueFocus.requestFocus() }
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        Box(Modifier.weight(0.58f)) {
                             OutlinedTextField(
                                 value = valueDraft,
                                 onValueChange = {
@@ -204,50 +245,46 @@ internal fun AttributeEditorDialog(
                                 maxLines = 4,
                                 label = { Text(stringResource(R.string.reader_attr_value)) },
                                 modifier = Modifier
-                                    .weight(0.58f)
+                                    .fillMaxWidth()
                                     .focusRequester(valueFocus)
                                     .onFocusChanged { if (it.isFocused) activeField = AttrField.VALUE }
                             )
-                            IconButton(
-                                onClick = { submit() },
-                                enabled = keyDraft.isNotBlank()
+                            // 值历史锚定在值输入框下方；非聚焦弹层不抢焦点、不收起输入法
+                            DropdownMenu(
+                                expanded = activeField == AttrField.VALUE && valueHistory.isNotEmpty(),
+                                onDismissRequest = { activeField = null },
+                                properties = PopupProperties(focusable = false)
                             ) {
-                                Icon(Icons.Filled.Check, stringResource(R.string.reader_attr_add))
+                                valueHistory.take(8).forEach { item ->
+                                    DropdownMenuItem(
+                                        text = {
+                                            Text(item, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        },
+                                        onClick = {
+                                            valueDraft = if (valueDraft.isBlank()) {
+                                                item
+                                            } else {
+                                                valueDraft.trimEnd('\n') + "\n" + item
+                                            }
+                                            activeField = null
+                                        }
+                                    )
+                                }
                             }
                         }
-                        // 历史联想：非聚焦弹层，不抢焦点、不收起输入法
-                        DropdownMenu(
-                            expanded = activeField != null && suggestions.isNotEmpty(),
-                            onDismissRequest = { activeField = null },
-                            properties = PopupProperties(focusable = false)
+                        IconButton(
+                            onClick = { submit() },
+                            enabled = keyDraft.isNotBlank()
                         ) {
-                            suggestions.take(8).forEach { item ->
-                                DropdownMenuItem(
-                                    text = {
-                                        Text(item, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    },
-                                    onClick = {
-                                        when (activeField) {
-                                            AttrField.KEY -> {
-                                                keyDraft = item
-                                                activeField = AttrField.VALUE
-                                                valueFocus.requestFocus()
-                                            }
-
-                                            AttrField.VALUE -> {
-                                                valueDraft = if (valueDraft.isBlank()) {
-                                                    item
-                                                } else {
-                                                    valueDraft.trimEnd('\n') + "\n" + item
-                                                }
-                                                activeField = null
-                                            }
-
-                                            null -> Unit
-                                        }
-                                    }
-                                )
-                            }
+                            Icon(Icons.Filled.Check, stringResource(R.string.reader_attr_add))
+                        }
+                        IconButton(onClick = {
+                            adding = false
+                            editingKey = null
+                            clearDraft()
+                            activeField = null
+                        }) {
+                            Icon(Icons.Filled.Close, stringResource(R.string.reader_attr_cancel))
                         }
                     }
                 }
@@ -256,19 +293,15 @@ internal fun AttributeEditorDialog(
                     horizontalArrangement = Arrangement.End,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    IconButton(onClick = {
-                        if (adding) {
-                            adding = false
-                            resetDraft()
-                        } else {
-                            adding = true
-                            resetDraft()
-                        }
+                    TextButton(onClick = {
+                        adding = true
+                        editingKey = null
+                        clearDraft()
+                        focusTick++
                     }) {
-                        Icon(
-                            if (adding) Icons.Filled.Close else Icons.Filled.Add,
-                            stringResource(R.string.reader_attr_add_action)
-                        )
+                        Icon(Icons.Filled.Add, null, Modifier.size(18.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text(stringResource(R.string.reader_attr_add_action))
                     }
                 }
             }
@@ -276,11 +309,12 @@ internal fun AttributeEditorDialog(
     }
 }
 
-/** 单条属性行：键 + 值（布尔复选框 / 单值 / 多值标签）+ 删除整条属性。 */
+/** 单条属性行：键 + 值（布尔复选框 / 单值 / 多值标签）+ 删除整条属性；点击行进入编辑。 */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun AttributeEditRow(
     attr: FrontmatterAttribute,
+    onClick: () -> Unit,
     onSetValues: (String, List<String>) -> Unit,
     onRemove: (String) -> Unit
 ) {
@@ -291,6 +325,7 @@ private fun AttributeEditRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .clickable(onClick = onClick)
             .padding(vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -355,7 +390,7 @@ private fun AttributeEditRow(
                 }
             }
         }
-        IconButton(onClick = { onRemove(attr.key) }, modifier = Modifier.size(32.dp)) {
+        IconButton(onClick = onRemove, modifier = Modifier.size(32.dp)) {
             Icon(
                 Icons.Filled.Close,
                 stringResource(R.string.reader_attr_remove),
