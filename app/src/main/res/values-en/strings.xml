@@ -554,6 +554,7 @@
     <string name="reader_attr_value">Value</string>
     <string name="reader_attr_value_hint">One value per line; true / false renders as a checkbox</string>
     <string name="reader_attr_add">Add</string>
+    <string name="reader_attr_add_action">Add property</string>
     <string name="reader_attr_remove">Remove property</string>
     <string name="reader_attr_remove_value">Remove value</string>
 

@@ -74,7 +74,7 @@ fun ToolbarSettingsScreen(
     var draggedId by remember { mutableStateOf<String?>(null) }
     var dragOffsetY by remember { mutableFloatStateOf(0f) }
     var scrollAccum by remember { mutableFloatStateOf(0f) }
-    val itemHeights = remember { mutableStateMapOf<Int, Float>() }
+    val itemHeights = remember { mutableStateMapOf<String, Float>() }
     val displayOrder = dragOrder ?: persistedOrder
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
@@ -125,12 +125,11 @@ fun ToolbarSettingsScreen(
                                 dragging -> Modifier
                                     .shadow(6.dp, RoundedCornerShape(8.dp))
                                     .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(8.dp))
-                                // 拖动期间项位交换带动画；写回重载时关掉动画避免无意义滑动
-                                dragOrder != null -> Modifier.animateItem()
+                                // 拖动期间不做位移动画：动画与手动 translation 叠加会产生闪动
                                 else -> Modifier
                             }
                         )
-                        .onGloballyPositioned { itemHeights[index] = it.size.height.toFloat() }
+                        .onGloballyPositioned { itemHeights[id] = it.size.height.toFloat() }
                         .pointerInput(id) {
                             detectDragGesturesAfterLongPress(
                                 onDragStart = {
@@ -167,19 +166,17 @@ fun ToolbarSettingsScreen(
                                     dragOffsetY += drag.y
                                     val current = draggedId ?: return@detectDragGesturesAfterLongPress
                                     var order = dragOrder ?: return@detectDragGesturesAfterLongPress
-                                    // 越过相邻项半高即交换；一次事件可连续交换多格
+                                    // 越过相邻项高度即交换（官方 drag-to-reorder 同口径）；一次事件可连续交换多格
                                     while (true) {
                                         val from = order.indexOf(current)
                                         if (from < 0) break
-                                        val hDrag = itemHeights[from] ?: break
-                                        if (dragOffsetY > 0f && from + 1 < order.size) {
-                                            val hNext = itemHeights[from + 1] ?: break
-                                            if (dragOffsetY < (hDrag + hNext) / 2f) break
+                                        val hDrag = itemHeights[order[from]] ?: break
+                                        if (dragOffsetY > hDrag && from + 1 < order.size) {
+                                            val hNext = itemHeights[order[from + 1]] ?: break
                                             order = order.toMutableList().apply { add(from + 1, removeAt(from)) }
                                             dragOffsetY -= hNext
                                         } else if (dragOffsetY < 0f && from > 0) {
-                                            val hPrev = itemHeights[from - 1] ?: break
-                                            if (-dragOffsetY < (hPrev + hDrag) / 2f) break
+                                            val hPrev = itemHeights[order[from - 1]] ?: break
                                             order = order.toMutableList().apply { add(from - 1, removeAt(from)) }
                                             dragOffsetY += hPrev
                                         } else {
@@ -189,7 +186,7 @@ fun ToolbarSettingsScreen(
                                     }
                                     // 拖到列表顶 / 底之外自动滚动；累计一定距离再滚，避免每帧派发
                                     val from = order.indexOf(current)
-                                    val h = itemHeights[from] ?: 0f
+                                    val h = itemHeights[current] ?: 0f
                                     val y = change.position.y
                                     val atTop = y < 0f && listState.canScrollBackward
                                     val atBottom = y > h && listState.canScrollForward
@@ -198,7 +195,11 @@ fun ToolbarSettingsScreen(
                                         if (abs(scrollAccum) >= 12f) {
                                             val delta = scrollAccum
                                             scrollAccum = 0f
-                                            scope.launch { listState.scrollBy(delta) }
+                                            // 滚动使项在列表中的布局位置上移，同步补偿位移保持跟手
+                                            scope.launch {
+                                                listState.scrollBy(delta)
+                                                dragOffsetY += delta
+                                            }
                                         }
                                     } else {
                                         scrollAccum = 0f

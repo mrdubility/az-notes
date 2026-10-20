@@ -2,7 +2,10 @@ package com.az.notes.ui.common
 
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.sp
 import com.mikepenz.markdown.m3.markdownTypography
 import com.mikepenz.markdown.model.MarkdownTypography
@@ -13,7 +16,11 @@ import com.mikepenz.markdown.model.MarkdownTypography
  * mikepenz M3 默认把 h1-h3 映射到 display 级（h1=displayLarge≈57sp、h2=displayMedium、
  * h3=displaySmall），在手机窄幅上观感突兀；此处仅覆盖 h1-h6 为紧凑层级（正文 16sp 基准：
  * h1 22sp / h2 20sp / h3 18sp 加粗，h4 16sp / h5 15sp / h6 14sp 半粗），
- * 其余样式（正文 / 引用 / 代码 / 链接 / 表格等）沿用库默认映射。
+ * 其余样式（正文 / 引用 / 代码 / 表格等）沿用库默认映射。
+ *
+ * 链接样式只保留颜色与下划线：库默认 `textLink` 带入正文字号（bodyLarge 16sp），
+ * 会覆盖标题内链接的字号（整个标题由链接构成时标题层级失效）；不设字号后
+ * 链接继承所在块（标题 / 正文）的样式。
  */
 @Composable
 fun azNotesMarkdownTypography(): MarkdownTypography = markdownTypography(
@@ -32,5 +39,11 @@ fun azNotesMarkdownTypography(): MarkdownTypography = markdownTypography(
     ),
     h6 = MaterialTheme.typography.titleSmall.copy(
         fontSize = 14.sp, lineHeight = 20.sp, fontWeight = FontWeight.SemiBold
+    ),
+    textLink = TextLinkStyles(
+        style = SpanStyle(
+            color = MaterialTheme.colorScheme.primary,
+            textDecoration = TextDecoration.Underline
+        )
     )
 )

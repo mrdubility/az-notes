@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -17,9 +18,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -30,18 +31,25 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.PopupProperties
 import com.az.notes.R
 import com.az.notes.domain.markdown.FrontmatterAttribute
 
@@ -59,12 +67,19 @@ internal fun booleanAttrValue(values: List<String>): Boolean? {
     }
 }
 
+/** 新增属性行当前聚焦的输入（历史联想据此切换键 / 值列表）。 */
+private enum class AttrField { KEY, VALUE }
+
 /**
  * 属性编辑浮窗：列出当前 frontmatter 属性（布尔值渲染为可切换复选框、多值为可删标签），
- * 每行可删除整条属性；底部输入键 / 值新增或覆盖属性。
- * 键输入弹出全库属性键历史，值输入只弹出当前键历史输入过的值（键值联动）；
+ * 每行右侧可删除整条属性；右下角「+」在列表下方展开一栏左右排列的键值输入，
  * 值换行分隔即写成多值。
+ *
+ * 键输入弹出全库属性键历史，值输入只弹出当前键历史输入过的值（键值联动）；
+ * 历史以非聚焦弹层展示（[PopupProperties.focusable] = false），不遮挡输入框、
+ * 不抢输入焦点、不收起输入法。
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun AttributeEditorDialog(
     attributes: List<FrontmatterAttribute>,
@@ -73,48 +88,80 @@ internal fun AttributeEditorDialog(
     onRemove: (String) -> Unit,
     onDismiss: () -> Unit
 ) {
-    var keyInput by rememberSaveable { mutableStateOf("") }
-    var valueInput by rememberSaveable { mutableStateOf("") }
-    var keyMenu by remember { mutableStateOf(false) }
-    var valueMenu by remember { mutableStateOf(false) }
+    var adding by rememberSaveable { mutableStateOf(false) }
+    var keyDraft by rememberSaveable { mutableStateOf("") }
+    var valueDraft by rememberSaveable { mutableStateOf("") }
+    var activeField by remember { mutableStateOf<AttrField?>(null) }
+    val keyFocus = remember { FocusRequester() }
+    val valueFocus = remember { FocusRequester() }
 
-    val keyHistory = remember(history, keyInput) {
+    val keyHistory = remember(history, keyDraft) {
         val keys = history?.keys?.toList().orEmpty()
-        if (keyInput.isBlank()) keys else keys.filter { it.contains(keyInput.trim(), ignoreCase = true) }
+        if (keyDraft.isBlank()) keys else keys.filter { it.contains(keyDraft.trim(), ignoreCase = true) }
     }
-    val valueHistory = remember(history, keyInput) {
+    val valueHistory = remember(history, keyDraft) {
         history?.entries
-            ?.firstOrNull { it.key.equals(keyInput.trim(), ignoreCase = true) }
+            ?.firstOrNull { it.key.equals(keyDraft.trim(), ignoreCase = true) }
             ?.value
             .orEmpty()
     }
-
-    fun add() {
-        val key = keyInput.trim()
-        if (key.isEmpty()) return
-        val values = valueInput.split('\n').map { it.trim() }.filter { it.isNotEmpty() }
-        onSetValues(key, values)
-        keyInput = ""
-        valueInput = ""
-        keyMenu = false
-        valueMenu = false
+    val suggestions = when (activeField) {
+        AttrField.KEY -> keyHistory
+        AttrField.VALUE -> valueHistory
+        null -> emptyList()
     }
 
-    AlertDialog(
+    fun resetDraft() {
+        keyDraft = ""
+        valueDraft = ""
+        activeField = null
+    }
+
+    fun submit() {
+        val key = keyDraft.trim()
+        if (key.isEmpty()) return
+        val values = valueDraft.split('\n').map { it.trim() }.filter { it.isNotEmpty() }
+        onSetValues(key, values)
+        resetDraft()
+    }
+
+    LaunchedEffect(adding) {
+        if (adding) {
+            // 等一帧布局完成后再请求焦点，避免输入框未就绪焦点被吞
+            withFrameNanos { }
+            runCatching { keyFocus.requestFocus() }
+        }
+    }
+
+    Dialog(
         onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.reader_attr_edit_title)) },
-        text = {
-            Column {
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            shape = RoundedCornerShape(20.dp),
+            color = MaterialTheme.colorScheme.surface,
+            modifier = Modifier
+                .fillMaxWidth(0.92f)
+                .imePadding()
+        ) {
+            Column(Modifier.padding(start = 16.dp, end = 8.dp, top = 16.dp, bottom = 8.dp)) {
+                Text(
+                    text = stringResource(R.string.reader_attr_edit_title),
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.padding(end = 8.dp)
+                )
+                Spacer(Modifier.height(8.dp))
                 if (attributes.isEmpty()) {
                     Text(
                         text = stringResource(R.string.reader_attr_empty),
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(vertical = 8.dp)
                     )
                 } else {
                     Column(
                         modifier = Modifier
-                            .heightIn(max = 300.dp)
+                            .heightIn(max = 340.dp)
                             .verticalScroll(rememberScrollState())
                     ) {
                         attributes.forEach { attr ->
@@ -126,91 +173,107 @@ internal fun AttributeEditorDialog(
                         }
                     }
                 }
-                HorizontalDivider(Modifier.padding(vertical = 8.dp))
-                Box {
-                    OutlinedTextField(
-                        value = keyInput,
-                        onValueChange = {
-                            keyInput = it
-                            keyMenu = true
-                        },
-                        singleLine = true,
-                        label = { Text(stringResource(R.string.reader_attr_key)) },
-                        trailingIcon = {
-                            IconButton(onClick = { keyMenu = !keyMenu }) {
-                                Icon(Icons.Filled.ArrowDropDown, null)
-                            }
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    DropdownMenu(
-                        expanded = keyMenu && keyHistory.isNotEmpty(),
-                        onDismissRequest = { keyMenu = false }
-                    ) {
-                        keyHistory.take(8).forEach { key ->
-                            DropdownMenuItem(
-                                text = { Text(key, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                                onClick = {
-                                    keyInput = key
-                                    keyMenu = false
-                                    valueMenu = true
-                                }
+                if (adding) {
+                    HorizontalDivider(Modifier.padding(top = 4.dp, bottom = 8.dp, end = 8.dp))
+                    Box {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(end = 8.dp)
+                        ) {
+                            OutlinedTextField(
+                                value = keyDraft,
+                                onValueChange = {
+                                    keyDraft = it
+                                    activeField = AttrField.KEY
+                                },
+                                singleLine = true,
+                                label = { Text(stringResource(R.string.reader_attr_key)) },
+                                modifier = Modifier
+                                    .weight(0.42f)
+                                    .focusRequester(keyFocus)
+                                    .onFocusChanged { if (it.isFocused) activeField = AttrField.KEY }
                             )
+                            Spacer(Modifier.width(8.dp))
+                            OutlinedTextField(
+                                value = valueDraft,
+                                onValueChange = {
+                                    valueDraft = it
+                                    activeField = AttrField.VALUE
+                                },
+                                minLines = 1,
+                                maxLines = 4,
+                                label = { Text(stringResource(R.string.reader_attr_value)) },
+                                modifier = Modifier
+                                    .weight(0.58f)
+                                    .focusRequester(valueFocus)
+                                    .onFocusChanged { if (it.isFocused) activeField = AttrField.VALUE }
+                            )
+                            IconButton(
+                                onClick = { submit() },
+                                enabled = keyDraft.isNotBlank()
+                            ) {
+                                Icon(Icons.Filled.Check, stringResource(R.string.reader_attr_add))
+                            }
                         }
-                    }
-                }
-                Spacer(Modifier.height(6.dp))
-                Box {
-                    OutlinedTextField(
-                        value = valueInput,
-                        onValueChange = {
-                            valueInput = it
-                            valueMenu = true
-                        },
-                        minLines = 1,
-                        maxLines = 4,
-                        label = { Text(stringResource(R.string.reader_attr_value)) },
-                        supportingText = { Text(stringResource(R.string.reader_attr_value_hint)) },
-                        trailingIcon = {
-                            IconButton(onClick = { valueMenu = !valueMenu }) {
-                                Icon(Icons.Filled.ArrowDropDown, null)
-                            }
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    DropdownMenu(
-                        expanded = valueMenu && valueHistory.isNotEmpty(),
-                        onDismissRequest = { valueMenu = false }
-                    ) {
-                        valueHistory.take(8).forEach { value ->
-                            DropdownMenuItem(
-                                text = { Text(value, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                                onClick = {
-                                    valueInput = if (valueInput.isBlank()) {
-                                        value
-                                    } else {
-                                        valueInput.trimEnd('\n') + "\n" + value
+                        // 历史联想：非聚焦弹层，不抢焦点、不收起输入法
+                        DropdownMenu(
+                            expanded = activeField != null && suggestions.isNotEmpty(),
+                            onDismissRequest = { activeField = null },
+                            properties = PopupProperties(focusable = false)
+                        ) {
+                            suggestions.take(8).forEach { item ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(item, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    },
+                                    onClick = {
+                                        when (activeField) {
+                                            AttrField.KEY -> {
+                                                keyDraft = item
+                                                activeField = AttrField.VALUE
+                                                valueFocus.requestFocus()
+                                            }
+
+                                            AttrField.VALUE -> {
+                                                valueDraft = if (valueDraft.isBlank()) {
+                                                    item
+                                                } else {
+                                                    valueDraft.trimEnd('\n') + "\n" + item
+                                                }
+                                                activeField = null
+                                            }
+
+                                            null -> Unit
+                                        }
                                     }
-                                    valueMenu = false
-                                }
-                            )
+                                )
+                            }
                         }
                     }
                 }
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    TextButton(enabled = keyInput.isNotBlank(), onClick = { add() }) {
-                        Text(stringResource(R.string.reader_attr_add))
+                    IconButton(onClick = {
+                        if (adding) {
+                            adding = false
+                            resetDraft()
+                        } else {
+                            adding = true
+                            resetDraft()
+                        }
+                    }) {
+                        Icon(
+                            if (adding) Icons.Filled.Close else Icons.Filled.Add,
+                            stringResource(R.string.reader_attr_add_action)
+                        )
                     }
                 }
             }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_confirm)) }
         }
-    )
+    }
 }
 
 /** 单条属性行：键 + 值（布尔复选框 / 单值 / 多值标签）+ 删除整条属性。 */
@@ -226,47 +289,43 @@ private fun AttributeEditRow(
     }
     val bool = booleanAttrValue(values)
     Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
             text = attr.key,
-            style = MaterialTheme.typography.labelMedium,
+            style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1,
+            maxLines = 2,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.width(84.dp)
+            modifier = Modifier.weight(0.4f).padding(end = 8.dp)
         )
-        Box(Modifier.weight(1f)) {
+        Box(Modifier.weight(0.6f)) {
             when {
-                bool != null -> Row(verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(
-                        checked = bool,
-                        onCheckedChange = { checked ->
-                            onSetValues(attr.key, listOf(if (checked) "true" else "false"))
-                        }
-                    )
-                    Text(
-                        text = if (bool) "true" else "false",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+                bool != null -> Checkbox(
+                    checked = bool,
+                    onCheckedChange = { checked ->
+                        onSetValues(attr.key, listOf(if (checked) "true" else "false"))
+                    },
+                    modifier = Modifier.size(32.dp)
+                )
 
                 values.isEmpty() -> Text(
                     text = "—",
-                    style = MaterialTheme.typography.labelMedium,
+                    style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
 
                 values.size == 1 -> Text(
                     text = values.first(),
-                    style = MaterialTheme.typography.labelMedium
+                    style = MaterialTheme.typography.bodyMedium
                 )
 
                 else -> FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     values.forEach { value ->
                         Surface(
