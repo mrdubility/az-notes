@@ -115,6 +115,35 @@ object FrontmatterParser {
     /** 剥离 frontmatter 返回正文；无属性块时返回原文（换行已规范化为 LF）。 */
     fun strip(content: String): String = split(content).body
 
+    /**
+     * 用 [entries] 生成属性块并拼回 [body]（属性为空时直接返回正文）：
+     * 单值写 `key: value`，多值写 YAML 列表，空值保留 `key:` 占位。
+     */
+    fun build(entries: List<FrontmatterAttribute>, body: String): String {
+        val valid = entries.filter { it.key.isNotBlank() }
+        if (valid.isEmpty()) return body
+        val sb = StringBuilder()
+        sb.append(DELIMITER).append('\n')
+        valid.forEach { attr ->
+            val key = attr.key.trim()
+            val values = attr.values.map { it.trim() }.filter { it.isNotEmpty() }
+            when {
+                values.isEmpty() -> sb.append(key).append(':').append('\n')
+                values.size == 1 -> sb.append(key).append(": ").append(values[0]).append('\n')
+                else -> {
+                    sb.append(key).append(':').append('\n')
+                    values.forEach { value -> sb.append("  - ").append(value).append('\n') }
+                }
+            }
+        }
+        sb.append(DELIMITER).append('\n').append(body)
+        return sb.toString()
+    }
+
+    /** 用 [entries] 替换现有属性块（保留正文）；原无属性块时在文首生成。 */
+    fun update(content: String, entries: List<FrontmatterAttribute>): String =
+        build(entries, split(content).body)
+
     /** 定位结束分隔行下标（0 基）；首行不是 `---` 或未闭合时返回 null。 */
     private fun endDelimiterIndex(lines: List<String>): Int? {
         if (lines.isEmpty() || lines[0].trimEnd() != DELIMITER) return null

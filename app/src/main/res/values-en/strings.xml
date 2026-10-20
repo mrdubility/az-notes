@@ -547,14 +547,32 @@
     <string name="reader_attrs_title">Properties</string>
     <string name="reader_attrs_collapse">Collapse properties</string>
     <string name="reader_attrs_expand">Expand properties</string>
+    <string name="reader_attr_edit_action">Edit properties</string>
+    <string name="reader_attr_edit_title">Edit properties</string>
+    <string name="reader_attr_empty">No properties yet — add one below</string>
+    <string name="reader_attr_key">Key</string>
+    <string name="reader_attr_value">Value</string>
+    <string name="reader_attr_value_hint">One value per line; true / false renders as a checkbox</string>
+    <string name="reader_attr_add">Add</string>
+    <string name="reader_attr_remove">Remove property</string>
+    <string name="reader_attr_remove_value">Remove value</string>
 
     <!-- Task list page (frontmatter note_type: task) -->
     <string name="task_add_hint">Add a task…</string>
     <string name="task_add_action">Add</string>
     <string name="task_empty">No tasks yet — add one below</string>
+    <string name="task_filter_incomplete">Incomplete</string>
+    <string name="task_filter_complete">Completed</string>
     <string name="task_only_incomplete">Incomplete only</string>
     <string name="task_incomplete_empty">No incomplete tasks</string>
+    <string name="task_complete_empty">No completed tasks</string>
+    <string name="task_menu_more">More</string>
+    <string name="task_menu_edit">Edit</string>
+    <string name="task_menu_copy">Copy text</string>
+    <string name="task_menu_delete">Delete</string>
+    <string name="task_edit_title">Edit task</string>
     <string name="msg_task_save_failed">Failed to save task, please retry</string>
+    <string name="msg_attr_save_failed">Failed to save properties, please retry</string>
 
     <!-- Trash -->
     <string name="trash_title">Trash</string>

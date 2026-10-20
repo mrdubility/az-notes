@@ -547,14 +547,32 @@
     <string name="reader_attrs_title">属性</string>
     <string name="reader_attrs_collapse">收起属性</string>
     <string name="reader_attrs_expand">展开属性</string>
+    <string name="reader_attr_edit_action">编辑属性</string>
+    <string name="reader_attr_edit_title">编辑属性</string>
+    <string name="reader_attr_empty">暂无属性，可在下方添加</string>
+    <string name="reader_attr_key">属性键</string>
+    <string name="reader_attr_value">属性值</string>
+    <string name="reader_attr_value_hint">换行分隔多个值；true / false 显示为复选框</string>
+    <string name="reader_attr_add">添加</string>
+    <string name="reader_attr_remove">删除属性</string>
+    <string name="reader_attr_remove_value">删除该值</string>
 
     <!-- 待办清单页（frontmatter note_type: task） -->
     <string name="task_add_hint">添加待办…</string>
     <string name="task_add_action">添加</string>
     <string name="task_empty">暂无待办，在下方输入添加</string>
+    <string name="task_filter_incomplete">未完成</string>
+    <string name="task_filter_complete">已完成</string>
     <string name="task_only_incomplete">仅显示未完成</string>
     <string name="task_incomplete_empty">没有未完成的待办</string>
+    <string name="task_complete_empty">没有已完成的待办</string>
+    <string name="task_menu_more">更多</string>
+    <string name="task_menu_edit">编辑</string>
+    <string name="task_menu_copy">复制文字</string>
+    <string name="task_menu_delete">删除</string>
+    <string name="task_edit_title">编辑待办</string>
     <string name="msg_task_save_failed">待办保存失败，请重试</string>
+    <string name="msg_attr_save_failed">属性保存失败，请重试</string>
 
     <!-- 回收站（恢复被云端删除波及的本地文件） -->
     <string name="trash_title">回收站</string>

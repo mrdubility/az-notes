@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -22,14 +23,18 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
@@ -39,6 +44,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -57,16 +63,26 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import com.az.notes.R
 import com.az.notes.domain.markdown.FrontmatterAttribute
 import com.az.notes.domain.markdown.TaskItem
+import com.az.notes.domain.markdown.WikiLinkTransformer
+import com.az.notes.ui.common.azNotesMarkdownTypography
+import com.mikepenz.markdown.m3.Markdown
+import com.mikepenz.markdown.model.DefaultMarkdownAnimation
+import com.mikepenz.markdown.model.ReferenceLinkHandlerImpl
+import com.mikepenz.markdown.model.State
+import org.intellij.markdown.flavours.gfm.GFMFlavourDescriptor
+import org.intellij.markdown.parser.MarkdownParser
+import kotlin.math.abs
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -76,10 +92,15 @@ import kotlinx.coroutines.launch
  */
 
 /**
- * 文件名标题（预览页 / 待办页共用）：与正文之间用分隔线区分，避免整片连在一起。
+ * 文件名标题（预览页 / 待办页共用）：与正文之间用分隔线区分，避免整片连在一起；
+ * 传入 [onEditAttributes] 时标题下方显示「编辑属性」入口。
  */
 @Composable
-internal fun FileNameHeader(fileName: String, modifier: Modifier = Modifier) {
+internal fun FileNameHeader(
+    fileName: String,
+    modifier: Modifier = Modifier,
+    onEditAttributes: (() -> Unit)? = null
+) {
     Column(
         modifier = modifier
             .fillMaxWidth()
@@ -91,6 +112,20 @@ internal fun FileNameHeader(fileName: String, modifier: Modifier = Modifier) {
             maxLines = 2,
             overflow = TextOverflow.Ellipsis
         )
+        if (onEditAttributes != null) {
+            TextButton(
+                onClick = onEditAttributes,
+                modifier = Modifier.padding(top = 2.dp)
+            ) {
+                Icon(
+                    Icons.Filled.Edit,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(Modifier.width(6.dp))
+                Text(stringResource(R.string.reader_attr_edit_action))
+            }
+        }
         Spacer(Modifier.height(8.dp))
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
     }
@@ -98,7 +133,7 @@ internal fun FileNameHeader(fileName: String, modifier: Modifier = Modifier) {
 
 /**
  * 笔记属性面板：frontmatter 中除 `note_type` 外的属性，圆角卡片显示、可折叠；
- * 多值属性（YAML 列表写法）以流式标签展示。
+ * 多值属性（YAML 列表写法）以流式标签展示，布尔值（单个 true / false）渲染为可切换复选框。
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -106,6 +141,7 @@ internal fun NoteAttributesPanel(
     attributes: List<FrontmatterAttribute>,
     expanded: Boolean,
     onToggleExpanded: () -> Unit,
+    onToggleAttribute: ((String, Boolean) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     Surface(
@@ -113,6 +149,7 @@ internal fun NoteAttributesPanel(
         shape = RoundedCornerShape(12.dp),
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
     ) {
+        val toggleAttr = onToggleAttribute
         Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
             Row(
                 modifier = Modifier
@@ -139,7 +176,8 @@ internal fun NoteAttributesPanel(
             AnimatedVisibility(visible = expanded) {
                 Column(Modifier.padding(top = 6.dp)) {
                     attributes.forEach { attr ->
-                        val values = attr.values.filter { it.isNotBlank() }
+                        val values = attr.values.map { it.trim() }.filter { it.isNotBlank() }
+                        val bool = booleanAttrValue(values)
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -156,14 +194,24 @@ internal fun NoteAttributesPanel(
                                     .width(80.dp)
                                     .padding(top = 2.dp)
                             )
-                            if (values.isEmpty()) {
-                                Text(
+                            when {
+                                bool != null -> Checkbox(
+                                    checked = bool,
+                                    onCheckedChange = if (toggleAttr != null) {
+                                        { checked: Boolean -> toggleAttr(attr.key, checked) }
+                                    } else {
+                                        null
+                                    },
+                                    modifier = Modifier.size(32.dp)
+                                )
+
+                                values.isEmpty() -> Text(
                                     text = "—",
                                     style = MaterialTheme.typography.labelMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
-                            } else {
-                                FlowRow(
+
+                                else -> FlowRow(
                                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                                     verticalArrangement = Arrangement.spacedBy(4.dp),
                                     modifier = Modifier.weight(1f)
@@ -191,11 +239,15 @@ internal fun NoteAttributesPanel(
     }
 }
 
+/** 待办筛选：全部 / 未完成 / 已完成（再次点击已选中的按钮回到全部）。 */
+private enum class TaskFilter { ALL, INCOMPLETE, COMPLETE }
+
 /**
  * 待办清单页（frontmatter `note_type: task`）：仅渲染待办条目，
  * 点击勾选完成（写回 `- [x]`），底部输入栏追加新条目（写回 `- [ ]`）。
- * 支持「仅未完成」过滤；长按条目拖动排序（过滤态下只在可见子集内重排）；
- * 添加待办后列表自动滚动到新条目。
+ * 顶部「未完成 / 已完成」按钮切换筛选，再次点击已选按钮取消筛选；
+ * 行尾菜单支持编辑 / 删除 / 复制文字；长按条目拖动排序（过滤态下只在可见子集内重排），
+ * 拖到列表顶 / 底之外自动滚动，添加待办后列表自动滚动到新条目。
  */
 @Composable
 internal fun TaskListPane(
@@ -204,28 +256,40 @@ internal fun TaskListPane(
     attributes: List<FrontmatterAttribute>,
     onToggle: (Int, Boolean) -> Unit,
     onAdd: (String) -> Unit,
+    onEdit: (Int, String) -> Unit,
+    onDelete: (Int) -> Unit,
     onReorder: (List<Int>) -> Unit,
+    onToggleAttribute: (String, Boolean) -> Unit,
     modifier: Modifier = Modifier
 ) {
     var input by rememberSaveable { mutableStateOf("") }
-    var incompleteOnly by rememberSaveable { mutableStateOf(false) }
+    var filterName by rememberSaveable { mutableStateOf(TaskFilter.ALL.name) }
     var attrsExpanded by rememberSaveable { mutableStateOf(true) }
+    var editLine by rememberSaveable { mutableStateOf<Int?>(null) }
+    var editText by rememberSaveable { mutableStateOf("") }
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     val haptics = LocalHapticFeedback.current
+    val clipboard = LocalClipboardManager.current
+    val filter = runCatching { TaskFilter.valueOf(filterName) }.getOrDefault(TaskFilter.ALL)
 
     // 非定制属性（note_type 之外的普通属性）
     val attrs = remember(attributes) { attributes.filter { it.key != "note_type" } }
 
-    // 显示条目：勾选「仅未完成」时过滤已完成项；拖动排序仅作用于可见子集
-    val visibleTasks = remember(tasks, incompleteOnly) {
-        if (incompleteOnly) tasks.filter { !it.checked } else tasks
+    // 显示条目：按筛选态过滤；拖动排序仅作用于可见子集
+    val visibleTasks = remember(tasks, filter) {
+        when (filter) {
+            TaskFilter.ALL -> tasks
+            TaskFilter.INCOMPLETE -> tasks.filter { !it.checked }
+            TaskFilter.COMPLETE -> tasks.filter { it.checked }
+        }
     }
 
     // 拖动排序：长按拖起后本地顺序实时交换，松手写回；数据刷新后收敛回 tasks
     var dragOrder by remember { mutableStateOf<List<TaskItem>?>(null) }
     var draggedLine by remember { mutableStateOf<Int?>(null) }
     var dragOffsetY by remember { mutableFloatStateOf(0f) }
+    var scrollAccum by remember { mutableFloatStateOf(0f) }
     val itemHeights = remember { mutableStateMapOf<Int, Float>() }
     val displayTasks = dragOrder ?: visibleTasks
     val latestTasks by rememberUpdatedState(visibleTasks)
@@ -280,14 +344,19 @@ internal fun TaskListPane(
         pendingScrollToEnd = true
     }
 
+    fun startEdit(task: TaskItem) {
+        editLine = task.lineIndex
+        editText = task.text
+    }
+
     Column(modifier.fillMaxSize()) {
         LazyColumn(
             state = listState,
             modifier = Modifier.weight(1f),
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp)
+            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 12.dp)
         ) {
             item(key = "file_name_header") {
-                FileNameHeader(fileName)
+                FileNameHeader(fileName, Modifier.padding(horizontal = 8.dp))
             }
             if (attrs.isNotEmpty()) {
                 item(key = "note_attrs") {
@@ -295,29 +364,59 @@ internal fun TaskListPane(
                         attributes = attrs,
                         expanded = attrsExpanded,
                         onToggleExpanded = { attrsExpanded = !attrsExpanded },
-                        modifier = Modifier.padding(bottom = 12.dp)
+                        onToggleAttribute = onToggleAttribute,
+                        modifier = Modifier.padding(start = 8.dp, end = 8.dp, bottom = 12.dp)
                     )
                 }
             }
             item(key = "task_filter") {
-                FilterChip(
-                    selected = incompleteOnly,
-                    onClick = { incompleteOnly = !incompleteOnly },
-                    label = { Text(stringResource(R.string.task_only_incomplete)) },
-                    leadingIcon = if (incompleteOnly) {
-                        { Icon(Icons.Filled.Check, null, Modifier.size(FilterChipDefaults.IconSize)) }
-                    } else null,
-                    modifier = Modifier.padding(bottom = 4.dp)
-                )
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                ) {
+                    FilterChip(
+                        selected = filter == TaskFilter.INCOMPLETE,
+                        onClick = {
+                            filterName = if (filter == TaskFilter.INCOMPLETE) {
+                                TaskFilter.ALL.name
+                            } else {
+                                TaskFilter.INCOMPLETE.name
+                            }
+                        },
+                        label = { Text(stringResource(R.string.task_filter_incomplete)) },
+                        leadingIcon = if (filter == TaskFilter.INCOMPLETE) {
+                            { Icon(Icons.Filled.Check, null, Modifier.size(FilterChipDefaults.IconSize)) }
+                        } else null
+                    )
+                    FilterChip(
+                        selected = filter == TaskFilter.COMPLETE,
+                        onClick = {
+                            filterName = if (filter == TaskFilter.COMPLETE) {
+                                TaskFilter.ALL.name
+                            } else {
+                                TaskFilter.COMPLETE.name
+                            }
+                        },
+                        label = { Text(stringResource(R.string.task_filter_complete)) },
+                        leadingIcon = if (filter == TaskFilter.COMPLETE) {
+                            { Icon(Icons.Filled.Check, null, Modifier.size(FilterChipDefaults.IconSize)) }
+                        } else null
+                    )
+                }
             }
             if (displayTasks.isEmpty()) {
                 item(key = "task_empty") {
                     Text(
                         text = stringResource(
-                            if (tasks.isEmpty()) R.string.task_empty else R.string.task_incomplete_empty
+                            when {
+                                filter == TaskFilter.COMPLETE -> R.string.task_complete_empty
+                                filter == TaskFilter.INCOMPLETE -> R.string.task_incomplete_empty
+                                else -> R.string.task_empty
+                            }
                         ),
                         style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 8.dp)
                     )
                 }
             } else {
@@ -326,6 +425,7 @@ internal fun TaskListPane(
                     key = { _, task -> stableKeys[task.lineIndex] ?: task.lineIndex.toString() }
                 ) { index, task ->
                     val isDragging = draggedLine != null && task.lineIndex == draggedLine
+                    var menuOpen by remember { mutableStateOf(false) }
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -351,16 +451,19 @@ internal fun TaskListPane(
                                         draggedLine = task.lineIndex
                                         dragOrder = latestTasks
                                         dragOffsetY = 0f
+                                        scrollAccum = 0f
                                     },
                                     onDragCancel = {
                                         draggedLine = null
                                         dragOffsetY = 0f
+                                        scrollAccum = 0f
                                         dragOrder = null
                                     },
                                     onDragEnd = {
                                         val order = dragOrder
                                         draggedLine = null
                                         dragOffsetY = 0f
+                                        scrollAccum = 0f
                                         if (order != null) {
                                             val newOrder = order.map { it.lineIndex }
                                             if (newOrder != latestTasks.map { it.lineIndex }) {
@@ -400,6 +503,22 @@ internal fun TaskListPane(
                                             }
                                             dragOrder = order
                                         }
+                                        // 拖到列表顶 / 底之外自动滚动；累计一定距离再滚，避免每帧派发
+                                        val from = order.indexOfFirst { it.lineIndex == line }
+                                        val h = itemHeights[from] ?: 0f
+                                        val y = change.position.y
+                                        val atTop = y < 0f && listState.canScrollBackward
+                                        val atBottom = y > h && listState.canScrollForward
+                                        if (atTop || atBottom) {
+                                            scrollAccum += drag.y
+                                            if (abs(scrollAccum) >= 12f) {
+                                                val delta = scrollAccum
+                                                scrollAccum = 0f
+                                                scope.launch { listState.scrollBy(delta) }
+                                            }
+                                        } else {
+                                            scrollAccum = 0f
+                                        }
                                     }
                                 )
                             },
@@ -407,19 +526,58 @@ internal fun TaskListPane(
                     ) {
                         Checkbox(
                             checked = task.checked,
-                            onCheckedChange = { checked -> onToggle(task.lineIndex, checked) }
+                            onCheckedChange = { checked -> onToggle(task.lineIndex, checked) },
+                            modifier = Modifier.size(40.dp)
                         )
-                        Text(
-                            text = task.text,
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = if (task.checked) MaterialTheme.colorScheme.onSurfaceVariant
-                            else MaterialTheme.colorScheme.onSurface,
-                            textDecoration = if (task.checked) TextDecoration.LineThrough else null,
+                        Box(
                             modifier = Modifier
                                 .weight(1f)
                                 .clickable { onToggle(task.lineIndex, !task.checked) }
-                                .padding(vertical = 10.dp)
-                        )
+                                .padding(vertical = 8.dp, horizontal = 2.dp)
+                        ) {
+                            TaskText(
+                                text = task.text,
+                                checked = task.checked,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                        Box {
+                            IconButton(
+                                onClick = { menuOpen = true },
+                                modifier = Modifier.size(40.dp)
+                            ) {
+                                Icon(
+                                    Icons.Filled.MoreVert,
+                                    stringResource(R.string.task_menu_more)
+                                )
+                            }
+                            DropdownMenu(
+                                expanded = menuOpen,
+                                onDismissRequest = { menuOpen = false }
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.task_menu_edit)) },
+                                    onClick = {
+                                        menuOpen = false
+                                        startEdit(task)
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.task_menu_copy)) },
+                                    onClick = {
+                                        menuOpen = false
+                                        clipboard.setText(AnnotatedString(task.text))
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.task_menu_delete)) },
+                                    onClick = {
+                                        menuOpen = false
+                                        onDelete(task.lineIndex)
+                                    }
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -428,16 +586,16 @@ internal fun TaskListPane(
             modifier = Modifier
                 .fillMaxWidth()
                 .imePadding()
-                .padding(horizontal = 16.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.Bottom
         ) {
             OutlinedTextField(
                 value = input,
                 onValueChange = { input = it },
                 placeholder = { Text(stringResource(R.string.task_add_hint)) },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                keyboardActions = KeyboardActions(onSend = { submit() }),
+                minLines = 1,
+                maxLines = 5,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default),
                 modifier = Modifier.weight(1f)
             )
             Spacer(Modifier.width(8.dp))
@@ -446,4 +604,91 @@ internal fun TaskListPane(
             }
         }
     }
+
+    if (editLine != null) {
+        AlertDialog(
+            onDismissRequest = { editLine = null },
+            title = { Text(stringResource(R.string.task_edit_title)) },
+            text = {
+                OutlinedTextField(
+                    value = editText,
+                    onValueChange = { editText = it },
+                    minLines = 1,
+                    maxLines = 5,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = editText.isNotBlank(),
+                    onClick = {
+                        val line = editLine ?: return@TextButton
+                        onEdit(line, editText)
+                        editLine = null
+                    }
+                ) {
+                    Text(stringResource(R.string.action_confirm))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { editLine = null }) {
+                    Text(stringResource(R.string.action_cancel))
+                }
+            }
+        )
+    }
 }
+
+/** 待办文本：纯文本直接显示；含 Markdown / wikilink 语法时按渲染管线展示（标题、加粗、链接等）。 */
+@Composable
+private fun TaskText(
+    text: String,
+    checked: Boolean,
+    modifier: Modifier
+) {
+    val style = MaterialTheme.typography.bodyLarge
+    val color = if (checked) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface
+    if (!hasMarkdownSyntax(text)) {
+        Text(text = text, style = style, color = color, modifier = modifier)
+        return
+    }
+    val content = remember(text) { WikiLinkTransformer.transform(text) }
+    val parser = remember { MarkdownParser(GFMFlavourDescriptor()) }
+    val linkHandler = remember { ReferenceLinkHandlerImpl() }
+    val state = remember(content) {
+        runCatching {
+            State.Success(
+                parser.buildMarkdownTreeFromString(content),
+                content,
+                linksLookedUp = false,
+                referenceLinkHandler = linkHandler
+            )
+        }.getOrNull()
+    }
+    if (state == null) {
+        Text(text = text, style = style, color = color, modifier = modifier)
+        return
+    }
+    Markdown(
+        state = state,
+        modifier = modifier.then(
+            if (checked) Modifier.graphicsLayer { alpha = 0.55f } else Modifier
+        ),
+        typography = azNotesMarkdownTypography(),
+        animations = remember { DefaultMarkdownAnimation(animateTextSize = { this }) }
+    )
+}
+
+/** 是否含需要走 Markdown 渲染的语法（纯文本条目保持轻量渲染）。 */
+private val ORDERED_LIST_ITEM = Regex("""^\s*\d+\.\s""")
+
+private fun hasMarkdownSyntax(text: String): Boolean =
+    text.contains("[[") ||
+        text.contains("**") ||
+        text.contains("__") ||
+        text.contains("~~") ||
+        text.contains('`') ||
+        text.contains("![") ||
+        text.trimStart().startsWith(">") ||
+        text.trimStart().startsWith("- ") ||
+        ORDERED_LIST_ITEM.containsMatchIn(text)

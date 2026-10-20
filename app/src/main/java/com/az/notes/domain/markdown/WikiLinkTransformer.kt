@@ -38,14 +38,8 @@ object WikiLinkTransformer {
     /** 行内代码片段（反引号成对包裹，支持多反引号）。 */
     private val INLINE_CODE = Regex("`+[^`\n]*`+")
 
-    /** ATX 标题行（与 CommonMark 一致：`#` 后需空白或行尾）。 */
-    private val ATX_HEADING = Regex("""^\s{0,3}#{1,6}(\s|$)""")
-
-    /** Setext 标题下划线行（`===` / `---`）。 */
-    private val SETEXT_UNDERLINE = Regex("""^\s*[=-]+\s*$""")
-
     /**
-     * 主入口：逐行转换 wikilink；行外上下文（围栏 / 标题）原样保留。
+     * 主入口：逐行转换 wikilink（围栏代码块内原样保留，标题行同样转换）。
      *
      * @param resolveEmbed `![[目标]]` 的目标 → 仓库根相对路径（不存在返回 null）。
      *        传 null 表示无解析上下文（AI 回答等场景）：嵌入一律按链接处理；
@@ -61,8 +55,6 @@ object WikiLinkTransformer {
             if (idx > 0) out.append('\n')
             if (isFenceToggle(line)) inFence = !inFence
             if (inFence || !line.contains("[[")) {
-                out.append(line)
-            } else if (isHeadingLine(lines, idx)) {
                 out.append(line)
             } else {
                 out.append(transformLine(line, resolveEmbed))
@@ -158,13 +150,5 @@ object WikiLinkTransformer {
     private fun isFenceToggle(line: String): Boolean {
         val t = line.trimStart()
         return t.startsWith("```") || t.startsWith("~~~")
-    }
-
-    /** 标题行判定：ATX 前缀，或下一行是 Setext 下划线（本行即标题内容）。 */
-    private fun isHeadingLine(lines: List<String>, index: Int): Boolean {
-        val line = lines[index]
-        if (ATX_HEADING.containsMatchIn(line)) return true
-        val next = lines.getOrNull(index + 1) ?: return false
-        return line.isNotBlank() && SETEXT_UNDERLINE.matches(next)
     }
 }

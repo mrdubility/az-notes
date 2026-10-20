@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Edit
@@ -103,6 +104,11 @@ fun ReaderScreen(
 
     // 笔记属性面板：frontmatter 中除 note_type 外的属性（默认展开，可折叠）
     var attrsExpanded by rememberSaveable { mutableStateOf(true) }
+    var showAttrEditor by rememberSaveable { mutableStateOf(false) }
+    val propertyHistory by viewModel.propertyHistory.collectAsStateWithLifecycle()
+    val toggleBooleanAttr: (String, Boolean) -> Unit = { key, checked ->
+        viewModel.setAttributeValues(key, listOf(if (checked) "true" else "false"))
+    }
     val otherAttributes = remember(state.attributes) {
         state.attributes.filter { it.key != "note_type" }
     }
@@ -282,79 +288,94 @@ fun ReaderScreen(
                     }
             ) {
                 if (state.noteType == "task") {
-                    // frontmatter `note_type: task`：待办清单页
-                    TaskListPane(
-                        fileName = state.path.substringAfterLast('/'),
-                        tasks = state.tasks,
-                        attributes = state.attributes,
-                        onToggle = viewModel::toggleTask,
-                        onAdd = viewModel::addTask,
-                        onReorder = viewModel::reorderTasks
-                    )
+                    // frontmatter `note_type: task`：待办清单页（wikilink 同样可点击跳转）
+                    CompositionLocalProvider(LocalUriHandler provides wikiUriHandler) {
+                        TaskListPane(
+                            fileName = state.path.substringAfterLast('/'),
+                            tasks = state.tasks,
+                            attributes = state.attributes,
+                            onToggle = viewModel::toggleTask,
+                            onAdd = viewModel::addTask,
+                            onEdit = viewModel::editTask,
+                            onDelete = viewModel::deleteTask,
+                            onReorder = viewModel::reorderTasks,
+                            onToggleAttribute = toggleBooleanAttr
+                        )
+                    }
                 } else {
                     CompositionLocalProvider(LocalUriHandler provides wikiUriHandler) {
-                        Markdown(
-                            markdownState = markdownState,
-                            modifier = Modifier.fillMaxSize(),
-                            typography = azNotesMarkdownTypography(),
-                            imageTransformer = imageTransformer,
-                            annotator = annotator,
-                            animations = staticAnimations,
-                            success = { success, components, _ ->
-                                // 官方 success 插槽为 Column(不虚拟化)；此处换成 LazyColumn：
-                                // 块下标与 AST 顶层块一一对应，大文档只渲染可见块；
-                                // 文件名作首项（下标 0），正文块整体后移 1 位
-                                LazyColumn(
-                                    state = listState,
-                                    modifier = Modifier.fillMaxSize(),
-                                    contentPadding = PaddingValues(horizontal = contentHPad, vertical = 12.dp)
-                                ) {
-                                    item(key = "file_name_header") {
-                                        FileNameHeader(state.path.substringAfterLast('/'))
-                                    }
-                                    if (otherAttributes.isNotEmpty()) {
-                                        item(key = "note_attrs") {
-                                            NoteAttributesPanel(
-                                                attributes = otherAttributes,
-                                                expanded = attrsExpanded,
-                                                onToggleExpanded = { attrsExpanded = !attrsExpanded },
-                                                modifier = Modifier.padding(bottom = 12.dp)
+                        // 长按选择正文：选区与系统文本操作条（复制 / 全选）由 SelectionContainer 提供
+                        SelectionContainer {
+                            Markdown(
+                                markdownState = markdownState,
+                                modifier = Modifier.fillMaxSize(),
+                                typography = azNotesMarkdownTypography(),
+                                imageTransformer = imageTransformer,
+                                annotator = annotator,
+                                animations = staticAnimations,
+                                success = { success, components, _ ->
+                                    // 官方 success 插槽为 Column(不虚拟化)；此处换成 LazyColumn：
+                                    // 块下标与 AST 顶层块一一对应，大文档只渲染可见块；
+                                    // 文件名作首项（下标 0），正文块整体后移 1 位
+                                    LazyColumn(
+                                        state = listState,
+                                        modifier = Modifier.fillMaxSize(),
+                                        contentPadding = PaddingValues(horizontal = contentHPad, vertical = 12.dp)
+                                    ) {
+                                        item(key = "file_name_header") {
+                                            FileNameHeader(
+                                                fileName = state.path.substringAfterLast('/'),
+                                                onEditAttributes = {
+                                                    viewModel.loadPropertyHistory()
+                                                    showAttrEditor = true
+                                                }
                                             )
                                         }
-                                    }
-                                    items(
-                                        items = success.node.children,
-                                        key = { node -> node.startOffset }
-                                    ) { node ->
-                                        // 独立图片段落（lift 产物 `![](link)` 独占一段）自渲染：
-                                        // 首帧即按预读尺寸定盒，消除库占位两帧链（兜底 180sp →
-                                        // 真实尺寸）在向上回滚时引起的滚动锚点位移；其余块（含
-                                        // 图文混排 / 列表 / 引用内图片、远程图）仍走渲染库路径
-                                        val imageLink = remember(node, success.content) {
-                                            standaloneImageLink(success.content, node)
+                                        if (otherAttributes.isNotEmpty()) {
+                                            item(key = "note_attrs") {
+                                                NoteAttributesPanel(
+                                                    attributes = otherAttributes,
+                                                    expanded = attrsExpanded,
+                                                    onToggleExpanded = { attrsExpanded = !attrsExpanded },
+                                                    onToggleAttribute = toggleBooleanAttr,
+                                                    modifier = Modifier.padding(bottom = 12.dp)
+                                                )
+                                            }
                                         }
-                                        if (imageLink != null &&
-                                            !vaultRoot.isNullOrBlank() &&
-                                            noteDir != null
-                                        ) {
-                                            AzImageBlock(
-                                                link = imageLink,
-                                                vaultRoot = vaultRoot,
-                                                baseDir = noteDir,
-                                                onImageClick = { file -> previewImage = file }
-                                            )
-                                        } else {
-                                            MarkdownElement(
-                                                node = node,
-                                                components = components,
-                                                content = success.content,
-                                                skipLinkDefinition = success.linksLookedUp
-                                            )
+                                        items(
+                                            items = success.node.children,
+                                            key = { node -> node.startOffset }
+                                        ) { node ->
+                                            // 独立图片段落（lift 产物 `![](link)` 独占一段）自渲染：
+                                            // 首帧即按预读尺寸定盒，消除库占位两帧链（兜底 180sp →
+                                            // 真实尺寸）在向上回滚时引起的滚动锚点位移；其余块（含
+                                            // 图文混排 / 列表 / 引用内图片、远程图）仍走渲染库路径
+                                            val imageLink = remember(node, success.content) {
+                                                standaloneImageLink(success.content, node)
+                                            }
+                                            if (imageLink != null &&
+                                                !vaultRoot.isNullOrBlank() &&
+                                                noteDir != null
+                                            ) {
+                                                AzImageBlock(
+                                                    link = imageLink,
+                                                    vaultRoot = vaultRoot,
+                                                    baseDir = noteDir,
+                                                    onImageClick = { file -> previewImage = file }
+                                                )
+                                            } else {
+                                                MarkdownElement(
+                                                    node = node,
+                                                    components = components,
+                                                    content = success.content,
+                                                    skipLinkDefinition = success.linksLookedUp
+                                                )
+                                            }
                                         }
                                     }
                                 }
-                            }
-                        )
+                            )
+                        }
                     }
                 }
             }
@@ -401,6 +422,16 @@ fun ReaderScreen(
     // 文档信息（点击顶栏 Info 后从 ViewModel 读取）
     state.docInfo?.let { info ->
         DocInfoDialog(info = info, onDismiss = viewModel::clearDocInfo)
+    }
+
+    if (showAttrEditor) {
+        AttributeEditorDialog(
+            attributes = state.attributes,
+            history = propertyHistory,
+            onSetValues = viewModel::setAttributeValues,
+            onRemove = viewModel::removeAttribute,
+            onDismiss = { showAttrEditor = false }
+        )
     }
 }
 

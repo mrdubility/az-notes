@@ -8,7 +8,6 @@ import com.az.notes.domain.model.AppLanguage
 import com.az.notes.domain.model.AppSettings
 import com.az.notes.domain.model.DefaultNoteMode
 import com.az.notes.domain.model.FileNode
-import com.az.notes.domain.model.NoteSortOrder
 import com.az.notes.domain.model.ThemeMode
 import com.az.notes.ui.common.CreateFolderResult
 import com.az.notes.ui.common.createVaultSubfolder
@@ -90,10 +89,6 @@ class SettingsViewModel @Inject constructor(
     /** 列表正文预览字符数（20～300，越界由仓库收敛）。 */
     fun setPreviewChars(chars: Int) =
         viewModelScope.launch { settingsRepository.setPreviewChars(chars) }
-
-    /** 列表默认排序方式。 */
-    fun setSortOrder(order: NoteSortOrder) =
-        viewModelScope.launch { settingsRepository.setSortOrder(order) }
 
     /** 默认新建笔记名模板。 */
     fun setDefaultNoteName(name: String) =

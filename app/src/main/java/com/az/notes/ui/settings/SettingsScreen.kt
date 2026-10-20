@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.outlined.Sort
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Backup
 import androidx.compose.material.icons.outlined.Build
@@ -53,7 +52,6 @@ import com.az.notes.data.settings.SettingsRepository
 import com.az.notes.domain.model.AppLanguage
 import com.az.notes.domain.model.AppSettings
 import com.az.notes.domain.model.DefaultNoteMode
-import com.az.notes.domain.model.NoteSortOrder
 import com.az.notes.domain.model.ThemeMode
 import com.az.notes.ui.common.label
 import com.az.notes.ui.components.MoveTargetDialog
@@ -189,15 +187,6 @@ fun SettingsScreen(
                     title = stringResource(R.string.settings_default_note_name),
                     subtitle = stringResource(R.string.settings_default_note_names_subtitle),
                     onClick = onOpenDefaultNames
-                )
-            }
-            item {
-                SettingsChoiceRow(
-                    icon = Icons.AutoMirrored.Outlined.Sort,
-                    title = stringResource(R.string.settings_sort_order),
-                    options = NoteSortOrder.entries.map { it to it.label() },
-                    selected = settings.sortOrder,
-                    onSelect = viewModel::setSortOrder
                 )
             }
 

@@ -57,6 +57,30 @@ object TaskExtractor {
         return lines.joinToString("\n")
     }
 
+    /**
+     * 将 [lineIndex] 行的待办文本替换为 [text]（保留缩进符与勾选态）；
+     * 非待办行或空文本返回 null。
+     */
+    fun update(body: String, lineIndex: Int, text: String): String? {
+        val trimmed = text.trim()
+        if (trimmed.isEmpty()) return null
+        val lines = body.split('\n').toMutableList()
+        if (lineIndex !in lines.indices) return null
+        val match = TASK_LINE.matchEntire(lines[lineIndex]) ?: return null
+        val checked = match.groupValues[2].trim().equals("x", ignoreCase = true)
+        lines[lineIndex] = "${match.groupValues[1]}- [${if (checked) "x" else " "}] $trimmed"
+        return lines.joinToString("\n")
+    }
+
+    /** 删除 [lineIndex] 行的待办；非待办行返回 null。 */
+    fun delete(body: String, lineIndex: Int): String? {
+        val lines = body.split('\n').toMutableList()
+        if (lineIndex !in lines.indices) return null
+        if (!TASK_LINE.matches(lines[lineIndex])) return null
+        lines.removeAt(lineIndex)
+        return lines.joinToString("\n")
+    }
+
     /** 追加一条待办：插到最后一个待办行之后；无待办行时追加到正文末尾。空白文本返回 null。 */
     fun append(body: String, text: String): String? {
         val trimmed = text.trim()

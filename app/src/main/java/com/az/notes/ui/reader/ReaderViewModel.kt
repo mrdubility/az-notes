@@ -11,6 +11,7 @@ import com.az.notes.data.debug.DebugLogType
 import com.az.notes.data.settings.SettingsRepository
 import com.az.notes.data.storage.PathUpdateBus
 import com.az.notes.data.storage.VaultNameIndex
+import com.az.notes.data.storage.VaultPropertyIndex
 import com.az.notes.data.storage.VaultRepository
 import com.az.notes.domain.markdown.FrontmatterAttribute
 import com.az.notes.domain.markdown.FrontmatterParser
@@ -26,6 +27,7 @@ import com.az.notes.domain.markdown.WikiLinkTarget
 import com.az.notes.domain.markdown.WikiLinkTransformer
 import com.az.notes.ui.common.UiText
 import com.az.notes.ui.common.toUiText
+import com.az.notes.work.SyncScheduler
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -87,8 +89,10 @@ class ReaderViewModel @Inject constructor(
     private val settingsRepository: SettingsRepository,
     private val debugLogRepository: DebugLogRepository,
     private val vaultNameIndex: VaultNameIndex,
+    private val vaultPropertyIndex: VaultPropertyIndex,
     private val pathUpdateBus: PathUpdateBus,
-    private val aiSession: AiChatSession
+    private val aiSession: AiChatSession,
+    private val syncScheduler: SyncScheduler
 ) : ViewModel() {
 
     private var absolutePath: String =
@@ -118,6 +122,10 @@ class ReaderViewModel @Inject constructor(
         savedStateHandle.get<String>("anchor")?.ifEmpty { null }
     )
     val pendingAnchor: StateFlow<String?> = _pendingAnchor.asStateFlow()
+
+    /** 属性键值输入历史（null = 尚未加载；值为该键历史输入过的值）。 */
+    private val _propertyHistory = MutableStateFlow<Map<String, List<String>>?>(null)
+    val propertyHistory: StateFlow<Map<String, List<String>>?> = _propertyHistory.asStateFlow()
 
     init {
         load(showLoading = true)
@@ -336,6 +344,58 @@ class ReaderViewModel @Inject constructor(
         mutateBody { body -> TaskExtractor.reorder(body, lineOrder) }
     }
 
+    /** 编辑待办文本（写回磁盘后静默刷新列表）。 */
+    fun editTask(lineIndex: Int, text: String) {
+        if (text.isBlank()) return
+        mutateBody { body -> TaskExtractor.update(body, lineIndex, text) }
+    }
+
+    /** 删除待办行（写回磁盘后静默刷新列表）。 */
+    fun deleteTask(lineIndex: Int) {
+        mutateBody { body -> TaskExtractor.delete(body, lineIndex) }
+    }
+
+    /** 加载全库属性历史（键 → 值），供属性编辑器做键值联想；TTL 内复用索引缓存。 */
+    fun loadPropertyHistory() {
+        if (_propertyHistory.value != null) return
+        viewModelScope.launch {
+            val history = withContext(Dispatchers.IO) {
+                val vault = _state.value.vaultPath
+                    ?: runCatching { settingsRepository.settings.first().vaultPath }.getOrNull()
+                if (vault.isNullOrBlank()) {
+                    emptyMap<String, List<String>>()
+                } else {
+                    runCatching { vaultPropertyIndex.history(File(vault)) }
+                        .getOrDefault(emptyMap<String, List<String>>())
+                }
+            }
+            _propertyHistory.value = history
+        }
+    }
+
+    /** 写入属性值（不存在则新增、已存在则覆盖；空值保留为占位属性）。 */
+    fun setAttributeValues(key: String, values: List<String>) {
+        val name = key.trim()
+        if (name.isEmpty()) return
+        mutateAttributes { entries ->
+            val cleaned = values.map { it.trim() }.filter { it.isNotEmpty() }
+            val attr = FrontmatterAttribute(name, cleaned)
+            val index = entries.indexOfFirst { it.key == name }
+            if (index >= 0) {
+                entries.toMutableList().apply { set(index, attr) }
+            } else {
+                entries + attr
+            }
+        }
+    }
+
+    /** 删除整条属性（不存在时忽略）。 */
+    fun removeAttribute(key: String) {
+        mutateAttributes { entries ->
+            entries.filterNot { it.key == key }.takeIf { it.size != entries.size }
+        }
+    }
+
     /**
      * 新建待办（fresh）退出清理：正文为空（无条目）时删除占位文件（与空笔记 fresh 清理一致）。
      * 读盘判断不依赖内存状态；随后执行 [onDone]（导航返回）。
@@ -385,9 +445,40 @@ class ReaderViewModel @Inject constructor(
                 }.getOrDefault(false)
             }
             if (ok) {
+                runCatching { syncScheduler.scheduleSaveSync() }
                 load(showLoading = false)
             } else {
                 _state.update { it.copy(message = UiText.of(R.string.msg_task_save_failed)) }
+            }
+        }
+    }
+
+    /**
+     * 属性写回：重读磁盘 → 仅重建 frontmatter 属性块 → 原子写盘 → 失效名字 / 属性索引 →
+     * 调度保存同步 → 静默刷新。读 / 写失败时通过 [ReaderUiState.message] 提示。
+     */
+    private fun mutateAttributes(transform: (List<FrontmatterAttribute>) -> List<FrontmatterAttribute>?) {
+        viewModelScope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                runCatching {
+                    val current = vaultRepository.readText(absolutePath)
+                    val split = FrontmatterParser.split(current)
+                    val entries = transform(split.entries) ?: return@runCatching true
+                    vaultRepository.writeTextAtomically(
+                        absolutePath,
+                        FrontmatterParser.build(entries, split.body)
+                    )
+                    true
+                }.getOrDefault(false)
+            }
+            if (ok) {
+                vaultNameIndex.invalidate()
+                vaultPropertyIndex.invalidate()
+                _propertyHistory.value = null
+                runCatching { syncScheduler.scheduleSaveSync() }
+                load(showLoading = false)
+            } else {
+                _state.update { it.copy(message = UiText.of(R.string.msg_attr_save_failed)) }
             }
         }
     }

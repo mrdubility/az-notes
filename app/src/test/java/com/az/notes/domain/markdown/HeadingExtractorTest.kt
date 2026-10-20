@@ -48,6 +48,12 @@ class HeadingExtractorTest {
     }
 
     @Test
+    fun `heading text unwraps note links`() {
+        val headings = HeadingExtractor.extract("# 参见 [目标](az-note:target)")
+        assertEquals("参见 目标", headings.single().text)
+    }
+
+    @Test
     fun `findBlockByTitle matches exact then case-insensitive then prefix`() {
         val headings = HeadingExtractor.extract(
             """

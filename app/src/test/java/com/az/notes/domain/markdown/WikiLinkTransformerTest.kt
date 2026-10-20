@@ -125,9 +125,9 @@ class WikiLinkTransformerTest {
     }
 
     @Test
-    fun `heading lines are protected`() {
-        assertEquals("## 参见 [[x]]", WikiLinkTransformer.transform("## 参见 [[x]]"))
-        assertEquals("参见 [[x]]\n===", WikiLinkTransformer.transform("参见 [[x]]\n==="))
+    fun `heading lines transform links`() {
+        assertEquals("## 参见 [x](az-note:x)", WikiLinkTransformer.transform("## 参见 [[x]]"))
+        assertEquals("[x](az-note:x)\n===", WikiLinkTransformer.transform("[[x]]\n==="))
     }
 
     @Test

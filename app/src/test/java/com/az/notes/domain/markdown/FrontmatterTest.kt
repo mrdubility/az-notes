@@ -36,4 +36,39 @@ class FrontmatterTest {
         assertTrue(FrontmatterParser.split("plain body").aliases().isEmpty())
         assertTrue(FrontmatterParser.split("---\naliases:\n---\n").aliases().isEmpty())
     }
+
+    @Test
+    fun `build writes single multi and empty values`() {
+        val text = FrontmatterParser.build(
+            listOf(
+                FrontmatterAttribute("title", listOf("Hello")),
+                FrontmatterAttribute("tags", listOf("a", "b")),
+                FrontmatterAttribute("flag", emptyList())
+            ),
+            "body"
+        )
+        assertEquals("---\ntitle: Hello\ntags:\n  - a\n  - b\nflag:\n---\nbody", text)
+    }
+
+    @Test
+    fun `update replaces attributes and keeps body`() {
+        val original = "---\ntitle: Old\ntags: x\n---\nline\n"
+        val updated = FrontmatterParser.update(
+            original,
+            listOf(
+                FrontmatterAttribute("title", listOf("New")),
+                FrontmatterAttribute("done", listOf("true"))
+            )
+        )
+        val split = FrontmatterParser.split(updated)
+        assertEquals(listOf("title", "done"), split.entries.map { it.key })
+        assertEquals(listOf("New"), split.value("title")?.let(::listOf))
+        assertEquals("true", split.value("done"))
+        assertEquals("line\n", split.body)
+    }
+
+    @Test
+    fun `empty attributes drop frontmatter block`() {
+        assertEquals("body", FrontmatterParser.update("---\na: b\n---\nbody", emptyList()))
+    }
 }

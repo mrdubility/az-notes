@@ -77,6 +77,9 @@ object HeadingExtractor {
         else -> null
     }
 
+    /** 笔记链接转换产物（`[显示](az-note:...)`）：大纲只展示显示文本。 */
+    private val NOTE_LINK = Regex("""\[([^\]]*)]\(az-note:[^)]*\)""")
+
     /** 标题纯文本：优先 ATX_CONTENT / SETEXT_CONTENT 子节点（自动剔除 # 号）。 */
     private fun headingText(markdown: String, node: ASTNode): String {
         val contentNode = node.children.firstOrNull {
@@ -89,6 +92,6 @@ object HeadingExtractor {
             markdown.substring(node.startOffset, node.endOffset)
                 .lineSequence().first().trimStart('#', ' ', '\n')
         }
-        return raw.trim()
+        return NOTE_LINK.replace(raw, "\$1").trim()
     }
 }
