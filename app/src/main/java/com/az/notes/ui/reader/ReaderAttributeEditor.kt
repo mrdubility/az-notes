@@ -61,7 +61,6 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.PopupProperties
 import com.az.notes.R
 import com.az.notes.domain.markdown.FrontmatterAttribute
-import kotlin.math.min
 
 /**
  * 属性值 → 布尔：仅单个 true / false（忽略大小写，兼容引号包裹）时返回，否则 null。
@@ -377,7 +376,7 @@ private fun AttributeEditRow(
         val bounds = rowBounds ?: return DpOffset(0.dp, 4.dp)
         val gapPx = with(density) { 8.dp.toPx() }
         // 条目高近似 36dp：菜单高度按条目数估算并封顶
-        val menuPx = with(density) { min(200.dp, (suggestions.size * 36).dp).toPx() }
+        val menuPx = with(density) { minOf(200.dp, (suggestions.size * 36).dp).toPx() }
         val usableBottom = screenHeightPx - imeBottomPx
         return if (usableBottom - bounds.bottom >= menuPx + gapPx) {
             DpOffset(0.dp, 4.dp)
