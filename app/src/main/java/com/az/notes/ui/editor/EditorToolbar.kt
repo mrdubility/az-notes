@@ -12,26 +12,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.input.InputTransformation
 import androidx.compose.foundation.text.input.TextFieldBuffer
 import androidx.compose.foundation.text.input.TextFieldState
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.FormatIndentDecrease
-import androidx.compose.material.icons.automirrored.filled.FormatIndentIncrease
-import androidx.compose.material.icons.automirrored.filled.Redo
-import androidx.compose.material.icons.automirrored.filled.Undo
-import androidx.compose.material.icons.filled.Checklist
-import androidx.compose.material.icons.filled.Code
-import androidx.compose.material.icons.filled.DataArray
-import androidx.compose.material.icons.filled.DataObject
-import androidx.compose.material.icons.filled.FormatBold
-import androidx.compose.material.icons.filled.FormatItalic
-import androidx.compose.material.icons.filled.FormatListBulleted
-import androidx.compose.material.icons.filled.FormatListNumbered
-import androidx.compose.material.icons.filled.FormatQuote
-import androidx.compose.material.icons.filled.FormatSize
-import androidx.compose.material.icons.filled.HorizontalRule
-import androidx.compose.material.icons.filled.Image
-import androidx.compose.material.icons.filled.InsertLink
-import androidx.compose.material.icons.filled.Label
-import androidx.compose.material.icons.filled.StrikethroughS
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -48,6 +28,7 @@ import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.unit.dp
 import com.az.notes.domain.model.EditorTool
+import com.az.notes.ui.common.icon
 import com.az.notes.ui.common.label
 
 /**
@@ -78,29 +59,6 @@ internal fun EditorToolbar(
         }
         Spacer(Modifier.width(8.dp))
     }
-}
-
-/** 工具图标（与 [EditorTool] 一一对应）。 */
-private fun EditorTool.icon(): ImageVector = when (this) {
-    EditorTool.UNDO -> Icons.AutoMirrored.Filled.Undo
-    EditorTool.REDO -> Icons.AutoMirrored.Filled.Redo
-    EditorTool.BOLD -> Icons.Filled.FormatBold
-    EditorTool.ITALIC -> Icons.Filled.FormatItalic
-    EditorTool.STRIKETHROUGH -> Icons.Filled.StrikethroughS
-    EditorTool.INLINE_CODE -> Icons.Filled.Code
-    EditorTool.HEADING -> Icons.Filled.FormatSize
-    EditorTool.QUOTE -> Icons.Filled.FormatQuote
-    EditorTool.LIST_BULLET -> Icons.Filled.FormatListBulleted
-    EditorTool.LIST_NUMBER -> Icons.Filled.FormatListNumbered
-    EditorTool.TASK -> Icons.Filled.Checklist
-    EditorTool.CODE_BLOCK -> Icons.Filled.DataObject
-    EditorTool.HORIZONTAL_RULE -> Icons.Filled.HorizontalRule
-    EditorTool.INDENT -> Icons.AutoMirrored.Filled.FormatIndentIncrease
-    EditorTool.UNINDENT -> Icons.AutoMirrored.Filled.FormatIndentDecrease
-    EditorTool.LINK -> Icons.Filled.InsertLink
-    EditorTool.WIKILINK -> Icons.Filled.DataArray
-    EditorTool.IMAGE -> Icons.Filled.Image
-    EditorTool.PROPERTY -> Icons.Filled.Label
 }
 
 /** 执行工具动作：标记插入后光标 / 选区自动跟随。 */

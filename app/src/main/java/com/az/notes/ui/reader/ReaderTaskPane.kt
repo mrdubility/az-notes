@@ -297,23 +297,21 @@ internal fun TaskListPane(
     // 对象（旧行号），若按新 visibleTasks 建表再用旧行号查询会命中错误条目 → key 置换、
     // 行内容异常滑动，出现「排序后文字闪一下」；按 displayTasks 建表则 key 在
     // 拖动 → 重载 → 收敛全程不变。
-    val stableKeys = remember(displayTasks) {
+    fun buildKeys(tasks: List<TaskItem>): Map<Int, String> {
         val occurrence = HashMap<String, Int>()
-        displayTasks.associate { task ->
+        return tasks.associate { task ->
             val n = (occurrence[task.text] ?: 0) + 1
             occurrence[task.text] = n
             // \u0000 不可能出现在解析后的文本中，用作分隔符避免拼接歧义
             task.lineIndex to "$n\u0000${task.text}"
         }
     }
+    val stableKeys = remember(displayTasks) { buildKeys(displayTasks) }
 
-    // 拖动期间冻结 key 表：key 跟随条目而非位置（相同文本条目交换后 key 互换会
-    // 造成 item 身份置换、被拖项焦点丢失）；拖动结束收敛后解冻，回到按渲染列表建表
+    // 拖动会话 key 表：拖动开始时冻结（key 跟随条目而非位置，相同文本条目交换后
+    // key 互换会造成 item 身份置换、被拖项焦点丢失）；写回重载后按显示顺序把 key
+    // 迁移到新行号并继续沿用，收敛切换不产生身份置换（松手后勾选框不闪动）
     var frozenKeys by remember { mutableStateOf<Map<Int, String>?>(null) }
-    LaunchedEffect(dragOrder) {
-        if (dragOrder != null && frozenKeys == null) frozenKeys = stableKeys
-        if (dragOrder == null) frozenKeys = null
-    }
     val keyTable = frozenKeys ?: stableKeys
 
     // 列表前导项数：文件名 + （属性面板）+ 过滤行
@@ -322,15 +320,31 @@ internal fun TaskListPane(
     // 添加后跟随滚动：等待列表数据刷新后再滚到末尾
     var pendingScrollToEnd by remember { mutableStateOf(false) }
 
-    // 写回完成后本地顺序收敛（内容对齐即视为已落入磁盘）
+    // 写回完成后本地顺序收敛（内容对齐即视为已落入磁盘）；同时把冻结 key 迁移到
+    // 重载后的新行号（拖动改变了顺序时行号全部变化），避免收敛切换导致身份置换
     LaunchedEffect(visibleTasks, dragOrder) {
-        val order = dragOrder ?: return@LaunchedEffect
+        val order = dragOrder
+        if (order == null) {
+            // 非拖动期：重载后行号集与冻结表不一致（删除/编辑导致重排）时放弃冻结表
+            val keys = frozenKeys ?: return@LaunchedEffect
+            val lines = visibleTasks.mapTo(HashSet()) { it.lineIndex }
+            if (keys.keys.any { it !in lines }) frozenKeys = null
+            return@LaunchedEffect
+        }
         if (draggedLine != null) return@LaunchedEffect
         val converged = order.size == visibleTasks.size &&
             order.indices.all { i ->
                 visibleTasks[i].text == order[i].text && visibleTasks[i].checked == order[i].checked
             }
-        if (converged) dragOrder = null
+        if (!converged) return@LaunchedEffect
+        val keys = frozenKeys
+        if (keys != null) {
+            frozenKeys = order.indices.associate { i ->
+                visibleTasks[i].lineIndex to
+                    (keys[order[i].lineIndex] ?: "${i + 1}\u0000${visibleTasks[i].text}")
+            }
+        }
+        dragOrder = null
     }
 
     LaunchedEffect(tasks.size) {
@@ -456,13 +470,17 @@ internal fun TaskListPane(
                                         haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                                         draggedLine = task.lineIndex
                                         // 连续拖动沿用上一次未收敛的本地顺序作基准，避免起手瞬间重排跳位
-                                        if (dragOrder == null) dragOrder = latestTasks
+                                        if (dragOrder == null) {
+                                            dragOrder = latestTasks
+                                            if (frozenKeys == null) frozenKeys = buildKeys(latestTasks)
+                                        }
                                         dragOffsetY = 0f
                                     },
                                     onDragCancel = {
                                         draggedLine = null
                                         dragOffsetY = 0f
                                         dragOrder = null
+                                        frozenKeys = null
                                     },
                                     onDragEnd = {
                                         draggedLine = null
@@ -479,6 +497,7 @@ internal fun TaskListPane(
                                                 }
                                             } else {
                                                 dragOrder = null
+                                                frozenKeys = null
                                             }
                                         }
                                     },

@@ -62,9 +62,7 @@ import androidx.compose.ui.window.PopupProperties
 import com.az.notes.R
 import com.az.notes.domain.markdown.FrontmatterAttribute
 
-/**
- * 属性值 → 布尔：仅单个 true / false（忽略大小写，兼容引号包裹）时返回，否则 null。
- */
+/** 属性值为单个 true / false 时返回布尔（忽略大小写与引号），否则 null。 */
 internal fun booleanAttrValue(values: List<String>): Boolean? {
     val single = values.map { it.trim().trim('"', '\'') }
         .filter { it.isNotEmpty() }
@@ -76,20 +74,15 @@ internal fun booleanAttrValue(values: List<String>): Boolean? {
     }
 }
 
-/** 编辑行当前聚焦的输入（历史联想据此切换键 / 值列表）。 */
-private enum class AttrField { KEY, VALUE }
+/** 历史联想锚定的输入框。 */
+private enum class AttrInput { KEY, VALUE }
 
 /**
- * 属性编辑浮窗：列出当前 frontmatter 属性（无图标，键列 40% / 值列 60%，行尾 x 删除
- * 整条属性）。点击属性行**原地**变成键值编辑行，点击「点击添加属性」在列表末尾追加
- * 一行空编辑行；编辑行失去焦点即保存（键为空则丢弃），键改名 = 删旧键 + 建新键，
- * 新属性追加在最下面。
- *
- * 键输入弹出全库属性键历史，值输入只弹出当前键历史输入过的值（键值联动）；历史
- * 分别锚定在键 / 值输入框下方，条目紧凑、限高可滚动；下方放不下时改在编辑框上方
- * 弹出，不遮挡编辑框、不抢焦点、不收起输入法（非聚焦弹层）。
- * 浮窗整体限高并随输入法上移（decorFitsSystemWindows = false + imePadding），
- * 属性很多时列表内部滚动，编辑行始终在键盘上方。
+ * 属性编辑弹窗。列表行展示属性；点击行原地切换为键值编辑行；「点击添加属性」
+ * 在末尾追加一行空白编辑行；编辑行失去焦点即保存（键为空则丢弃，键改名合并为
+ * 一次写盘）；新属性追加在最下面。键值输入框各自弹出历史联想，条目紧凑、限高
+ * 可滚动，下方放不下时改在编辑行上方弹出；弹窗限高并随输入法上移，属性较多时
+ * 列表内部滚动，编辑行始终在键盘上方。
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -101,17 +94,19 @@ internal fun AttributeEditorDialog(
     onReplace: (String, String, List<String>) -> Unit,
     onDismiss: () -> Unit
 ) {
-    var editingKey by rememberSaveable { mutableStateOf<String?>(null) }
-    var newRow by rememberSaveable { mutableStateOf(false) }
+    // null = 无编辑行；"" = 新增行；其他 = 正在编辑该键的属性
+    var editTarget by rememberSaveable { mutableStateOf<String?>(null) }
     var draftKey by rememberSaveable { mutableStateOf("") }
     var draftValue by rememberSaveable { mutableStateOf("") }
-    var rowTouched by remember { mutableStateOf(false) }
     var keyFocused by remember { mutableStateOf(false) }
     var valueFocused by remember { mutableStateOf(false) }
-    var activeField by remember { mutableStateOf<AttrField?>(null) }
+    var rowTouched by remember { mutableStateOf(false) }
+    var activeInput by remember { mutableStateOf<AttrInput?>(null) }
     var focusTick by remember { mutableStateOf(0) }
     val keyFocus = remember { FocusRequester() }
     val valueFocus = remember { FocusRequester() }
+
+    val editing = editTarget != null
 
     val keyHistory = remember(history, draftKey) {
         val keys = history?.keys?.toList().orEmpty()
@@ -124,57 +119,46 @@ internal fun AttributeEditorDialog(
             .orEmpty()
     }
 
-    fun resetRow() {
-        editingKey = null
-        newRow = false
+    fun clearEdit() {
+        editTarget = null
         draftKey = ""
         draftValue = ""
-        rowTouched = false
         keyFocused = false
         valueFocused = false
-        activeField = null
+        rowTouched = false
+        activeInput = null
     }
 
-    fun commitRow() {
-        if (editingKey == null && !newRow) return
+    fun submitRow() {
+        if (!editing) return
         val key = draftKey.trim()
-        val target = editingKey
-        resetRow()
-        if (key.isEmpty()) return
+        val target = editTarget
         val values = draftValue.split('\n').map { it.trim() }.filter { it.isNotEmpty() }
-        if (target != null && target != key) {
+        clearEdit()
+        if (key.isEmpty()) return
+        if (target != null && target.isNotEmpty() && target != key) {
             onReplace(target, key, values)
         } else {
             onSetValues(key, values)
         }
     }
 
-    fun beginEdit(attr: FrontmatterAttribute) {
-        commitRow()
-        editingKey = attr.key
-        newRow = false
-        draftKey = attr.key
-        draftValue = attr.values.joinToString("\n")
+    fun startEdit(target: String, key: String, value: String) {
+        submitRow()
+        editTarget = target
+        draftKey = key
+        draftValue = value
         focusTick++
     }
 
-    fun beginNew() {
-        commitRow()
-        editingKey = null
-        newRow = true
-        draftKey = ""
-        draftValue = ""
-        focusTick++
-    }
-
-    // 编辑行失去焦点即保存（曾获得过焦点且键值两框都不再聚焦时提交）
+    // 编辑行曾获得过焦点且键值两框均失焦时保存
     LaunchedEffect(keyFocused, valueFocused) {
-        if (rowTouched && !keyFocused && !valueFocused) commitRow()
+        if (rowTouched && !keyFocused && !valueFocused) submitRow()
     }
 
-    // 新行 / 编辑行组合完成后请求焦点（两帧后布局稳定）
+    // 编辑行组合完成后聚焦键输入框（两帧后布局稳定）
     LaunchedEffect(focusTick) {
-        if (focusTick == 0 || (editingKey == null && !newRow)) return@LaunchedEffect
+        if (focusTick == 0 || !editing) return@LaunchedEffect
         withFrameNanos { }
         withFrameNanos { }
         runCatching { keyFocus.requestFocus() }
@@ -182,7 +166,7 @@ internal fun AttributeEditorDialog(
 
     Dialog(
         onDismissRequest = {
-            commitRow()
+            submitRow()
             onDismiss()
         },
         properties = DialogProperties(
@@ -211,7 +195,7 @@ internal fun AttributeEditorDialog(
                         .weight(1f, fill = false)
                         .verticalScroll(rememberScrollState())
                 ) {
-                    if (attributes.isEmpty() && !newRow) {
+                    if (attributes.isEmpty() && !editing) {
                         Text(
                             text = stringResource(R.string.reader_attr_empty),
                             style = MaterialTheme.typography.bodySmall,
@@ -220,40 +204,40 @@ internal fun AttributeEditorDialog(
                         )
                     } else {
                         attributes.forEach { attr ->
-                            if (attr.key == editingKey) {
-                                AttributeEditRow(
+                            if (attr.key == editTarget) {
+                                AttrEditRow(
                                     draftKey = draftKey,
                                     onKeyChange = {
                                         draftKey = it
-                                        activeField = AttrField.KEY
+                                        activeInput = AttrInput.KEY
                                     },
                                     draftValue = draftValue,
                                     onValueChange = {
                                         draftValue = it
-                                        activeField = AttrField.VALUE
+                                        activeInput = AttrInput.VALUE
                                     },
                                     onKeyFocus = { focused ->
                                         keyFocused = focused
                                         if (focused) {
                                             rowTouched = true
-                                            activeField = AttrField.KEY
+                                            activeInput = AttrInput.KEY
                                         }
                                     },
                                     onValueFocus = { focused ->
                                         valueFocused = focused
                                         if (focused) {
                                             rowTouched = true
-                                            activeField = AttrField.VALUE
+                                            activeInput = AttrInput.VALUE
                                         }
                                     },
                                     keyFocusRequester = keyFocus,
                                     valueFocusRequester = valueFocus,
                                     keyHistory = keyHistory,
                                     valueHistory = valueHistory,
-                                    activeField = activeField,
+                                    activeInput = activeInput,
                                     onPickKey = {
                                         draftKey = it
-                                        activeField = AttrField.VALUE
+                                        activeInput = AttrInput.VALUE
                                         runCatching { valueFocus.requestFocus() }
                                     },
                                     onPickValue = {
@@ -262,69 +246,69 @@ internal fun AttributeEditorDialog(
                                         } else {
                                             draftValue.trimEnd('\n') + "\n" + it
                                         }
-                                        activeField = null
+                                        activeInput = null
                                     },
-                                    onDismissMenu = { activeField = null },
-                                    onCancel = { resetRow() }
+                                    onDismissMenu = { activeInput = null },
+                                    onCancel = { clearEdit() }
                                 )
                             } else {
-                                AttributeDisplayRow(
+                                AttrRow(
                                     attr = attr,
-                                    onClick = { beginEdit(attr) },
+                                    onClick = { startEdit(attr.key, attr.key, attr.values.joinToString("\n")) },
                                     onSetValues = onSetValues,
                                     onRemove = onRemove
                                 )
                             }
                         }
-                    }
-                    if (newRow) {
-                        HorizontalDivider(Modifier.padding(top = 4.dp, bottom = 4.dp, end = 8.dp))
-                        AttributeEditRow(
-                            draftKey = draftKey,
-                            onKeyChange = {
-                                draftKey = it
-                                activeField = AttrField.KEY
-                            },
-                            draftValue = draftValue,
-                            onValueChange = {
-                                draftValue = it
-                                activeField = AttrField.VALUE
-                            },
-                            onKeyFocus = { focused ->
-                                keyFocused = focused
-                                if (focused) {
-                                    rowTouched = true
-                                    activeField = AttrField.KEY
-                                }
-                            },
-                            onValueFocus = { focused ->
-                                valueFocused = focused
-                                if (focused) {
-                                    rowTouched = true
-                                    activeField = AttrField.VALUE
-                                }
-                            },
-                            keyFocusRequester = keyFocus,
-                            valueFocusRequester = valueFocus,
-                            keyHistory = keyHistory,
-                            valueHistory = valueHistory,
-                            activeField = activeField,
-                            onPickKey = {
-                                draftKey = it
-                                activeField = AttrField.VALUE
-                                runCatching { valueFocus.requestFocus() }
-                            },
-                            onPickValue = {
-                                draftValue = if (draftValue.isBlank()) {
-                                    it
-                                } else {
-                                    draftValue.trimEnd('\n') + "\n" + it
-                                }
-                                activeField = null
-                            },
-                            onDismissMenu = { activeField = null },
-                            onCancel = { resetRow() }
-                        )
+                        if (editTarget == "") {
+                            HorizontalDivider(Modifier.padding(top = 4.dp, bottom = 4.dp, end = 8.dp))
+                            AttrEditRow(
+                                draftKey = draftKey,
+                                onKeyChange = {
+                                    draftKey = it
+                                    activeInput = AttrInput.KEY
+                                },
+                                draftValue = draftValue,
+                                onValueChange = {
+                                    draftValue = it
+                                    activeInput = AttrInput.VALUE
+                                },
+                                onKeyFocus = { focused ->
+                                    keyFocused = focused
+                                    if (focused) {
+                                        rowTouched = true
+                                        activeInput = AttrInput.KEY
+                                    }
+                                },
+                                onValueFocus = { focused ->
+                                    valueFocused = focused
+                                    if (focused) {
+                                        rowTouched = true
+                                        activeInput = AttrInput.VALUE
+                                    }
+                                },
+                                keyFocusRequester = keyFocus,
+                                valueFocusRequester = valueFocus,
+                                keyHistory = keyHistory,
+                                valueHistory = valueHistory,
+                                activeInput = activeInput,
+                                onPickKey = {
+                                    draftKey = it
+                                    activeInput = AttrInput.VALUE
+                                    runCatching { valueFocus.requestFocus() }
+                                },
+                                onPickValue = {
+                                    draftValue = if (draftValue.isBlank()) {
+                                        it
+                                    } else {
+                                        draftValue.trimEnd('\n') + "\n" + it
+                                    }
+                                    activeInput = null
+                                },
+                                onDismissMenu = { activeInput = null },
+                                onCancel = { clearEdit() }
+                            )
+                        }
                     }
                 }
                 Row(
@@ -332,7 +316,7 @@ internal fun AttributeEditorDialog(
                     horizontalArrangement = Arrangement.End,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    TextButton(onClick = { beginNew() }) {
+                    TextButton(onClick = { startEdit("", "", "") }) {
                         Icon(Icons.Filled.Add, null, Modifier.size(18.dp))
                         Spacer(Modifier.width(4.dp))
                         Text(stringResource(R.string.reader_attr_add_action))
@@ -344,13 +328,11 @@ internal fun AttributeEditorDialog(
 }
 
 /**
- * 编辑行（原地编辑 / 新增共用的键值输入行）：键值左右排列，行尾 x 取消（不保存）。
- * 键 / 值历史分别锚定各自输入框下方，条目紧凑、限高 200dp 可滚动；
- * 下方空间不足（编辑行底到键盘顶装不下菜单）时改在编辑行上方弹出。
+ * 键值编辑行：键 / 值左右排列，行尾取消（不保存）。键值历史分别锚定各自输入框，
+ * 条目紧凑、限高 200dp 可滚动；编辑行下方放不下时在行上方弹出。
  */
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun AttributeEditRow(
+private fun AttrEditRow(
     draftKey: String,
     onKeyChange: (String) -> Unit,
     draftValue: String,
@@ -361,30 +343,13 @@ private fun AttributeEditRow(
     valueFocusRequester: FocusRequester,
     keyHistory: List<String>,
     valueHistory: List<String>,
-    activeField: AttrField?,
+    activeInput: AttrInput?,
     onPickKey: (String) -> Unit,
     onPickValue: (String) -> Unit,
     onDismissMenu: () -> Unit,
     onCancel: () -> Unit
 ) {
     var rowBounds by remember { mutableStateOf<Rect?>(null) }
-    val density = LocalDensity.current
-    val screenHeightPx = with(density) { LocalConfiguration.current.screenHeightDp.dp.toPx() }
-    val imeBottomPx = WindowInsets.ime.getBottom(density)
-
-    fun menuOffset(suggestions: List<String>): DpOffset {
-        val bounds = rowBounds ?: return DpOffset(0.dp, 4.dp)
-        val gapPx = with(density) { 8.dp.toPx() }
-        // 条目高近似 36dp：菜单高度按条目数估算并封顶
-        val menuPx = with(density) { minOf(200.dp, (suggestions.size * 36).dp).toPx() }
-        val usableBottom = screenHeightPx - imeBottomPx
-        return if (usableBottom - bounds.bottom >= menuPx + gapPx) {
-            DpOffset(0.dp, 4.dp)
-        } else {
-            with(density) { DpOffset(0.dp, (-(bounds.height + menuPx + gapPx)).toDp()) }
-        }
-    }
-
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
@@ -403,30 +368,13 @@ private fun AttributeEditRow(
                     .focusRequester(keyFocusRequester)
                     .onFocusChanged { onKeyFocus(it.isFocused) }
             )
-            DropdownMenu(
-                expanded = activeField == AttrField.KEY && keyHistory.isNotEmpty(),
-                onDismissRequest = onDismissMenu,
-                offset = menuOffset(keyHistory),
-                modifier = Modifier.heightIn(max = 200.dp),
-                scrollState = rememberScrollState(),
-                properties = PopupProperties(focusable = false)
-            ) {
-                keyHistory.take(12).forEach { item ->
-                    Box(
-                        Modifier
-                            .fillMaxWidth()
-                            .clickable { onPickKey(item) }
-                            .padding(horizontal = 16.dp, vertical = 6.dp)
-                    ) {
-                        Text(
-                            text = item,
-                            style = MaterialTheme.typography.bodySmall,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                }
-            }
+            AttrHistoryMenu(
+                expanded = activeInput == AttrInput.KEY && keyHistory.isNotEmpty(),
+                suggestions = keyHistory,
+                anchorBounds = rowBounds,
+                onDismiss = onDismissMenu,
+                onPick = onPickKey
+            )
         }
         Spacer(Modifier.width(8.dp))
         Box(Modifier.weight(0.6f)) {
@@ -441,30 +389,13 @@ private fun AttributeEditRow(
                     .focusRequester(valueFocusRequester)
                     .onFocusChanged { onValueFocus(it.isFocused) }
             )
-            DropdownMenu(
-                expanded = activeField == AttrField.VALUE && valueHistory.isNotEmpty(),
-                onDismissRequest = onDismissMenu,
-                offset = menuOffset(valueHistory),
-                modifier = Modifier.heightIn(max = 200.dp),
-                scrollState = rememberScrollState(),
-                properties = PopupProperties(focusable = false)
-            ) {
-                valueHistory.take(12).forEach { item ->
-                    Box(
-                        Modifier
-                            .fillMaxWidth()
-                            .clickable { onPickValue(item) }
-                            .padding(horizontal = 16.dp, vertical = 6.dp)
-                    ) {
-                        Text(
-                            text = item,
-                            style = MaterialTheme.typography.bodySmall,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                }
-            }
+            AttrHistoryMenu(
+                expanded = activeInput == AttrInput.VALUE && valueHistory.isNotEmpty(),
+                suggestions = valueHistory,
+                anchorBounds = rowBounds,
+                onDismiss = onDismissMenu,
+                onPick = onPickValue
+            )
         }
         IconButton(
             onClick = onCancel,
@@ -479,10 +410,65 @@ private fun AttributeEditRow(
     }
 }
 
-/** 属性显示行：键 + 值（布尔复选框 / 单值 / 多值标签）+ 删除整条属性；点击行进入原地编辑。 */
+/**
+ * 历史联想弹层：锚定在编辑行（键 / 值框）下方，条目紧凑、限高 200dp 可滚动；
+ * 行下方空间不足（放不下菜单或与键盘重叠）时改在行上方弹出，不遮挡编辑框。
+ */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun AttributeDisplayRow(
+private fun AttrHistoryMenu(
+    expanded: Boolean,
+    suggestions: List<String>,
+    anchorBounds: Rect?,
+    onDismiss: () -> Unit,
+    onPick: (String) -> Unit
+) {
+    val density = LocalDensity.current
+    val screenHeightPx = with(density) { LocalConfiguration.current.screenHeightDp.dp.toPx() }
+    val imeBottomPx = WindowInsets.ime.getBottom(density)
+
+    val offset = remember(anchorBounds, suggestions.size, imeBottomPx) {
+        val bounds = anchorBounds ?: return@remember DpOffset(0.dp, 4.dp)
+        val gapPx = with(density) { 8.dp.toPx() }
+        val menuPx = with(density) { minOf(200.dp, (suggestions.size * 36).dp).toPx() }
+        val usableBottom = screenHeightPx - imeBottomPx
+        if (usableBottom - bounds.bottom >= menuPx + gapPx) {
+            DpOffset(0.dp, 4.dp)
+        } else {
+            with(density) { DpOffset(0.dp, (-(bounds.height + menuPx + gapPx)).toDp()) }
+        }
+    }
+
+    DropdownMenu(
+        expanded = expanded,
+        onDismissRequest = onDismiss,
+        offset = offset,
+        modifier = Modifier.heightIn(max = 200.dp),
+        scrollState = rememberScrollState(),
+        properties = PopupProperties(focusable = false)
+    ) {
+        suggestions.take(12).forEach { item ->
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .clickable { onPick(item) }
+                    .padding(horizontal = 16.dp, vertical = 6.dp)
+            ) {
+                Text(
+                    text = item,
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+    }
+}
+
+/** 属性显示行：键 + 值（布尔复选框 / 空值 / 单值 / 多值标签）+ 删除；点击行进入编辑。 */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun AttrRow(
     attr: FrontmatterAttribute,
     onClick: () -> Unit,
     onSetValues: (String, List<String>) -> Unit,

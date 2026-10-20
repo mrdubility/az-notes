@@ -15,7 +15,6 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.outlined.ViewList
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -33,6 +32,7 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -48,6 +48,7 @@ import androidx.compose.ui.zIndex
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.az.notes.R
 import com.az.notes.domain.model.EditorTool
+import com.az.notes.ui.common.icon
 import com.az.notes.ui.common.label
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -73,6 +74,9 @@ fun ToolbarSettingsScreen(
     var dragOffsetY by remember { mutableFloatStateOf(0f) }
     val itemHeights = remember { mutableStateMapOf<String, Float>() }
     val displayOrder = dragOrder ?: persistedOrder
+    // pointerInput 不随重组重启，回调里读取的 persistedOrder 会是旧值（排序写回后再次
+    // 拖动时起手沿用旧顺序导致错位）：经 rememberUpdatedState 始终取最新值
+    val latestOrder by rememberUpdatedState(persistedOrder)
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     val haptics = LocalHapticFeedback.current
@@ -136,7 +140,7 @@ fun ToolbarSettingsScreen(
                                     haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                                     draggedId = id
                                     // 连续拖动沿用上一次未收敛的本地顺序作基准，避免起手瞬间重排跳位
-                                    if (dragOrder == null) dragOrder = persistedOrder
+                                    if (dragOrder == null) dragOrder = latestOrder
                                     dragOffsetY = 0f
                                 },
                                 onDragCancel = {
@@ -148,7 +152,7 @@ fun ToolbarSettingsScreen(
                                     draggedId = null
                                     dragOffsetY = 0f
                                     val order = dragOrder
-                                    if (order != null && order != persistedOrder) {
+                                    if (order != null && order != latestOrder) {
                                         viewModel.setEditorToolOrder(order)
                                         // 兜底：写回失败时避免本地顺序悬挂（正常由数据收敛清空）
                                         scope.launch {
@@ -197,7 +201,7 @@ fun ToolbarSettingsScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Icon(
-                        Icons.AutoMirrored.Outlined.ViewList,
+                        tool.icon(),
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(18.dp)
