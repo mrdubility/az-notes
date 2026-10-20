@@ -390,7 +390,7 @@ private fun AttributeEditRow(
                 }
             }
         }
-        IconButton(onClick = onRemove, modifier = Modifier.size(32.dp)) {
+        IconButton(onClick = { onRemove(attr.key) }, modifier = Modifier.size(32.dp)) {
             Icon(
                 Icons.Filled.Close,
                 stringResource(R.string.reader_attr_remove),
