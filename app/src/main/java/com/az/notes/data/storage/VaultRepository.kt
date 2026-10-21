@@ -205,8 +205,7 @@ class VaultRepository @Inject constructor() {
         val root = File(rootPath)
         val trimmed = query.trim()
         if (!root.isDirectory || trimmed.isEmpty()) return emptyList()
-        val notes = ArrayList<FileNode>()
-        collectNotes(root, rootPath, notes)
+        val notes = listAllNotes(rootPath)
         // 从新到旧单轮遍历：命中即收集，输出天然严格按修改时间倒序
         val ordered = notes.sortedByDescending { it.lastModified }
         val out = ArrayList<SearchHit>()
@@ -223,8 +222,17 @@ class VaultRepository @Inject constructor() {
         return out
     }
 
+    /** 递归收集全部 Markdown 笔记（忽略隐藏项），标签索引等全库扫描场景复用。 */
+    fun listAllNotes(rootPath: String): List<FileNode> {
+        val root = File(rootPath)
+        if (!root.isDirectory) return emptyList()
+        val out = ArrayList<FileNode>()
+        collectNotes(root, rootPath, out)
+        return out
+    }
+
     /** 递归收集全部 Markdown 笔记（忽略隐藏项）。 */
-    private fun collectNotes(dir: File, rootPath: String, out: MutableList<FileNode>) {
+    internal fun collectNotes(dir: File, rootPath: String, out: MutableList<FileNode>) {
         val children = dir.listFiles() ?: return
         for (f in children) {
             if (!f.isVisibleEntry()) continue
@@ -242,7 +250,7 @@ class VaultRepository @Inject constructor() {
     private val contentCache = ConcurrentHashMap<String, CachedContent>()
 
     /** 读取文件正文（搜索用，mtime 增量缓存）；超大文件返回 null 跳过正文匹配。 */
-    private fun contentFor(node: FileNode): String? {
+    internal fun contentFor(node: FileNode): String? {
         if (node.size > CONTENT_SEARCH_MAX_BYTES) return null
         val cached = contentCache[node.absolutePath]
         if (cached != null && cached.lastModified == node.lastModified) return cached.text

@@ -43,6 +43,12 @@ object Routes {
     /** 收藏夹：跨文件夹展示收藏的笔记（仅本地）；从抽屉进入。 */
     const val FAVORITES = "favorites"
 
+    /** 标签页：全库 `#标签` 聚合与计数（按仓库隔离）；从抽屉进入。 */
+    const val TAGS = "tags"
+
+    /** 标签结果页：列出含指定标签的全部笔记；tag 为标签名（URL 编码）。 */
+    const val TAG_DOCS = "tag_docs/{tag}"
+
     /** 最近查看：最近打开（查看 / 编辑）过的笔记（仅本地、按仓库隔离）；从抽屉进入。 */
     const val RECENTS = "recents"
 
@@ -69,4 +75,7 @@ object Routes {
     }
     fun editor(path: String, fresh: Boolean = false, fromShare: Boolean = false): String =
         "$EDITOR_BASE/${Uri.encode(path)}?fresh=$fresh&share=$fromShare"
+
+    /** 标签结果页路由：tag 为标签名（不含 `#`）。 */
+    fun tagDocs(tag: String): String = "tag_docs/${Uri.encode(tag)}"
 }

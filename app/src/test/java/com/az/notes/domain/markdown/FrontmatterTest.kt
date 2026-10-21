@@ -71,4 +71,30 @@ class FrontmatterTest {
     fun `empty attributes drop frontmatter block`() {
         assertEquals("body", FrontmatterParser.update("---\na: b\n---\nbody", emptyList()))
     }
+
+    @Test
+    fun `tags supports block and inline lists with optional hash prefix`() {
+        assertEquals(
+            listOf("recipe", "cooking"),
+            FrontmatterParser.split("---\ntags:\n  - recipe\n  - cooking\n---\n").tags()
+        )
+        assertEquals(
+            listOf("a", "b"),
+            FrontmatterParser.split("---\ntags: [a, #b]\n---\n").tags()
+        )
+        assertEquals(
+            listOf("单值"),
+            FrontmatterParser.split("---\ntags: 单值\n---\n").tags()
+        )
+    }
+
+    @Test
+    fun `tags filters invalid values and empty declarations`() {
+        assertEquals(
+            listOf("ok"),
+            FrontmatterParser.split("---\ntags: [ok, 1984, \"has space\"]\n---\n").tags()
+        )
+        assertTrue(FrontmatterParser.split("---\ntags:\n---\n").tags().isEmpty())
+        assertTrue(FrontmatterParser.split("plain body").tags().isEmpty())
+    }
 }

@@ -20,6 +20,7 @@ import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.InsertLink
 import androidx.compose.material.icons.filled.Label
 import androidx.compose.material.icons.filled.StrikethroughS
+import androidx.compose.material.icons.filled.Tag
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
@@ -47,6 +48,7 @@ internal fun EditorTool.label(): String = stringResource(
         EditorTool.UNINDENT -> R.string.editor_tool_unindent
         EditorTool.LINK -> R.string.editor_tool_link
         EditorTool.WIKILINK -> R.string.editor_tool_wikilink
+        EditorTool.TAG -> R.string.editor_tool_tag
         EditorTool.IMAGE -> R.string.editor_tool_image
         EditorTool.PROPERTY -> R.string.editor_tool_property
     }
@@ -71,6 +73,7 @@ internal fun EditorTool.icon(): ImageVector = when (this) {
     EditorTool.UNINDENT -> Icons.AutoMirrored.Filled.FormatIndentDecrease
     EditorTool.LINK -> Icons.Filled.InsertLink
     EditorTool.WIKILINK -> Icons.Filled.DataArray
+    EditorTool.TAG -> Icons.Filled.Tag
     EditorTool.IMAGE -> Icons.Filled.Image
     EditorTool.PROPERTY -> Icons.Filled.Label
 }

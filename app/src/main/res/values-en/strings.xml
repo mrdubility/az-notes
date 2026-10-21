@@ -103,6 +103,12 @@
     <string name="fav_empty_hint">Tap Favorite in a note menu to find it here across folders.</string>
     <string name="fav_in_root">Vault root</string>
 
+    <!-- Tags (vault-wide #tag aggregation; detection aligned with Obsidian) -->
+    <string name="tags_title">Tags</string>
+    <string name="tags_search_hint">Search tags</string>
+    <string name="tags_empty">No tags yet</string>
+    <string name="tag_docs_empty">No notes with this tag</string>
+
     <!-- 最近查看（仅本地、按仓库隔离；上限 50 条滚动存储） -->
     <string name="recents_title">Recently viewed</string>
     <string name="recents_remove">Remove this entry</string>
@@ -166,8 +172,10 @@
     <string name="editor_tool_unindent">Outdent</string>
     <string name="editor_tool_link">Link</string>
     <string name="editor_tool_wikilink">Wikilink</string>
+    <string name="editor_tool_tag">Tag</string>
     <string name="editor_wikilink_search">Search notes or aliases</string>
     <string name="editor_wikilink_empty">No matches</string>
+    <string name="editor_tag_empty">No existing tags; type a new one</string>
     <string name="editor_tool_image">Image</string>
     <string name="editor_tool_property">Property</string>
 

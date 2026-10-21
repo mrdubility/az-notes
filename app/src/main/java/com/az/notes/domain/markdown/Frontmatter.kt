@@ -35,6 +35,25 @@ data class FrontmatterSplit(
             }
         }.map { it.trim().trim('"', '\'') }.filter { it.isNotEmpty() }
     }
+
+    /**
+     * tags 属性值：兼容块列表与 `tags: [a, b]` 行内列表写法，值允许带可选
+     * `#` 前缀（Obsidian 的 YAML tags 通常不带，带时同样收纳）；仅返回经
+     * [TagMatcher.isValid] 校验合法的标签名，无声明返回空列表。
+     */
+    fun tags(): List<String> {
+        val attr = entries.firstOrNull { it.key.equals("tags", ignoreCase = true) }
+            ?: return emptyList()
+        return attr.values.flatMap { raw ->
+            val v = raw.trim()
+            if (v.startsWith("[") && v.endsWith("]")) {
+                v.substring(1, v.length - 1).split(',').map { it.trim() }
+            } else {
+                listOf(v)
+            }
+        }.map { it.trim().trim('"', '\'').removePrefix("#") }
+            .filter { TagMatcher.isValid(it) }
+    }
 }
 
 /**

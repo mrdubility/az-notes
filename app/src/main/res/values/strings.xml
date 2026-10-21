@@ -103,6 +103,12 @@
     <string name="fav_empty_hint">在笔记条目的菜单中点击「收藏」，即可在这里跨文件夹快速找到它。</string>
     <string name="fav_in_root">仓库根目录</string>
 
+    <!-- 标签（全库 #标签 聚合；识别与计数口径对齐 Obsidian） -->
+    <string name="tags_title">标签</string>
+    <string name="tags_search_hint">搜索标签</string>
+    <string name="tags_empty">暂无标签</string>
+    <string name="tag_docs_empty">暂无含该标签的笔记</string>
+
     <!-- 最近查看（仅本地、按仓库隔离；上限 50 条滚动存储） -->
     <string name="recents_title">最近查看</string>
     <string name="recents_remove">移除该记录</string>
@@ -166,8 +172,10 @@
     <string name="editor_tool_unindent">反缩进</string>
     <string name="editor_tool_link">链接</string>
     <string name="editor_tool_wikilink">双链</string>
+    <string name="editor_tool_tag">标签</string>
     <string name="editor_wikilink_search">搜索笔记或别名</string>
     <string name="editor_wikilink_empty">无匹配结果</string>
+    <string name="editor_tag_empty">暂无已有标签，可直接输入新标签</string>
     <string name="editor_tool_image">图片</string>
     <string name="editor_tool_property">属性</string>
 

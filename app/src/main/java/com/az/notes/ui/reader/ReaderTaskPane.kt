@@ -73,6 +73,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import com.az.notes.R
 import com.az.notes.domain.markdown.FrontmatterAttribute
+import com.az.notes.domain.markdown.TagMatcher
 import com.az.notes.domain.markdown.TaskItem
 import com.az.notes.domain.markdown.WikiLinkTransformer
 import com.az.notes.ui.common.azNotesMarkdownTypography
@@ -665,7 +666,9 @@ private fun TaskText(
         Text(text = text, style = style, color = color, modifier = modifier)
         return
     }
-    val content = remember(text) { WikiLinkTransformer.transform(text) }
+    val content = remember(text) {
+        TagMatcher.transform(WikiLinkTransformer.transform(text))
+    }
     val parser = remember { MarkdownParser(GFMFlavourDescriptor()) }
     val linkHandler = remember { ReferenceLinkHandlerImpl() }
     val state = remember(content) {
@@ -704,4 +707,5 @@ private fun hasMarkdownSyntax(text: String): Boolean =
         text.contains("![") ||
         text.trimStart().startsWith(">") ||
         text.trimStart().startsWith("- ") ||
-        ORDERED_LIST_ITEM.containsMatchIn(text)
+        ORDERED_LIST_ITEM.containsMatchIn(text) ||
+        (text.contains('#') && TagMatcher.extract(text).isNotEmpty())

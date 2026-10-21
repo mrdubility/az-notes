@@ -12,6 +12,7 @@ import androidx.compose.material.icons.outlined.RestoreFromTrash
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.SmartToy
 import androidx.compose.material.icons.outlined.Star
+import androidx.compose.material.icons.outlined.Tag
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -25,7 +26,7 @@ import androidx.compose.ui.unit.dp
 import com.az.notes.R
 
 /**
- * 主页抽屉内容：仓库信息（名称 + 路径） + 收藏夹 / 最近查看 / 图库 / 回收站（关闭时隐藏入口）
+ * 主页抽屉内容：仓库信息（名称 + 路径） + 收藏夹 / 标签 / 最近查看 / 图库 / 回收站（关闭时隐藏入口）
  * / 设置入口。自 HomeScreen 拆分独立文件（纯 UI，逻辑不变）。
  */
 @Composable
@@ -36,6 +37,7 @@ internal fun DrawerContent(
     trashEnabled: Boolean,
     onOpenAiChat: () -> Unit,
     onFavorites: () -> Unit,
+    onTags: () -> Unit,
     onRecent: () -> Unit,
     onGallery: () -> Unit,
     onTrash: () -> Unit,
@@ -82,6 +84,13 @@ internal fun DrawerContent(
             icon = { Icon(Icons.Outlined.Star, null) },
             selected = false,
             onClick = onFavorites,
+            modifier = Modifier.padding(horizontal = 12.dp)
+        )
+        NavigationDrawerItem(
+            label = { Text(stringResource(R.string.tags_title)) },
+            icon = { Icon(Icons.Outlined.Tag, null) },
+            selected = false,
+            onClick = onTags,
             modifier = Modifier.padding(horizontal = 12.dp)
         )
         NavigationDrawerItem(

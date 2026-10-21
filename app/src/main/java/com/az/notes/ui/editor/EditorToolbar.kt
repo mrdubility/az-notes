@@ -43,7 +43,9 @@ internal fun EditorToolbar(
     textState: TextFieldState,
     tools: List<EditorTool>,
     /** 图片工具：不再插字面量，改为触发选图 / 链接录入流程 */
-    onImageRequest: () -> Unit
+    onImageRequest: () -> Unit,
+    /** 标签工具：插入 `#` 并弹出已有标签候选浮层 */
+    onTagRequest: () -> Unit
 ) {
     Row(
         modifier = Modifier
@@ -54,7 +56,11 @@ internal fun EditorToolbar(
     ) {
         tools.forEach { tool ->
             ToolButton(tool.icon(), tool.label()) {
-                if (tool == EditorTool.IMAGE) onImageRequest() else tool.perform(textState)
+                when (tool) {
+                    EditorTool.IMAGE -> onImageRequest()
+                    EditorTool.TAG -> onTagRequest()
+                    else -> tool.perform(textState)
+                }
             }
         }
         Spacer(Modifier.width(8.dp))
@@ -84,6 +90,7 @@ private fun EditorTool.perform(textState: TextFieldState) {
         EditorTool.UNINDENT -> textState.unindentLines()
         EditorTool.LINK -> textState.wrapSelection("[", "](https://)")
         EditorTool.WIKILINK -> textState.wrapSelection("[[", "]]")
+        EditorTool.TAG -> textState.insertAtCursor("#")
         EditorTool.IMAGE -> textState.insertAtCursor("![]()", 2)
         EditorTool.PROPERTY -> textState.insertProperty()
     }

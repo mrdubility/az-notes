@@ -64,6 +64,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.az.notes.R
 import com.az.notes.data.media.ImportedMedia
+import com.az.notes.data.storage.TagRow
 import com.az.notes.domain.markdown.ImageReference
 import com.az.notes.ui.common.formatSize
 import com.az.notes.ui.common.resolve
@@ -160,6 +161,63 @@ fun EditorScreen(
         pickerCtx = null
         pickerDismissed = true
         editorFocus.requestFocus()
+    }
+
+    // —— `#` 标签内联补全：光标处于未完成的 `#标签名` 上下文时弹出候选浮层 ——
+    val tagQuery by remember {
+        derivedStateOf {
+            val selection = textState.selection
+            if (!selection.collapsed) null
+            else tagQueryAt(textState.text, selection.min)
+        }
+    }
+    val tagCandidates by viewModel.tagCandidates.collectAsStateWithLifecycle()
+    // 浮层上下文（非空 = 打开）；[tagPickerDismissed] 记录本次 `#` 上下文已被手动关闭：
+    // 继续手打不重弹，直到 `#` 片段结束后重新进入
+    var tagPickerCtx by remember { mutableStateOf<TagQuery?>(null) }
+    var tagPickerDismissed by remember { mutableStateOf(false) }
+    // 候选数据惰性加载：首次出现 `#`（或点工具栏打开浮层）时后台构建一次
+    LaunchedEffect(tagQuery != null || tagPickerCtx != null, state.vaultPath) {
+        if (tagQuery != null || tagPickerCtx != null) viewModel.ensureTagCandidates()
+    }
+    LaunchedEffect(tagQuery) {
+        val query = tagQuery
+        if (query == null) {
+            tagPickerDismissed = false
+        } else if (tagPickerCtx == null && !tagPickerDismissed) {
+            tagPickerCtx = query
+        }
+    }
+    // 点选候选：以 `#名称` 替换查询片段（光标停到末尾）；单次文本编辑可一步撤销；
+    // 关闭后焦点回编辑器，键盘不收起
+    val pickTagCandidate: (TagRow) -> Unit = { candidate ->
+        val ctx = tagPickerCtx
+        if (ctx != null) {
+            textState.edit {
+                val snippet = "#${candidate.name}"
+                replace(ctx.start, ctx.end, snippet)
+                selection = TextRange(ctx.start + snippet.length)
+            }
+        }
+        tagPickerCtx = null
+        tagPickerDismissed = true
+        editorFocus.requestFocus()
+    }
+    val dismissTagPicker: () -> Unit = {
+        tagPickerCtx = null
+        tagPickerDismissed = true
+        editorFocus.requestFocus()
+    }
+    // 工具栏标签按钮：插入 `#` 后直接打开浮层展示全部候选（行首/选区均适用）
+    val requestTagPicker: () -> Unit = {
+        val start = textState.selection.min
+        val end = textState.selection.max
+        textState.edit {
+            replace(start, end, "#")
+            selection = TextRange(start + 1)
+        }
+        tagPickerDismissed = false
+        tagPickerCtx = TagQuery(start, start + 1, "")
     }
     // 笔记文本是否已灌入编辑器；配置重建时经 rememberSaveable 恢复，避免重复灌入
     var initialized by rememberSaveable { mutableStateOf(false) }
@@ -406,7 +464,12 @@ fun EditorScreen(
                 HorizontalDivider()
                 // 底部工具条：位于键盘上方（由 imePadding 抬升）；
                 // 显示哪些工具、顺序如何均由设置决定（可开关 / 排序）
-                EditorToolbar(textState, state.toolbarTools, onImageRequest = { insertImageDialog = true })
+                EditorToolbar(
+                    textState,
+                    state.toolbarTools,
+                    onImageRequest = { insertImageDialog = true },
+                    onTagRequest = requestTagPicker
+                )
             }
         }
     }
@@ -428,6 +491,15 @@ fun EditorScreen(
             candidates = linkCandidates,
             onPick = pickWikiCandidate,
             onDismiss = dismissWikiPicker
+        )
+    }
+
+    tagPickerCtx?.let { ctx ->
+        TagPickerDialog(
+            initialQuery = ctx.text,
+            candidates = tagCandidates,
+            onPick = pickTagCandidate,
+            onDismiss = dismissTagPicker
         )
     }
 

@@ -21,6 +21,7 @@ import com.az.notes.domain.markdown.ImageReference
 import com.az.notes.domain.markdown.MarkdownImageLifter
 import com.az.notes.domain.markdown.NoteAlias
 import com.az.notes.domain.markdown.TaskExtractor
+import com.az.notes.domain.markdown.TagMatcher
 import com.az.notes.domain.markdown.TaskItem
 import com.az.notes.domain.markdown.WikiLinkResolver
 import com.az.notes.domain.markdown.WikiLinkTarget
@@ -217,25 +218,28 @@ class ReaderViewModel @Inject constructor(
     }
 
     /**
-     * 预览正文预处理：Wikilink 转标准语法 → 段落内图片抽离。转换在抽离之前——
-     * `![[图]]` 需先产出标准 `![](...)` 才能被 [MarkdownImageLifter] 识别；与
-     * [HeadingExtractor] 共用同一份产物，保证大纲 blockIndex 与列表下标不漂移。
+     * 预览正文预处理：Wikilink 转标准语法 → 标签转可点击链接 → 段落内图片抽离。
+     * 转换在抽离之前——`![[图]]` 需先产出标准 `![](...)` 才能被 [MarkdownImageLifter]
+     * 识别；与 [HeadingExtractor] 共用同一份产物，保证大纲 blockIndex 与列表下标不漂移。
      */
     private fun preparePreviewBody(body: String, vault: String?): String {
-        if (!body.contains("[[") || vault.isNullOrBlank()) return MarkdownImageLifter.lift(body)
-        val root = File(vault).normalize()
-        val index = vaultNameIndex.names(root)
-        val aliases = vaultNameIndex.aliases(root)
-        val noteDir = File(absolutePath).parentFile
-        wikiRoot = root
-        wikiIndex = index
-        wikiAliases = aliases
-        val transformed = WikiLinkTransformer.transform(body) { target ->
-            val file = ImageReference.resolveExisting(target, root, noteDir, index)
-                ?: WikiLinkResolver.resolve(target, root, noteDir, index, aliases)
-            file?.let { vaultRelativeOf(root, it) }
+        val transformed = if (body.contains("[[") && !vault.isNullOrBlank()) {
+            val root = File(vault).normalize()
+            val index = vaultNameIndex.names(root)
+            val aliases = vaultNameIndex.aliases(root)
+            val noteDir = File(absolutePath).parentFile
+            wikiRoot = root
+            wikiIndex = index
+            wikiAliases = aliases
+            WikiLinkTransformer.transform(body) { target ->
+                val file = ImageReference.resolveExisting(target, root, noteDir, index)
+                    ?: WikiLinkResolver.resolve(target, root, noteDir, index, aliases)
+                file?.let { vaultRelativeOf(root, it) }
+            }
+        } else {
+            body
         }
-        return MarkdownImageLifter.lift(transformed)
+        return MarkdownImageLifter.lift(TagMatcher.transform(transformed))
     }
 
     /** 绝对路径 → 相对 [root] 的仓库内路径（正斜杠分隔）。 */

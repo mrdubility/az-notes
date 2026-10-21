@@ -48,6 +48,7 @@ import coil3.size.Size as CoilSize
 import com.az.notes.R
 import com.az.notes.domain.markdown.HeadingExtractor
 import com.az.notes.ui.common.azNotesMarkdownTypography
+import com.az.notes.ui.common.rememberTagUriHandler
 import com.az.notes.ui.common.rememberWikiLinkUriHandler
 import com.az.notes.ui.common.resolve
 import com.az.notes.ui.common.showTimedSnackbar
@@ -85,6 +86,8 @@ fun ReaderScreen(
     onAddToAiChat: () -> Unit,
     /** Wikilink 跳转：接收仓库内笔记绝对路径与可选标题锚点 */
     onOpenNote: (String, String?) -> Unit,
+    /** 标签点击：跳转含该标签的文档列表（标签结果页） */
+    onOpenTag: (String) -> Unit,
     /** 刚从“新建待办”进入：退出（顶栏返回 / 系统返回键）时若无条目则清理占位文件 */
     fresh: Boolean = false
 ) {
@@ -288,31 +291,36 @@ fun ReaderScreen(
                     }
             ) {
                 if (state.noteType == "task") {
-                    // frontmatter `note_type: task`：待办清单页（wikilink 同样可点击跳转）
+                    // frontmatter `note_type: task`：待办清单页（wikilink 与标签同样可点击跳转）
                     CompositionLocalProvider(LocalUriHandler provides wikiUriHandler) {
-                        TaskListPane(
-                            fileName = state.path.substringAfterLast('/'),
-                            tasks = state.tasks,
-                            attributes = state.attributes,
-                            onToggle = viewModel::toggleTask,
-                            onAdd = viewModel::addTask,
-                            onEdit = viewModel::editTask,
-                            onDelete = viewModel::deleteTask,
-                            onReorder = viewModel::reorderTasks,
-                            onToggleAttribute = toggleBooleanAttr
-                        )
+                        val tagUriHandler = rememberTagUriHandler(onOpenTag)
+                        CompositionLocalProvider(LocalUriHandler provides tagUriHandler) {
+                            TaskListPane(
+                                fileName = state.path.substringAfterLast('/'),
+                                tasks = state.tasks,
+                                attributes = state.attributes,
+                                onToggle = viewModel::toggleTask,
+                                onAdd = viewModel::addTask,
+                                onEdit = viewModel::editTask,
+                                onDelete = viewModel::deleteTask,
+                                onReorder = viewModel::reorderTasks,
+                                onToggleAttribute = toggleBooleanAttr
+                            )
+                        }
                     }
                 } else {
                     CompositionLocalProvider(LocalUriHandler provides wikiUriHandler) {
-                        // 长按选择正文：选区与系统文本操作条（复制 / 全选）由 SelectionContainer 提供
-                        SelectionContainer {
-                            Markdown(
-                                markdownState = markdownState,
-                                modifier = Modifier.fillMaxSize(),
-                                typography = azNotesMarkdownTypography(),
-                                imageTransformer = imageTransformer,
-                                annotator = annotator,
-                                animations = staticAnimations,
+                        val tagUriHandler = rememberTagUriHandler(onOpenTag)
+                        CompositionLocalProvider(LocalUriHandler provides tagUriHandler) {
+                            // 长按选择正文：选区与系统文本操作条（复制 / 全选）由 SelectionContainer 提供
+                            SelectionContainer {
+                                Markdown(
+                                    markdownState = markdownState,
+                                    modifier = Modifier.fillMaxSize(),
+                                    typography = azNotesMarkdownTypography(),
+                                    imageTransformer = imageTransformer,
+                                    annotator = annotator,
+                                    animations = staticAnimations,
                                 success = { success, components, _ ->
                                     // 官方 success 插槽为 Column(不虚拟化)；此处换成 LazyColumn：
                                     // 块下标与 AST 顶层块一一对应，大文档只渲染可见块；
@@ -375,6 +383,7 @@ fun ReaderScreen(
                                     }
                                 }
                             )
+                        }
                         }
                     }
                 }

@@ -327,7 +327,7 @@ private fun startsWithAt(content: CharSequence, needle: String, index: Int): Boo
 }
 
 /** 判定 [position] 是否处于围栏代码块或行内代码内（处于时不触发补全）。 */
-private fun insideProtectedContext(content: CharSequence, position: Int): Boolean {
+internal fun insideProtectedContext(content: CharSequence, position: Int): Boolean {
     // 围栏：起点前不存在 ``` / ~~~ 记号时零成本跳过逐行扫描
     if (content.indexOf("```") in 0 until position || content.indexOf("~~~") in 0 until position) {
         var inFence = false

@@ -103,7 +103,9 @@ fun HomeScreen(
     onOpenEditor: (path: String, fresh: Boolean, fromShare: Boolean) -> Unit,
     onOpenTrash: () -> Unit,
     onOpenFavorites: () -> Unit,
-    /** 最近查看页（抽屉入口，位于收藏夹下方）：最近打开过的笔记 */
+    /** 标签页（抽屉入口，位于收藏夹下方）：全库 #标签 聚合 */
+    onOpenTags: () -> Unit,
+    /** 最近查看页（抽屉入口，位于标签下方）：最近打开过的笔记 */
     onOpenRecent: () -> Unit,
     onOpenGallery: () -> Unit,
     /** AI 对话页（B2）：抽屉入口 */
@@ -316,6 +318,10 @@ fun HomeScreen(
                     onFavorites = {
                         scope.launch { drawerState.close() }
                         onOpenFavorites()
+                    },
+                    onTags = {
+                        scope.launch { drawerState.close() }
+                        onOpenTags()
                     },
                     onRecent = {
                         scope.launch { drawerState.close() }

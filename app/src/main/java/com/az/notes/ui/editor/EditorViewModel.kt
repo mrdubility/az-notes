@@ -10,6 +10,8 @@ import com.az.notes.data.media.ImageImportRepository
 import com.az.notes.data.media.ImportedMedia
 import com.az.notes.data.settings.SettingsRepository
 import com.az.notes.data.storage.PathUpdateBus
+import com.az.notes.data.storage.TagIndex
+import com.az.notes.data.storage.TagRow
 import com.az.notes.data.storage.VaultNameIndex
 import com.az.notes.data.storage.VaultRepository
 import com.az.notes.data.sync.SyncEngine
@@ -68,7 +70,8 @@ class EditorViewModel @Inject constructor(
     private val imageImportRepository: ImageImportRepository,
     private val attachmentRepository: AttachmentRepository,
     private val vaultNameIndex: VaultNameIndex,
-    private val pathUpdateBus: PathUpdateBus
+    private val pathUpdateBus: PathUpdateBus,
+    private val tagIndex: TagIndex
 ) : ViewModel() {
 
     private var absolutePath: String =
@@ -85,6 +88,12 @@ class EditorViewModel @Inject constructor(
     val linkCandidates: StateFlow<List<WikiLinkCandidate>?> = _linkCandidates.asStateFlow()
 
     private var linkCandidatesLoading = false
+
+    /** `#` 补全候选全量列表（首次触发时后台构建；null = 尚未加载）。 */
+    private val _tagCandidates = MutableStateFlow<List<TagRow>?>(null)
+    val tagCandidates: StateFlow<List<TagRow>?> = _tagCandidates.asStateFlow()
+
+    private var tagCandidatesLoading = false
 
     private var autoSaveJob: Job? = null
 
@@ -294,6 +303,27 @@ class EditorViewModel @Inject constructor(
             }
             _linkCandidates.value = built
             linkCandidatesLoading = false
+        }
+    }
+
+    /**
+     * 惰性加载 `#` 补全候选（首次敲出 `#` 或点工具栏时调用；来自全库标签倒排
+     * 索引，构建走 IO；失败静默留空，下次触发重试）。
+     */
+    fun ensureTagCandidates() {
+        if (_tagCandidates.value != null || tagCandidatesLoading) return
+        val vault = _state.value.vaultPath
+        if (vault.isNullOrBlank()) return
+        tagCandidatesLoading = true
+        viewModelScope.launch {
+            val built = withContext(Dispatchers.IO) {
+                runCatching {
+                    tagIndex.buildOrRefresh(vault)
+                    tagIndex.all()
+                }.getOrDefault(emptyList())
+            }
+            _tagCandidates.value = built
+            tagCandidatesLoading = false
         }
     }
 

@@ -39,6 +39,8 @@ import com.az.notes.ui.settings.ToolbarSettingsScreen
 import com.az.notes.ui.sync.SyncConflictScreen
 import com.az.notes.ui.sync.SyncLogScreen
 import com.az.notes.ui.sync.SyncScreen
+import com.az.notes.ui.tags.TagDocsScreen
+import com.az.notes.ui.tags.TagsScreen
 import com.az.notes.ui.trash.TrashScreen
 import com.az.notes.ui.vault.VaultScreen
 
@@ -89,6 +91,7 @@ fun AzNotesNavHost(
                 },
                 onOpenTrash = { navController.navigate(Routes.TRASH) },
                 onOpenFavorites = { navController.navigate(Routes.FAVORITES) },
+                onOpenTags = { navController.navigate(Routes.TAGS) },
                 onOpenRecent = { navController.navigate(Routes.RECENTS) },
                 onOpenGallery = { navController.navigate(Routes.GALLERY) },
                 // AI 对话（B2）：抽屉入口
@@ -141,6 +144,8 @@ fun AzNotesNavHost(
                         navController.navigate(Routes.reader(path, anchor = anchor))
                     }
                 },
+                // 正文内 `#标签` 点击：跳含该标签的文档列表
+                onOpenTag = { tag -> navController.navigate(Routes.tagDocs(tag)) },
                 fresh = entry.arguments?.getBoolean("fresh") ?: false
             )
         }
@@ -251,6 +256,25 @@ fun AzNotesNavHost(
 
         composable(Routes.FAVORITES) { entry ->
             FavoritesScreen(
+                viewModel = hiltViewModel(),
+                onBack = { navController.popBackStackSafely(entry) },
+                onOpen = openNote
+            )
+        }
+
+        composable(Routes.TAGS) { entry ->
+            TagsScreen(
+                viewModel = hiltViewModel(),
+                onBack = { navController.popBackStackSafely(entry) },
+                onOpenTag = { navController.navigate(Routes.tagDocs(it)) }
+            )
+        }
+
+        composable(
+            route = Routes.TAG_DOCS,
+            arguments = listOf(navArgument("tag") { type = NavType.StringType })
+        ) { entry ->
+            TagDocsScreen(
                 viewModel = hiltViewModel(),
                 onBack = { navController.popBackStackSafely(entry) },
                 onOpen = openNote
