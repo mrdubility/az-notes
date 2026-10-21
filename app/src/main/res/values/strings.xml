@@ -555,7 +555,7 @@
     <string name="reader_attr_value_hint">换行分隔多个值；true / false 显示为复选框</string>
     <string name="reader_attr_add">添加</string>
     <string name="reader_attr_add_action">点击添加属性</string>
-    <string name="reader_attr_cancel">取消</string>
+    <string name="reader_attr_confirm">确定</string>
     <string name="reader_attr_remove">删除属性</string>
     <string name="reader_attr_remove_value">删除该值</string>
 
