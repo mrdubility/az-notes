@@ -507,6 +507,7 @@ class ReaderViewModel @Inject constructor(
                     vaultNameIndex.invalidate()
                     vaultPropertyIndex.invalidate()
                     _propertyHistory.value = null
+                    loadPropertyHistory()
                     runCatching { syncScheduler.scheduleSaveSync() }
                 }
             } else {

@@ -9,10 +9,12 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -54,6 +56,7 @@ import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
@@ -446,9 +449,12 @@ private fun AttrEditRow(
 }
 
 /**
- * 历史联想弹层：统一从编辑行上方弹出，不遮挡编辑框；上方空间不足时菜单限高
- * （≤ 上方可用空间）内部滚动。非聚焦弹层：不抢焦点、不收起输入法。
+ * 历史联想弹层：等编辑行与菜单尺寸测量稳定后按上下方空间自适应定位——下方空间
+ * （到键盘上沿）放得下则弹在编辑行下方，否则弹在上方；菜单限高（≤ 200dp 且两个
+ * 方向都放得下），内部滚动。宽度随内容自适应（120–240dp）。非聚焦弹层：不抢
+ * 焦点、不收起输入法。
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun AttrHistoryMenu(
     expanded: Boolean,
@@ -459,14 +465,20 @@ private fun AttrHistoryMenu(
 ) {
     if (!expanded) return
     val density = LocalDensity.current
+    val windowSize = LocalWindowInfo.current.containerSize
+    val imeBottomPx = WindowInsets.ime.getBottom(density)
     val gapPx = with(density) { 8.dp.toPx() }
     val maxMenuPx = with(density) { 200.dp.toPx() }
-    // 菜单高度上限 = min(200dp, 编辑行上方可用空间)
-    val menuMaxPx = remember(rowBounds) {
+    val minMenuPx = with(density) { 48.dp.toPx() }
+
+    // 菜单高度上限 = min(200dp, max(下方可用, 上方可用))，保证任一方向都放得下
+    val menuMaxPx = remember(rowBounds, windowSize.height, imeBottomPx) {
         val bounds = rowBounds ?: return@remember maxMenuPx
-        minOf(maxMenuPx, maxOf(0f, bounds.top - gapPx))
+        val below = (windowSize.height - imeBottomPx) - bounds.bottom
+        val above = bounds.top
+        minOf(maxMenuPx, maxOf(minMenuPx, maxOf(below, above) - gapPx))
     }
-    val provider = remember(rowBounds, menuMaxPx) {
+    val provider = remember(rowBounds, windowSize.height, imeBottomPx) {
         object : PopupPositionProvider {
             override fun calculatePosition(
                 anchorBounds: IntRect,
@@ -476,11 +488,13 @@ private fun AttrHistoryMenu(
             ): IntOffset {
                 val bounds = rowBounds ?: return IntOffset(0, 0)
                 val gap = with(density) { 8.dp.toPx().toInt() }
-                val menuH = minOf(popupContentSize.height, menuMaxPx.toInt())
-                return IntOffset(
-                    bounds.left.toInt(),
-                    (bounds.top - menuH - gap).toInt().coerceAtLeast(0)
-                )
+                val menuH = popupContentSize.height
+                val below = (windowSize.height - imeBottomPx.toInt()) - bounds.bottom.toInt()
+                return if (below >= menuH + gap) {
+                    IntOffset(bounds.left.toInt(), bounds.bottom.toInt() + gap)
+                } else {
+                    IntOffset(bounds.left.toInt(), (bounds.top.toInt() - menuH - gap).coerceAtLeast(0))
+                }
             }
         }
     }
@@ -496,14 +510,13 @@ private fun AttrHistoryMenu(
         ) {
             Column(
                 modifier = Modifier
-                    .widthIn(min = 160.dp)
+                    .widthIn(min = 120.dp, max = 240.dp)
                     .heightIn(max = with(density) { menuMaxPx.toDp() })
                     .verticalScroll(rememberScrollState())
             ) {
                 suggestions.take(12).forEach { item ->
                     Box(
                         Modifier
-                            .fillMaxWidth()
                             .clickable { onPick(item) }
                             .padding(horizontal = 16.dp, vertical = 6.dp)
                     ) {
