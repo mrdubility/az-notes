@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -520,6 +521,7 @@ private fun AttrHistoryMenu(
             Column(
                 modifier = Modifier
                     .widthIn(min = 120.dp, max = 240.dp)
+                    .width(IntrinsicSize.Max)
                     .heightIn(max = with(density) { menuMaxPx.toDp() })
                     .verticalScroll(rememberScrollState())
             ) {
