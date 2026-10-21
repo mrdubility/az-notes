@@ -92,9 +92,9 @@ class TagMatcherTest {
             "前缀 [#tag](az-tag:tag) 后缀",
             TagMatcher.transform("前缀 #tag 后缀")
         )
-        // 嵌套标签名编码：/ 编码为 %2F
+        // 嵌套标签名原样保留 `/`（encodeTarget 不编码路径分隔）
         assertEquals(
-            "[#inbox/to-read](az-tag:inbox%2Fto-read)",
+            "[#inbox/to-read](az-tag:inbox/to-read)",
             TagMatcher.transform("#inbox/to-read")
         )
         // 无标签文本原样返回

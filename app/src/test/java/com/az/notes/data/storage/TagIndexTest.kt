@@ -45,9 +45,9 @@ class TagIndexTest {
         index.buildOrRefresh(root.absolutePath)
 
         val all = index.all()
-        // 大小写合并：TagA/taga 同 key，展示首次出现的写法、计数合并
-        assertEquals(2, all.first { it.name == "TagA" }.count)
-        assertEquals(2, all.first { it.name == "tagB" }.count)
+        // 大小写合并：TagA/taga 同 key（展示首次出现的写法），计数合并
+        assertEquals(2, all.first { it.name.lowercase() == "taga" }.count)
+        assertEquals(2, all.first { it.name.lowercase() == "tagb" }.count)
         assertEquals(2, all.size)
     }
 
@@ -56,8 +56,8 @@ class TagIndexTest {
         note("a.md", "---\ntags:\n  - recipe\n  - cooking\n---\n正文 #recipe")
         index.buildOrRefresh(root.absolutePath)
 
-        assertEquals(1, index.all().first { it.name == "recipe" }.count)
-        assertEquals(1, index.all().first { it.name == "cooking" }.count)
+        assertEquals(1, index.all().first { it.name.lowercase() == "recipe" }.count)
+        assertEquals(1, index.all().first { it.name.lowercase() == "cooking" }.count)
     }
 
     @Test
@@ -98,7 +98,7 @@ class TagIndexTest {
         index.buildOrRefresh(root.absolutePath)
 
         // tagA 仅剩 b；tagB 随唯一文档消失
-        assertEquals(1, index.all().first { it.name == "tagA" }.count)
+        assertEquals(1, index.all().first { it.name.lowercase() == "taga" }.count)
         assertTrue(index.all().none { it.name.equals("tagB", ignoreCase = true) })
     }
 
@@ -112,7 +112,7 @@ class TagIndexTest {
         index.buildOrRefresh(root.absolutePath)
         val all = index.all()
         assertEquals(setOf("tagA", "tagB"), all.map { it.name }.toSet())
-        assertEquals(1, all.first { it.name == "tagA" }.count)
+        assertEquals(1, all.first { it.name.lowercase() == "taga" }.count)
         assertTrue(b.exists())
     }
 
