@@ -180,22 +180,29 @@ fun EditorScreen(
     LaunchedEffect(tagQuery != null || tagPickerCtx != null, state.vaultPath) {
         if (tagQuery != null || tagPickerCtx != null) viewModel.ensureTagCandidates()
     }
-    // 仅“新输入单字符”时打开浮层：光标移动到已有 `#标签` 后（文本未变）、进入页面
-    // 首帧（光标落在标签后）与粘贴等批量文本变化均不触发；手动关闭后同一片段
-    // 继续手打不重弹，直到 `#` 片段结束后重新进入
+    // 仅「# 片段内新输入」时打开浮层：判定本次变化是光标处的纯插入（任意长度，
+    // 输入法一次上屏多字符 / 粘贴均按单次输入触发）；光标移动到已有 `#标签` 后
+    // （文本未变）、进入页面首帧均不触发；手动关闭后同一片段继续手打不重弹，
+    // 直到 `#` 片段结束后重新进入
     LaunchedEffect(Unit) {
-        var lastLength = textState.text.length
+        var lastText = textState.text.toString()
+        var lastCursor = textState.selection.min
         snapshotFlow {
             val text = textState.text.toString()
             val selection = textState.selection
-            val grewByOne = text.length == lastLength + 1
-            Triple(text, selection, grewByOne)
-        }.collect { (text, selection, grewByOne) ->
-            lastLength = text.length
-            val query = if (selection.collapsed) tagQueryAt(text, selection.min) else null
+            text to selection
+        }.collect { (text, selection) ->
+            val cursor = selection.min
+            val insertAt = lastCursor.coerceAtMost(lastText.length)
+            val pureInsert = text.length > lastText.length &&
+                text.startsWith(lastText.take(insertAt)) &&
+                text.endsWith(lastText.drop(insertAt))
+            lastText = text
+            lastCursor = cursor
+            val query = if (selection.collapsed) tagQueryAt(text, cursor) else null
             if (query == null) {
                 tagPickerDismissed = false
-            } else if (tagPickerCtx == null && !tagPickerDismissed && grewByOne) {
+            } else if (tagPickerCtx == null && !tagPickerDismissed && pureInsert) {
                 tagPickerCtx = query
             }
         }
