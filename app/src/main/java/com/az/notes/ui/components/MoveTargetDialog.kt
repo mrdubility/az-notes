@@ -119,22 +119,6 @@ fun MoveTargetDialog(
                         }
                     }
                 }
-                val createRoot = vaultPath
-                if (onCreateFolder != null && createRoot != null) {
-                    // 根目录新建入口（置于列表上方更易发现；子目录新建用行尾图标）
-                    TextButton(
-                        onClick = { openCreate(createRoot, rootDirLabel) },
-                        modifier = Modifier.fillMaxWidth().padding(bottom = 2.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Outlined.CreateNewFolder,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(Modifier.width(6.dp))
-                        Text(stringResource(R.string.home_new_folder))
-                    }
-                }
                 if (targets == null) {
                     Box(
                         modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp),
@@ -149,7 +133,9 @@ fun MoveTargetDialog(
                                 MoveTargetRow(
                                     depth = 0,
                                     label = rootDirLabel,
-                                    onClick = { onSelect(root) }
+                                    onClick = { onSelect(root) },
+                                    allowNewFolder = onCreateFolder != null,
+                                    onNewFolder = { openCreate(root, rootDirLabel) }
                                 )
                             }
                         }

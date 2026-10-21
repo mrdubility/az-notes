@@ -15,9 +15,9 @@ import com.az.notes.domain.model.AppSettings
 import com.az.notes.domain.model.ThemeMode
 
 private val LightColors = lightColorScheme(
-    primary = GreenPrimary,
+    primary = DarkRedPrimary,
     onPrimary = androidx.compose.ui.graphics.Color.White,
-    secondary = GreenDark,
+    secondary = DarkRedDark,
     tertiary = AmberAccent,
     surface = SurfaceLight,
     onSurface = OnSurfaceLight,
@@ -26,9 +26,9 @@ private val LightColors = lightColorScheme(
 )
 
 private val DarkColors = darkColorScheme(
-    primary = GreenLight,
-    onPrimary = GreenDark,
-    secondary = GreenLight,
+    primary = DarkRedLight,
+    onPrimary = DarkRedDark,
+    secondary = DarkRedLight,
     tertiary = AmberAccent,
     surface = SurfaceDark,
     onSurface = OnSurfaceDark,

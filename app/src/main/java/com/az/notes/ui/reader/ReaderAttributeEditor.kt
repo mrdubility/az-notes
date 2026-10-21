@@ -8,11 +8,9 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -50,7 +48,6 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -80,11 +77,10 @@ private enum class AttrInput { KEY, VALUE }
 /**
  * 属性编辑弹窗。列表行展示属性；点击行原地切换为键值编辑行；「点击添加属性」
  * 在末尾追加一行空白编辑行；编辑行失去焦点即保存（键为空则丢弃，键改名合并为
- * 一次写盘）；新属性追加在最下面。键值输入框各自弹出历史联想，条目紧凑、限高
- * 可滚动，下方放不下时改在编辑行上方弹出；弹窗限高并随输入法上移，属性较多时
+ * 一次写盘）；新属性追加在最下面。键值输入框各自弹出历史联想（统一从编辑行上方
+ * 弹出），条目紧凑、限高可滚动；弹窗限高并随输入法上移，属性较多时
  * 列表内部滚动，编辑行始终在键盘上方。
  */
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun AttributeEditorDialog(
     attributes: List<FrontmatterAttribute>,
@@ -411,10 +407,9 @@ private fun AttrEditRow(
 }
 
 /**
- * 历史联想弹层：锚定在编辑行（键 / 值框）下方，条目紧凑、限高 200dp 可滚动；
- * 行下方空间不足（放不下菜单或与键盘重叠）时改在行上方弹出，不遮挡编辑框。
+ * 历史联想弹层：锚定在编辑行（键 / 值框）上方弹出，不遮挡编辑框；条目紧凑、限高
+ * 200dp 可滚动。
  */
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun AttrHistoryMenu(
     expanded: Boolean,
@@ -424,19 +419,12 @@ private fun AttrHistoryMenu(
     onPick: (String) -> Unit
 ) {
     val density = LocalDensity.current
-    val screenHeightPx = with(density) { LocalConfiguration.current.screenHeightDp.dp.toPx() }
-    val imeBottomPx = WindowInsets.ime.getBottom(density)
 
-    val offset = remember(anchorBounds, suggestions.size, imeBottomPx) {
+    val offset = remember(anchorBounds, suggestions.size) {
         val bounds = anchorBounds ?: return@remember DpOffset(0.dp, 4.dp)
         val gapPx = with(density) { 8.dp.toPx() }
         val menuPx = with(density) { minOf(200.dp, (suggestions.size * 36).dp).toPx() }
-        val usableBottom = screenHeightPx - imeBottomPx
-        if (usableBottom - bounds.bottom >= menuPx + gapPx) {
-            DpOffset(0.dp, 4.dp)
-        } else {
-            with(density) { DpOffset(0.dp, (-(bounds.height + menuPx + gapPx)).toDp()) }
-        }
+        with(density) { DpOffset(0.dp, (-(bounds.height + menuPx + gapPx)).toDp()) }
     }
 
     DropdownMenu(
