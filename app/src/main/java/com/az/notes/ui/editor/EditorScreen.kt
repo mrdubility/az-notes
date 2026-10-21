@@ -58,6 +58,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.onSizeChanged
+
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.unit.dp
@@ -181,9 +182,9 @@ fun EditorScreen(
         if (tagQuery != null || tagPickerCtx != null) viewModel.ensureTagCandidates()
     }
     // 仅「# 片段内新输入」时打开浮层：判定本次变化是光标处的纯插入（任意长度，
-    // 输入法一次上屏多字符 / 粘贴均按单次输入触发）；光标移动到已有 `#标签` 后
-    // （文本未变）、进入页面首帧均不触发；手动关闭后同一片段继续手打不重弹，
-    // 直到 `#` 片段结束后重新进入
+    // 输入法一次上屏多字符 / 粘贴均按单次输入触发）；变化前文本为空视为页面
+    // 首启的程序化灌入（不触发）；光标移动到已有 `#标签` 后（文本未变）不触发；
+    // 手动关闭后同一片段继续手打不重弹，直到 `#` 片段结束后重新进入
     LaunchedEffect(Unit) {
         var lastText = textState.text.toString()
         var lastCursor = textState.selection.min
@@ -194,7 +195,8 @@ fun EditorScreen(
         }.collect { (text, selection) ->
             val cursor = selection.min
             val insertAt = lastCursor.coerceAtMost(lastText.length)
-            val pureInsert = text.length > lastText.length &&
+            val pureInsert = lastText.isNotEmpty() &&
+                text.length > lastText.length &&
                 text.startsWith(lastText.take(insertAt)) &&
                 text.endsWith(lastText.drop(insertAt))
             lastText = text
