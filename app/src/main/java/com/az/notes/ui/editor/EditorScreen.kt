@@ -180,12 +180,24 @@ fun EditorScreen(
     LaunchedEffect(tagQuery != null || tagPickerCtx != null, state.vaultPath) {
         if (tagQuery != null || tagPickerCtx != null) viewModel.ensureTagCandidates()
     }
-    LaunchedEffect(tagQuery) {
-        val query = tagQuery
-        if (query == null) {
-            tagPickerDismissed = false
-        } else if (tagPickerCtx == null && !tagPickerDismissed) {
-            tagPickerCtx = query
+    // 仅“新输入单字符”时打开浮层：光标移动到已有 `#标签` 后（文本未变）、进入页面
+    // 首帧（光标落在标签后）与粘贴等批量文本变化均不触发；手动关闭后同一片段
+    // 继续手打不重弹，直到 `#` 片段结束后重新进入
+    LaunchedEffect(Unit) {
+        var lastLength = textState.text.length
+        snapshotFlow {
+            val text = textState.text.toString()
+            val selection = textState.selection
+            val grewByOne = text.length == lastLength + 1
+            Triple(text, selection, grewByOne)
+        }.collect { (text, selection, grewByOne) ->
+            lastLength = text.length
+            val query = if (selection.collapsed) tagQueryAt(text, selection.min) else null
+            if (query == null) {
+                tagPickerDismissed = false
+            } else if (tagPickerCtx == null && !tagPickerDismissed && grewByOne) {
+                tagPickerCtx = query
+            }
         }
     }
     // 点选候选：以 `#名称` 替换查询片段（光标停到末尾）；单次文本编辑可一步撤销；

@@ -40,6 +40,8 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -52,8 +54,8 @@ import com.az.notes.data.storage.TagRow
  * （搜索框 + 已有标签候选列表），点选即以 `#名称` 替换查询片段。
  *
  * 与渲染链同套保护口径（见 [com.az.notes.domain.markdown.TagMatcher]）：
- * 转义 `\#`、行内代码、围栏代码块内不触发；`#` 前必须不是字母数字与 URL
- * 前导字符（中文标点紧贴仍可触发）；行首刚敲 `#`（标题待定）不触发。
+ * 转义 `\#`、行内代码、围栏代码块内不触发；`#` 前不能是 ASCII 字母数字与 URL
+ * 前导字符（中文等非 ASCII 字符紧贴仍可触发）；行首刚敲 `#`（标题待定）不触发。
  */
 
 /** 标签补全浮层的候选列表一次最多展示的条数。 */
@@ -84,13 +86,16 @@ fun tagQueryAt(content: CharSequence, cursor: Int): TagQuery? {
     if (hash > 0) {
         val before = content[hash - 1]
         if (before == '\\') return null
-        if (before.isLetterOrDigit() || before in URL_PREFIX_CHARS) return null
+        if (before in ASCII_ALNUM || before in URL_PREFIX_CHARS) return null
     }
     val inner = content.subSequence(hash + 1, cursor)
     if (inner.contains('\n')) return null
     if (insideProtectedContext(content, hash)) return null
     return TagQuery(hash, cursor, inner.toString())
 }
+
+/** `#` 前导禁用字符：ASCII 字母数字（中文等非 ASCII 紧贴仍可触发）与 URL 常见前导。 */
+private val ASCII_ALNUM = ('0'..'9') + ('A'..'Z') + ('a'..'z')
 
 /** `#` 前导禁用字符：URL 常见前导（挡链接锚点误伤），与渲染链口径一致。 */
 private val URL_PREFIX_CHARS = setOf('/', ':', '?', '=', '&')
@@ -131,7 +136,10 @@ internal fun TagPickerDialog(
     onPick: (TagRow) -> Unit,
     onDismiss: () -> Unit
 ) {
-    var search by remember { mutableStateOf(initialQuery) }
+    // TextFieldValue 承载搜索串：程序化回填时选区置于末尾（初值即已有查询片段）
+    var search by remember {
+        mutableStateOf(TextFieldValue(initialQuery, TextRange(initialQuery.length)))
+    }
     val searchFocus = remember { FocusRequester() }
     // 等一帧布局完成后再请求焦点，避免输入框未就绪焦点被吞（同搜索页做法）
     LaunchedEffect(Unit) {
@@ -139,7 +147,7 @@ internal fun TagPickerDialog(
         searchFocus.requestFocus()
     }
     val filtered = remember(search, candidates) {
-        candidates?.let { filterTagCandidates(it, search, TAG_PICKER_LIMIT) }
+        candidates?.let { filterTagCandidates(it, search.text, TAG_PICKER_LIMIT) }
     }
     Dialog(
         onDismissRequest = onDismiss,

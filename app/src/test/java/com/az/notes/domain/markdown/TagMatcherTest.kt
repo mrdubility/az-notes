@@ -22,6 +22,7 @@ class TagMatcherTest {
         assertEquals(listOf("tag"), tags("文本 #tag 结束"))
         assertEquals(listOf("tag"), tags("行尾 #tag"))
         assertEquals(listOf("标签"), tags("。#标签"))
+        assertEquals(listOf("标签"), tags("中文#标签"))
     }
 
     @Test

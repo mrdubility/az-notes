@@ -44,10 +44,14 @@ class TagCompletionTest {
     }
 
     @Test
-    fun `chinese punctuation before hash triggers`() {
-        val content = "。#标签"
-        val query = tagQueryAt(content, content.length)
-        assertEquals(TagQuery(1, 4, "标签"), query)
+    fun `chinese characters before hash trigger`() {
+        val punct = "。#标签"
+        val punctQuery = tagQueryAt(punct, punct.length)
+        assertEquals(TagQuery(1, 4, "标签"), punctQuery)
+        // 中文字符紧贴（非 ASCII 字母数字）同样触发
+        val text = "中文#标签"
+        val query = tagQueryAt(text, text.length)
+        assertEquals(TagQuery(2, 5, "标签"), query)
     }
 
     @Test
