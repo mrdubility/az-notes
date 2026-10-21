@@ -4,7 +4,6 @@ import com.az.notes.domain.markdown.FrontmatterParser
 import com.az.notes.domain.markdown.TagMatcher
 import com.az.notes.domain.model.FileNode
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.yield
 import javax.inject.Inject
@@ -104,7 +103,6 @@ class TagIndex @Inject constructor(
     ) {
         var done = 0
         for (note in notes) {
-            ensureActive()
             index.values.forEach { it.docs.remove(note.absolutePath) }
             index.entries.removeIf { it.value.docs.isEmpty() }
             scan(note, index)

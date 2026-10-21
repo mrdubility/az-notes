@@ -90,7 +90,7 @@ private fun EditorTool.perform(textState: TextFieldState) {
         EditorTool.UNINDENT -> textState.unindentLines()
         EditorTool.LINK -> textState.wrapSelection("[", "](https://)")
         EditorTool.WIKILINK -> textState.wrapSelection("[[", "]]")
-        EditorTool.TAG -> textState.insertAtCursor("#")
+        EditorTool.TAG -> textState.insertAtCursor("#", 1)
         EditorTool.IMAGE -> textState.insertAtCursor("![]()", 2)
         EditorTool.PROPERTY -> textState.insertProperty()
     }

@@ -61,6 +61,7 @@ class TagDocsViewModel @Inject constructor(
                 _state.update { it.copy(loading = false, items = emptyList()) }
                 return@launch
             }
+            val previewChars = settings?.previewChars ?: 100
             _state.update { it.copy(loading = true) }
             tagIndex.buildOrRefresh(vault)
             val docs = tagIndex.docsOf(tag)
@@ -69,10 +70,7 @@ class TagDocsViewModel @Inject constructor(
                     async {
                         TagDocItem(
                             node = node,
-                            preview = vaultRepository.readPreview(
-                                node.absolutePath,
-                                settings.previewChars
-                            ),
+                            preview = vaultRepository.readPreview(node.absolutePath, previewChars),
                             subtitle = node.relativePath.substringBeforeLast('/', "")
                                 .ifEmpty { null }
                         )
