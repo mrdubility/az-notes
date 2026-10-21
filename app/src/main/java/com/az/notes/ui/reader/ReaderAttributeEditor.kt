@@ -386,15 +386,19 @@ private fun AttrEditRow(
     onDismissMenu: () -> Unit,
     onSubmit: () -> Unit
 ) {
-    var rowBounds by remember { mutableStateOf<Rect?>(null) }
+    var keyBounds by remember { mutableStateOf<Rect?>(null) }
+    var valueBounds by remember { mutableStateOf<Rect?>(null) }
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
-            .onGloballyPositioned { rowBounds = it.boundsInWindow() }
             .padding(end = 8.dp, top = 4.dp, bottom = 4.dp)
     ) {
-        Box(Modifier.weight(0.4f)) {
+        Box(
+            Modifier
+                .weight(0.4f)
+                .onGloballyPositioned { keyBounds = it.boundsInWindow() }
+        ) {
             OutlinedTextField(
                 value = draftKey,
                 onValueChange = onKeyChange,
@@ -408,13 +412,17 @@ private fun AttrEditRow(
             AttrHistoryMenu(
                 expanded = activeInput == AttrInput.KEY && keyHistory.isNotEmpty(),
                 suggestions = keyHistory,
-                rowBounds = rowBounds,
+                anchorBounds = keyBounds,
                 onDismiss = onDismissMenu,
                 onPick = onPickKey
             )
         }
         Spacer(Modifier.width(8.dp))
-        Box(Modifier.weight(0.6f)) {
+        Box(
+            Modifier
+                .weight(0.6f)
+                .onGloballyPositioned { valueBounds = it.boundsInWindow() }
+        ) {
             OutlinedTextField(
                 value = draftValue,
                 onValueChange = onValueChange,
@@ -429,7 +437,7 @@ private fun AttrEditRow(
             AttrHistoryMenu(
                 expanded = activeInput == AttrInput.VALUE && valueHistory.isNotEmpty(),
                 suggestions = valueHistory,
-                rowBounds = rowBounds,
+                anchorBounds = valueBounds,
                 onDismiss = onDismissMenu,
                 onPick = onPickValue
             )
@@ -459,7 +467,7 @@ private fun AttrEditRow(
 private fun AttrHistoryMenu(
     expanded: Boolean,
     suggestions: List<String>,
-    rowBounds: Rect?,
+    anchorBounds: Rect?,
     onDismiss: () -> Unit,
     onPick: (String) -> Unit
 ) {
@@ -472,13 +480,14 @@ private fun AttrHistoryMenu(
     val minMenuPx = with(density) { 48.dp.toPx() }
 
     // 菜单高度上限 = min(200dp, max(下方可用, 上方可用))，保证任一方向都放得下
-    val menuMaxPx = remember(rowBounds, windowSize.height, imeBottomPx) {
-        val bounds = rowBounds ?: return@remember maxMenuPx
+    val menuMaxPx = remember(anchorBounds, windowSize.height, imeBottomPx) {
+        val bounds = anchorBounds ?: return@remember maxMenuPx
         val below = (windowSize.height - imeBottomPx) - bounds.bottom
         val above = bounds.top
         minOf(maxMenuPx, maxOf(minMenuPx, maxOf(below, above) - gapPx))
     }
-    val provider = remember(rowBounds, windowSize.height, imeBottomPx) {
+    val provider = remember(anchorBounds, windowSize.height, imeBottomPx) {
+        val boundsRef = anchorBounds
         object : PopupPositionProvider {
             override fun calculatePosition(
                 anchorBounds: IntRect,
@@ -486,7 +495,7 @@ private fun AttrHistoryMenu(
                 layoutDirection: LayoutDirection,
                 popupContentSize: IntSize
             ): IntOffset {
-                val bounds = rowBounds ?: return IntOffset(0, 0)
+                val bounds = boundsRef ?: return IntOffset(0, 0)
                 val gap = with(density) { 8.dp.toPx().toInt() }
                 val menuH = popupContentSize.height
                 val below = (windowSize.height - imeBottomPx.toInt()) - bounds.bottom.toInt()
@@ -517,8 +526,8 @@ private fun AttrHistoryMenu(
                 suggestions.take(12).forEach { item ->
                     Box(
                         Modifier
-                            .clickable { onPick(item) }
                             .padding(horizontal = 16.dp, vertical = 6.dp)
+                            .clickable { onPick(item) }
                     ) {
                         Text(
                             text = item,
