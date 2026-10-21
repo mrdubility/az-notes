@@ -189,8 +189,9 @@ internal fun AttributeEditorDialog(
         )
     ) {
         // 键盘弹出时禁用 window resize，仅由 imePadding 上移一次，浮窗尺寸不再反复变化
+        val dialogView = LocalView.current
         SideEffect {
-            (LocalView.current.parent as? DialogWindowProvider)?.window
+            (dialogView.parent as? DialogWindowProvider)?.window
                 ?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING)
         }
         Box(
