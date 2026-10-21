@@ -526,8 +526,9 @@ private fun AttrHistoryMenu(
                 suggestions.take(12).forEach { item ->
                     Box(
                         Modifier
-                            .padding(horizontal = 16.dp, vertical = 6.dp)
+                            .fillMaxWidth()
                             .clickable { onPick(item) }
+                            .padding(horizontal = 16.dp, vertical = 6.dp)
                     ) {
                         Text(
                             text = item,
