@@ -103,7 +103,8 @@ class WikiLinkExtractorTest {
 
     @Test
     fun `refs per note capped`() {
-        val line = (1..(WikiLinkExtractor.MAX_REFS_PER_NOTE + 100)).joinToString(" ") { "[[n$it]]" }
-        assertEquals(WikiLinkExtractor.MAX_REFS_PER_NOTE, WikiLinkExtractor.extract(line).size)
+        // 每行一条：避免在同一行上反复做全行重写（只需验证上限截断）
+        val body = (1..(WikiLinkExtractor.MAX_REFS_PER_NOTE + 100)).joinToString("\n") { "[[n$it]]" }
+        assertEquals(WikiLinkExtractor.MAX_REFS_PER_NOTE, WikiLinkExtractor.extract(body).size)
     }
 }
