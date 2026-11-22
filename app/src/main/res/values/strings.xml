@@ -606,6 +606,8 @@
     <string name="msg_links_truncated">另有 %1$d 篇笔记的链接未处理（超出单次上限，请分批移动）</string>
     <string name="msg_links_updated_truncated">已更新 %1$d 篇中的 %2$d 处链接；另有 %3$d 篇超出单次上限未处理</string>
     <string name="msg_links_checking">正在检查引用…</string>
+    <string name="sync_conflict_backed_up">旧版本已备份到应用内部：%1$s</string>
+    <string name="sync_conflict_no_backup">旧版本未保留（按最新版覆盖）</string>
     <string name="editor_external_title">文件已更新</string>
     <string name="editor_external_message">该文件已在别处被修改（同步或链接改写），直接保存会覆盖对方的修改。要如何处理？</string>
     <string name="editor_external_reload">重新载入</string>

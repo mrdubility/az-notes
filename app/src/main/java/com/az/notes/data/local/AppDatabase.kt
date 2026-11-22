@@ -12,6 +12,7 @@ import androidx.room.RoomDatabase
  *     （基线主键改为 (vault_id, path)；破坏性升级，历史同步数据自动重建）。
  * v6：移除阅读进度（read_progress）——预览不再恢复上次阅读位置、主页不再展示进度圆点
  *     （破坏性升级，自动重建）。
+ * v7：冲突记录增 `merge_state` / `marker_count`（同文件内合并的状态与残留块数）。
  * `move_hint` 未采用：重命名改用“即时 MOVE + 扫描期 size 配对启发式”，
  * 无需跨会话保存改名提示（见 SyncEngine）。
  */
@@ -21,7 +22,7 @@ import androidx.room.RoomDatabase
         SyncLogEntity::class,
         ConflictRecordEntity::class
     ],
-    version = 6,
+    version = 7,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {

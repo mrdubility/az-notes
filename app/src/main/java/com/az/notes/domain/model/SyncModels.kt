@@ -28,6 +28,33 @@ enum class ConflictStrategy {
     REMOTE_FIRST
 }
 
+/**
+ * 冲突处理结果状态（写入 conflict_record.merge_state，供同步历史页展示与待处理计数）。
+ *
+ * 在原有"按策略择一覆盖 + 旧版另存"的基础上，逐步引入同文件内合并：
+ * 合并成功时为 [MERGED_CLEAN]，仍有重叠冲突块时为 [MERGED_MARKED]，
+ * 没有祖先可做三方合并时退化为 [NO_BASE]。
+ */
+enum class ConflictMergeState {
+    /** 文本冲突：旧版已备份到应用私有目录（合并能力上线前的阶段状态） */
+    BACKED_UP,
+
+    /** 二进制 / 超大文件：按最新版直接覆盖，不保留旧版 */
+    BINARY_KEEP,
+
+    /** 同文件内合并完成，无残留冲突块 */
+    MERGED_CLEAN,
+
+    /** 合并完成但仍留有待人工处理的冲突块（正文含标记） */
+    MERGED_MARKED,
+
+    /** 无祖先内容可用，仅按段落取较新一侧合并 */
+    NO_BASE,
+
+    /** 合并或备份失败（保留记录供排查） */
+    FAILED
+}
+
 /** 自动同步周期（§6.4）。OFF = 不启用 WorkManager 周期任务。 */
 @Serializable
 enum class SyncInterval(val minutes: Long?) {
@@ -108,7 +135,7 @@ data class SyncOp(
     val detail: String? = null,
     /** MOVE_LOCAL / MOVE_REMOTE：源相对路径（[path] 为目标路径） */
     val moveFrom: String? = null,
-    /** CONFLICT_COPY：败方备份的目标相对路径（计划阶段确定，执行阶段直接写入） */
+    /** CONFLICT_COPY：败方私有备份的**绝对路径**（应用私有目录，不进 Vault）；null = 不备份（二进制 / 超大） */
     val backupPath: String? = null
 )
 

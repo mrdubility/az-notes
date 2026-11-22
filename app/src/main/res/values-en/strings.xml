@@ -606,6 +606,8 @@
     <string name="msg_links_truncated">%1$d more note(s) not updated (per-run limit reached, please move in smaller batches)</string>
     <string name="msg_links_updated_truncated">Updated %2$d link(s) in %1$d note(s); %3$d more note(s) skipped (per-run limit)</string>
     <string name="msg_links_checking">Checking references…</string>
+    <string name="sync_conflict_backed_up">Previous version backed up in app storage: %1$s</string>
+    <string name="sync_conflict_no_backup">Previous version not kept (latest wins)</string>
     <string name="editor_external_title">File updated elsewhere</string>
     <string name="editor_external_message">This note was modified elsewhere (sync or link rewrite). Saving now overwrites those changes. What do you want to do?</string>
     <string name="editor_external_reload">Reload</string>

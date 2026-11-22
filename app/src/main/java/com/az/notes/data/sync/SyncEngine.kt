@@ -11,7 +11,9 @@ import com.az.notes.data.local.SyncLogDao
 import com.az.notes.data.local.SyncLogEntity
 import com.az.notes.data.settings.SettingsRepository
 import com.az.notes.data.storage.TrashRepository
+import com.az.notes.data.storage.VaultLinkIndex
 import com.az.notes.data.webdav.WebDavClient
+import com.az.notes.domain.model.ConflictMergeState
 import com.az.notes.domain.model.ConflictStrategy
 import com.az.notes.domain.model.SyncConfig
 import com.az.notes.domain.model.SyncMode
@@ -30,8 +32,6 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.IOException
 import java.security.MessageDigest
-import java.text.SimpleDateFormat
-import java.util.Date
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
@@ -59,7 +59,9 @@ class SyncEngine @Inject constructor(
     private val syncLogDao: SyncLogDao,
     private val conflictRecordDao: ConflictRecordDao,
     private val syncRunNotifier: SyncRunNotifier,
-    private val debugLogRepository: DebugLogRepository
+    private val debugLogRepository: DebugLogRepository,
+    private val conflictBackupStore: ConflictBackupStore,
+    private val linkIndex: VaultLinkIndex
 ) {
 
     private data class LocalStat(val size: Long, val mtime: Long)
@@ -220,7 +222,8 @@ class SyncEngine @Inject constructor(
 
         /**
          * 冲突处理（§6.2）：按策略决定胜方，再以胜方覆盖另一端。
-         * 文本类文件先把败方另存冲突副本；二进制/图片不生成副本、直接覆盖（与插件一致）。
+         * 文本类的**败方备份到应用私有目录**（不进 Vault，不产生重复笔记）；
+         * 二进制 / 超大文件不备份，只按最新版覆盖。
          * 两者都在执行阶段写入 conflict_record（§4.2）供同步页查看。
          */
         fun addConflict(path: String) {
@@ -250,11 +253,12 @@ class SyncEngine @Inject constructor(
                     "winner" to winner
                 )
             )
-            val backup = if (isTextLike(path)) conflictRelativePath(vault, path) else null
+            val backup = if (isTextLike(path)) {
+                conflictBackupStore.targetPath(ref.id, path).absolutePath
+            } else {
+                null
+            }
             ops += SyncOp(SyncOpType.CONFLICT_COPY, path, detail = winner, backupPath = backup)
-            // 副本与主文件同轮上传（CONFLICT_COPY 优先级更高，先落盘再上传）：
-            // 否则下一轮同步会把副本当作“本地新增”再次请求上传
-            if (backup != null && allowUpload) ops += SyncOp(SyncOpType.UPLOAD, backup)
             if (localWins) {
                 if (allowUpload) ops += SyncOp(SyncOpType.UPLOAD, path)
             } else {
@@ -424,8 +428,7 @@ class SyncEngine @Inject constructor(
         // 会把尚未查看的记录一并误清
         withContext(Dispatchers.IO) {
             val stale = conflictRecordDao.getAll(ref.id).filter {
-                it.createdAt < planStartedAt &&
-                    (it.backupPath.isEmpty() || !File(vault, it.backupPath).exists())
+                it.createdAt < planStartedAt && !backupExists(vault, it.backupPath)
             }
             if (stale.isNotEmpty()) conflictRecordDao.deleteByIds(stale.map { it.id })
         }
@@ -533,7 +536,7 @@ class SyncEngine @Inject constructor(
             var ok = false
             var error: String? = null
             try {
-                ok = executeOp(vault, client, op)
+                ok = executeOp(vault, ref.id, client, op)
                 if (!ok) error = "操作未完成"
             } catch (ce: CancellationException) {
                 throw ce
@@ -625,9 +628,10 @@ class SyncEngine @Inject constructor(
             withContext(Dispatchers.IO) {
                 val now = System.currentTimeMillis()
                 for (op in conflictOps) {
-                    // 胜方内容在 path（覆盖成功后），败方内容在副本（二进制冲突无副本，记 null）
+                    // 胜方内容在 path（覆盖成功后）；败方在私有备份里（二进制 / 超大不备份 → null）
                     val winHash = if (op.path in failedPaths) null else sha1(File(vault, op.path))
-                    val loseHash = sha1(op.backupPath?.takeIf { it.isNotEmpty() }?.let { File(vault, it) })
+                    val backupFile = op.backupPath?.takeIf { it.isNotEmpty() }?.let { File(it) }
+                    val loseHash = backupFile?.let { sha1(it) }
                     conflictRecordDao.insert(
                         ConflictRecordEntity(
                             vaultId = ref.id,
@@ -636,7 +640,12 @@ class SyncEngine @Inject constructor(
                             localSha1 = if (op.detail == "local") winHash else loseHash,
                             remoteSha1 = if (op.detail == "local") loseHash else winHash,
                             resolvedBy = "${config.conflictStrategy.name}:${op.detail}",
-                            backupPath = op.backupPath.orEmpty(),
+                            backupPath = backupFile?.absolutePath.orEmpty(),
+                            mergeState = if (backupFile != null) {
+                                ConflictMergeState.BACKED_UP.name
+                            } else {
+                                ConflictMergeState.BINARY_KEEP.name
+                            },
                             createdAt = now
                         )
                     )
@@ -644,6 +653,12 @@ class SyncEngine @Inject constructor(
                 conflictRecordDao.trimTo(ref.id, 200)
             }
         }
+        // 下载 / 冲突覆盖 / 本地删除 / 本地改名都会让链接索引过期：显式失效，
+        // 下次访问面板或改名时重建（否则面板会继续展示指向旧路径的反链）
+        if (downloaded > 0 || trashedLocal > 0 || moved > 0 || conflictCopies > 0) {
+            linkIndex.invalidate()
+        }
+        withContext(Dispatchers.IO) { conflictBackupStore.purgeExpired(ref.id) }
         // 已解决的冲突记录清理已前移至计划阶段（副本被合并 / 删除后在下一轮扫描时移除，
         // 不再依赖本轮有无待执行操作）
         // CommitBaseline：重新快照两端状态；失败路径不写基线，下一轮重新决策
@@ -713,7 +728,12 @@ class SyncEngine @Inject constructor(
         )
     }
 
-    private suspend fun executeOp(vaultRoot: String, client: WebDavClient, op: SyncOp): Boolean =
+    private suspend fun executeOp(
+        vaultRoot: String,
+        vaultId: String,
+        client: WebDavClient,
+        op: SyncOp
+    ): Boolean =
         when (op.type) {
             SyncOpType.UPLOAD -> {
                 val local = File(vaultRoot, op.path)
@@ -724,24 +744,18 @@ class SyncEngine @Inject constructor(
             SyncOpType.TRASH_LOCAL ->
                 trashRepository.moveToTrash(vaultRoot, File(vaultRoot, op.path).absolutePath) != null
             SyncOpType.CONFLICT_COPY -> {
-                val backupRel = op.backupPath
-                if (backupRel.isNullOrEmpty()) {
-                    // 二进制/图片冲突：不落盘副本，仅由 conflict_record 记录（§6.2）
+                val backupPath = op.backupPath
+                if (backupPath.isNullOrEmpty()) {
+                    // 二进制 / 超大：按最新版直接覆盖，不保留旧版
                     true
+                } else if (op.detail == "local") {
+                    // 本地胜：远端是败方，先把远端旧版下载到私有备份
+                    val backup = File(backupPath)
+                    backup.parentFile?.mkdirs()
+                    client.download(op.path, backup)
                 } else {
-                    val backup = File(vaultRoot, backupRel)
-                    if (op.detail == "local") {
-                        // 本地胜：远端是败方，先把远端旧版下载为副本
-                        client.download(op.path, backup)
-                    } else {
-                        // 远端胜：本地是败方，先把本地旧版复制为副本
-                        val source = File(vaultRoot, op.path)
-                        source.isFile && runCatching {
-                            backup.parentFile?.mkdirs()
-                            source.copyTo(backup, overwrite = false)
-                            true
-                        }.getOrDefault(false)
-                    }
+                    // 远端胜：本地是败方，先复制到私有备份
+                    conflictBackupStore.backupFile(vaultId, op.path, File(vaultRoot, op.path)) != null
                 }
             }
             SyncOpType.MOVE_LOCAL -> {
@@ -1028,23 +1042,6 @@ class SyncEngine @Inject constructor(
     private fun isTextLike(path: String): Boolean =
         path.substringAfterLast('.', "").lowercase(Locale.ROOT) in TEXT_EXTENSIONS
 
-    /** 冲突副本相对路径：`名称 (conflict yyyy-MM-dd HHmmss).md`，重名自动加序号。 */
-    private fun conflictRelativePath(vaultRoot: String, relativePath: String): String {
-        val parent = relativePath.substringBeforeLast('/', "")
-        val name = relativePath.substringAfterLast('/')
-        val dot = name.lastIndexOf('.')
-        val base = if (dot > 0) name.substring(0, dot) else name
-        val ext = if (dot > 0) name.substring(dot) else ""
-        val dir = if (parent.isEmpty()) File(vaultRoot) else File(vaultRoot, parent)
-        var candidate = File(dir, "$base (conflict ${conflictStamp()})$ext")
-        var index = 2
-        while (candidate.exists()) {
-            candidate = File(dir, "$base (conflict ${conflictStamp()} $index)$ext")
-            index++
-        }
-        return if (parent.isEmpty()) candidate.name else "$parent/${candidate.name}"
-    }
-
     /**
      * 重命名启发式配对（§6.1）：把“一侧消失的旧路径”与“另一侧出现的新路径”按大小配对。
      * 远端拿不到内容 hash（需额外下载），改用 size 相等 + 两侧各自唯一做保守推断；
@@ -1083,8 +1080,12 @@ class SyncEngine @Inject constructor(
         return parts.takeIf { it.isNotEmpty() }?.joinToString("；")
     }
 
-    private fun conflictStamp(): String =
-        SimpleDateFormat("yyyy-MM-dd HHmmss", Locale.getDefault()).format(Date())
+    /** 备份是否仍存在（历史记录可能是旧的 Vault 相对路径，兼容两种形态）。 */
+    private fun backupExists(vaultRoot: String, backupPath: String): Boolean {
+        if (backupPath.isEmpty()) return false
+        val file = File(backupPath)
+        return (if (file.isAbsolute) file else File(vaultRoot, backupPath)).exists()
+    }
 
     /** 执行顺序：先改名，再备冲突副本（覆盖前完成败方备份），随后上传/下载，最后删除类操作。 */
     private fun opPriority(type: SyncOpType): Int = when (type) {

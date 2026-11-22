@@ -38,6 +38,7 @@ import com.az.notes.data.local.ConflictRecordEntity
 import com.az.notes.data.local.SyncLogDao
 import com.az.notes.data.local.SyncLogEntity
 import com.az.notes.data.settings.SettingsRepository
+import com.az.notes.domain.model.ConflictMergeState
 import com.az.notes.domain.model.SyncOpType
 import com.az.notes.ui.common.label
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -287,14 +288,28 @@ private fun ConflictRow(record: ConflictRecordEntity) {
         if (record.backupPath.isNotEmpty()) {
             Spacer(Modifier.height(2.dp))
             Text(
-                text = record.backupPath,
+                text = backupSummary(record),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
+        } else if (record.mergeState == ConflictMergeState.BINARY_KEEP.name) {
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = stringResource(R.string.sync_conflict_no_backup),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
+}
+
+/** 败方备份的可读文案：只展示文件名（完整路径在应用私有目录，对用户无意义）。 */
+@Composable
+private fun backupSummary(record: ConflictRecordEntity): String {
+    val name = record.backupPath.substringAfterLast('/').ifEmpty { record.backupPath }
+    return stringResource(R.string.sync_conflict_backed_up, name)
 }
 
 /** 冲突解决方式的可读文案（resolved_by 形如「策略:胜方」）。 */

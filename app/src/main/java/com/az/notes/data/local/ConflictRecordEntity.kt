@@ -25,7 +25,11 @@ data class ConflictRecordEntity(
     @ColumnInfo(name = "remote_sha1") val remoteSha1: String?,
     /** 解决方式：CONFLICT_COPY:local / CONFLICT_COPY:remote / LOCAL_FIRST / REMOTE_FIRST */
     @ColumnInfo(name = "resolved_by") val resolvedBy: String,
-    /** 败方备份相对路径（无备份时为空串） */
+    /** 败方备份的绝对路径（应用私有目录；二进制 / 超大冲突不备份时为空串） */
     @ColumnInfo(name = "backup_path") val backupPath: String,
+    /** 合并 / 保留状态，取值见 [com.az.notes.domain.model.ConflictMergeState] */
+    @ColumnInfo(name = "merge_state", defaultValue = "") val mergeState: String = "",
+    /** 合并后残留的冲突块数（0 = 干净合并；未合并阶段恒为 0） */
+    @ColumnInfo(name = "marker_count", defaultValue = "0") val markerCount: Int = 0,
     @ColumnInfo(name = "created_at") val createdAt: Long
 )
