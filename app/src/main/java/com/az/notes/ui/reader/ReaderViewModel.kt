@@ -9,7 +9,11 @@ import com.az.notes.data.debug.DebugLogLevel
 import com.az.notes.data.debug.DebugLogRepository
 import com.az.notes.data.debug.DebugLogType
 import com.az.notes.data.settings.SettingsRepository
+import com.az.notes.data.storage.BacklinkItem
+import com.az.notes.data.storage.LinkOutItem
+import com.az.notes.data.storage.LinkResolution
 import com.az.notes.data.storage.PathUpdateBus
+import com.az.notes.data.storage.VaultLinkIndex
 import com.az.notes.data.storage.VaultNameIndex
 import com.az.notes.data.storage.VaultPropertyIndex
 import com.az.notes.data.storage.VaultRepository
@@ -23,6 +27,7 @@ import com.az.notes.domain.markdown.NoteAlias
 import com.az.notes.domain.markdown.TaskExtractor
 import com.az.notes.domain.markdown.TagMatcher
 import com.az.notes.domain.markdown.TaskItem
+import com.az.notes.domain.markdown.WikiLinkExtractor
 import com.az.notes.domain.markdown.WikiLinkResolver
 import com.az.notes.domain.markdown.WikiLinkTarget
 import com.az.notes.domain.markdown.WikiLinkTransformer
@@ -82,6 +87,17 @@ data class ReaderUiState(
 )
 
 /**
+ * 双链面板数据：出链（即时，随笔记加载计算）+ 反向链接（打开面板时才建索引）。
+ */
+data class ReaderLinksUiState(
+    val outLinks: List<LinkOutItem> = emptyList(),
+    val backLinks: List<BacklinkItem> = emptyList(),
+    val loading: Boolean = false,
+    /** 链接索引构建进度（当前 / 总数）；null = 未在扫描 */
+    val progress: Pair<Int, Int>? = null
+)
+
+/**
  * 阅读器 ViewModel（§5.2 / §5.4 / §5.5）。
  * 加载正文、基于 AST 提取大纲（块序号与渲染一一对应）。
  */
@@ -93,6 +109,7 @@ class ReaderViewModel @Inject constructor(
     private val debugLogRepository: DebugLogRepository,
     private val vaultNameIndex: VaultNameIndex,
     private val vaultPropertyIndex: VaultPropertyIndex,
+    private val linkIndex: VaultLinkIndex,
     private val pathUpdateBus: PathUpdateBus,
     private val aiSession: AiChatSession,
     private val syncScheduler: SyncScheduler
@@ -106,6 +123,10 @@ class ReaderViewModel @Inject constructor(
 
     private val _state = MutableStateFlow(ReaderUiState(path = absolutePath))
     val state: StateFlow<ReaderUiState> = _state.asStateFlow()
+
+    /** 双链面板数据（出链 / 反向链接），与笔记主体状态分开维护。 */
+    private val _links = MutableStateFlow(ReaderLinksUiState())
+    val links: StateFlow<ReaderLinksUiState> = _links.asStateFlow()
 
     /** 首次加载是否已结束（区分“首次进入”与“从编辑页返回”，避免重复读盘）。 */
     private var loadedOnce = false
@@ -161,6 +182,8 @@ class ReaderViewModel @Inject constructor(
         }
         absolutePath = target
         _state.update { it.copy(path = target) }
+        // 路径变了：旧的反向链接指向的是改名前的笔记，先清空，下次打开面板重算
+        _links.value = ReaderLinksUiState()
     }
 
     private fun load(showLoading: Boolean) {
@@ -179,6 +202,8 @@ class ReaderViewModel @Inject constructor(
                     val text = vaultRepository.readText(absolutePath)
                     val split = FrontmatterParser.split(text)
                     val previewBody = preparePreviewBody(split.body, vault)
+                    // 出链与预览正文同源：直接读原文提取（渲染产物已无 [[ ]]）
+                    val outLinks = buildOutLinks(split.body, vault)
                     val noteType = split.value("note_type")?.trim()?.lowercase()
                     val parsed = HeadingExtractor.parse(previewBody)
                     val tasks = if (noteType == "task") TaskExtractor.extract(split.body) else emptyList()
@@ -195,6 +220,7 @@ class ReaderViewModel @Inject constructor(
                             error = null
                         )
                     }
+                    _links.update { it.copy(outLinks = outLinks) }
                 }
                 // 记录最近查看（打开即算；重复打开幂等置顶）：读取抛错时不记录
                 vault?.let { v ->
@@ -247,6 +273,73 @@ class ReaderViewModel @Inject constructor(
         file.absolutePath.removePrefix(root.absolutePath).trimStart('/', '\\')
 
     /**
+     * 当前笔记的出链（按首次出现顺序合并计数）：读原文提取，解析复用
+     * [preparePreviewBody] 已建好的索引上下文，因此与正文点击结果一致且不产生额外扫描。
+     * 嵌入（`![[...]]`）按解析结果过滤：图片嵌入不计，笔记嵌入计为链接。
+     */
+    private fun buildOutLinks(body: String, vault: String?): List<LinkOutItem> {
+        if (vault.isNullOrBlank() || !body.contains("[[")) return emptyList()
+        val root = wikiRoot ?: File(vault).normalize()
+        val names = wikiIndex
+        val aliases = wikiAliases
+        val noteDir = File(absolutePath).parentFile
+        val merged = LinkedHashMap<String, LinkOutItem>()
+        for (ref in WikiLinkExtractor.extract(body)) {
+            if (WikiLinkExtractor.isSelfAnchor(ref)) continue
+            val file = when (val resolution = VaultLinkIndex.resolveLink(ref, root, noteDir, names, aliases)) {
+                is LinkResolution.Resolved -> resolution.file
+                LinkResolution.Unresolved -> null
+                LinkResolution.Ignored -> continue
+            }
+            val display = ref.alias ?: ref.anchor?.let { "${ref.target} > $it" } ?: ref.target
+            val key = file?.absolutePath ?: "?${ref.target}"
+            val existing = merged[key]
+            merged[key] = if (existing == null) {
+                LinkOutItem(
+                    display = display,
+                    targetPath = file?.absolutePath,
+                    relativePath = file?.let { vaultRelativeOf(root, it) },
+                    anchor = ref.anchor,
+                    count = 1
+                )
+            } else {
+                existing.copy(count = existing.count + 1)
+            }
+        }
+        return merged.values.toList()
+    }
+
+    /**
+     * 加载双链面板数据（打开面板时调用）：反向链接经 [VaultLinkIndex] 增量构建后
+     * 直接取倒排表（O(1)）；用户不打开面板则永不扫描全库。
+     */
+    fun loadLinks() {
+        viewModelScope.launch {
+            val vault = _state.value.vaultPath
+                ?: runCatching { settingsRepository.settings.first().vaultPath }.getOrNull()
+            if (vault.isNullOrBlank()) {
+                _links.update { it.copy(loading = false, progress = null) }
+                return@launch
+            }
+            // 已有数据时不闪加载态，仅静默刷新
+            _links.update { it.copy(loading = it.backLinks.isEmpty(), progress = null) }
+            val path = absolutePath
+            val backs = withContext(Dispatchers.IO) {
+                runCatching {
+                    linkIndex.buildOrRefresh(vault) { done, total ->
+                        // 进度节流：每 15 篇或最后一篇时发布，避免千级 StateFlow 写入
+                        if (done == total || done and 15 == 0) {
+                            _links.update { state -> state.copy(progress = done to total) }
+                        }
+                    }
+                    linkIndex.backlinksOf(path).filter { it.sourcePath != path }
+                }.getOrDefault(emptyList())
+            }
+            _links.update { it.copy(backLinks = backs, loading = false, progress = null) }
+        }
+    }
+
+    /**
      * Wikilink 点击解析：目标原文（可含 `#锚点`）→ 跳转目标（路径 + 标题锚点）；
      * 本文锚点（`#标题`）回到当前笔记；未命中返回 null（UI 层提示并提供新建入口）。
      */
@@ -280,6 +373,8 @@ class ReaderViewModel @Inject constructor(
         val ok = file.isFile || vaultRepository.createFile(file.absolutePath, "")
         if (!ok) return@withContext null
         vaultNameIndex.invalidate()
+        // 新建笔记会让其他笔记里指向该名字的链接由未解析转为命中，索引整体作废
+        linkIndex.invalidate()
         file.absolutePath
     }
 
@@ -471,6 +566,7 @@ class ReaderViewModel @Inject constructor(
                 }.getOrDefault(false)
             }
             if (ok) {
+                linkIndex.markChanged(absolutePath)
                 runCatching { syncScheduler.scheduleSaveSync() }
                 load(showLoading = false)
             } else {
@@ -510,6 +606,7 @@ class ReaderViewModel @Inject constructor(
                     _state.update { it.copy(attributes = newEntries) }
                     vaultNameIndex.invalidate()
                     vaultPropertyIndex.invalidate()
+                    linkIndex.markChanged(absolutePath)
                     _propertyHistory.value = null
                     loadPropertyHistory()
                     runCatching { syncScheduler.scheduleSaveSync() }

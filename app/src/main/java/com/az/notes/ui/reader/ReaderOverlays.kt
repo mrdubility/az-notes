@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -31,7 +32,9 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
@@ -41,6 +44,8 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -73,6 +78,8 @@ import coil3.request.crossfade
 import com.az.notes.R
 import com.az.notes.data.media.GallerySaver
 import com.az.notes.data.media.RemoteImageDownloader
+import com.az.notes.data.storage.BacklinkItem
+import com.az.notes.data.storage.LinkOutItem
 import com.az.notes.di.CoilHolderEntryPoint
 import com.az.notes.domain.markdown.Heading
 import com.az.notes.ui.common.formatDateTimeSeconds
@@ -84,20 +91,31 @@ import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 
 /**
- * 预览页浮层与对话框：大纲面板 / 全屏图片预览 / 文档信息。
+ * 预览页浮层与对话框：笔记面板（大纲 / 反向链接 / 出链） / 全屏图片预览 / 文档信息。
  * 自 ReaderScreen 拆分独立文件（纯 UI，逻辑不变）。
  */
 
+/** 面板页签下标（与 TabRow 顺序一致）。 */
+internal const val NOTE_PANEL_OUTLINE = 0
+internal const val NOTE_PANEL_BACKLINKS = 1
+internal const val NOTE_PANEL_OUTLINKS = 2
+
 /**
- * 大纲浮层（全屏 Dialog）：正文右侧滑出面板 + 半透明遮罩；
- * 点击遮罩 / 系统返回收起；点击标题回传由调用方滚动到对应块。
+ * 笔记面板浮层（全屏 Dialog）：正文右侧滑出面板 + 半透明遮罩；
+ * 点击遮罩 / 系统返回收起。三个页签共用同一面板：
+ * 大纲回传标题由调用方滚动到对应块；反向链接与出链的条目经 [onOpenLink]
+ * 回传跳转目标（未解析的出链置灰不可点——面板在 Dialog 里拿不到正文的 Snackbar）。
  */
 @Composable
-internal fun OutlineDialog(
+internal fun NotePanelDialog(
     headings: List<Heading>,
     listState: LazyListState,
     blockOffset: Int,
-    onSelect: (Heading) -> Unit,
+    selectedTab: Int,
+    onTabSelected: (Int) -> Unit,
+    links: ReaderLinksUiState,
+    onSelectHeading: (Heading) -> Unit,
+    onOpenLink: (String, String?) -> Unit,
     onDismiss: () -> Unit
 ) {
     Dialog(
@@ -117,6 +135,10 @@ internal fun OutlineDialog(
         // 打开后触发一次性进入动画（面板自右滑入、遮罩淡入）
         var entered by remember { mutableStateOf(false) }
         LaunchedEffect(Unit) { entered = true }
+        // 三个页签各自保留滚动位置
+        val outlineState = rememberLazyListState()
+        val backlinkState = rememberLazyListState()
+        val outlinkState = rememberLazyListState()
         Box(Modifier.fillMaxSize()) {
             AnimatedVisibility(
                 visible = entered,
@@ -142,7 +164,7 @@ internal fun OutlineDialog(
                 Surface(
                     modifier = Modifier
                         .fillMaxHeight()
-                        .fillMaxWidth(0.78f)
+                        .fillMaxWidth(0.86f)
                         .statusBarsPadding()
                         .navigationBarsPadding(),
                     shape = RoundedCornerShape(topStart = 16.dp, bottomStart = 16.dp),
@@ -150,31 +172,233 @@ internal fun OutlineDialog(
                     shadowElevation = 8.dp
                 ) {
                     Column(Modifier.fillMaxHeight()) {
-                        Text(
-                            stringResource(R.string.action_outline),
-                            style = MaterialTheme.typography.titleLarge,
-                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp)
-                        )
-                        if (headings.isEmpty()) {
-                            Text(
-                                stringResource(R.string.reader_outline_empty),
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(horizontal = 20.dp)
+                        TabRow(selectedTabIndex = selectedTab) {
+                            Tab(
+                                selected = selectedTab == NOTE_PANEL_OUTLINE,
+                                onClick = { onTabSelected(NOTE_PANEL_OUTLINE) },
+                                text = { Text(stringResource(R.string.action_outline)) }
                             )
-                        } else {
-                            LazyColumn(Modifier.weight(1f)) {
-                                itemsIndexed(headings) { index, h ->
-                                    OutlineItem(
-                                        h = h,
-                                        active = index == activeIndex,
-                                        onClick = { onSelect(h) }
+                            Tab(
+                                selected = selectedTab == NOTE_PANEL_BACKLINKS,
+                                onClick = { onTabSelected(NOTE_PANEL_BACKLINKS) },
+                                text = {
+                                    Text(
+                                        tabLabel(
+                                            R.string.reader_panel_backlinks,
+                                            links.backLinks.size
+                                        )
                                     )
                                 }
-                            }
+                            )
+                            Tab(
+                                selected = selectedTab == NOTE_PANEL_OUTLINKS,
+                                onClick = { onTabSelected(NOTE_PANEL_OUTLINKS) },
+                                text = {
+                                    Text(
+                                        tabLabel(
+                                            R.string.reader_panel_outlinks,
+                                            links.outLinks.size
+                                        )
+                                    )
+                                }
+                            )
+                        }
+                        when (selectedTab) {
+                            NOTE_PANEL_BACKLINKS -> BacklinksTab(links, backlinkState, onOpenLink)
+                            NOTE_PANEL_OUTLINKS -> OutLinksTab(links, outlinkState, onOpenLink)
+                            else -> OutlineTab(headings, activeIndex, outlineState, onSelectHeading)
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+/** 页签标题：有计数时追加数字（大纲不追加）。 */
+@Composable
+private fun tabLabel(textRes: Int, count: Int): String {
+    val label = stringResource(textRes)
+    return if (count > 0) "$label $count" else label
+}
+
+/** 大纲页签：按级别缩进 + 当前章节高亮（真实块锚点匹配）。 */
+@Composable
+private fun OutlineTab(
+    headings: List<Heading>,
+    activeIndex: Int,
+    listState: LazyListState,
+    onSelect: (Heading) -> Unit
+) {
+    if (headings.isEmpty()) {
+        EmptyHint(R.string.reader_outline_empty)
+        return
+    }
+    LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
+        itemsIndexed(headings) { index, h ->
+            OutlineItem(h = h, active = index == activeIndex, onClick = { onSelect(h) })
+        }
+    }
+}
+
+/** 反向链接页签：来源笔记名 + 相对目录 + 命中行上下文。 */
+@Composable
+private fun BacklinksTab(
+    links: ReaderLinksUiState,
+    listState: LazyListState,
+    onOpenLink: (String, String?) -> Unit
+) {
+    when {
+        links.loading -> LinksLoadingHint(links.progress)
+        links.backLinks.isEmpty() -> EmptyHint(R.string.reader_backlinks_empty)
+        else -> LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
+            items(links.backLinks) { item ->
+                BacklinkRow(item) { onOpenLink(item.sourcePath, null) }
+            }
+        }
+    }
+}
+
+/** 出链页签：已解析可点（带锚点），未解析置灰不可点。 */
+@Composable
+private fun OutLinksTab(
+    links: ReaderLinksUiState,
+    listState: LazyListState,
+    onOpenLink: (String, String?) -> Unit
+) {
+    if (links.outLinks.isEmpty()) {
+        EmptyHint(R.string.reader_outlinks_empty)
+        return
+    }
+    LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
+        items(links.outLinks) { item ->
+            val target = item.targetPath
+            val onClick: (() -> Unit)? = if (target != null) {
+                { onOpenLink(target, item.anchor) }
+            } else {
+                null
+            }
+            OutLinkRow(item = item, onClick = onClick)
+        }
+    }
+}
+
+/** 单条反向引用：文件名 + 相对目录 + 上下文片段。 */
+@Composable
+private fun BacklinkRow(item: BacklinkItem, onClick: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 20.dp, vertical = 10.dp)
+    ) {
+        Text(
+            text = item.sourcePath.substringAfterLast('/'),
+            style = MaterialTheme.typography.bodyLarge,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        val dir = item.relativePath.substringBeforeLast('/', "")
+        if (dir.isNotEmpty()) {
+            Text(
+                text = dir,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        Text(
+            text = item.snippet,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(top = 4.dp)
+        )
+    }
+}
+
+/** 单条出链：显示名 + 次数 + 目标相对路径；未解析附「未创建」标记。 */
+@Composable
+private fun OutLinkRow(item: LinkOutItem, onClick: (() -> Unit)?) {
+    val resolved = item.targetPath != null
+    val base = Modifier.fillMaxWidth()
+    Column(
+        modifier = (if (onClick != null) base.clickable(onClick = onClick) else base)
+            .padding(horizontal = 20.dp, vertical = 10.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = item.display,
+                style = MaterialTheme.typography.bodyLarge,
+                color = if (resolved) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
+            )
+            if (item.count > 1) {
+                Text(
+                    text = "×${item.count}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            if (!resolved) {
+                Text(
+                    text = stringResource(R.string.reader_link_unresolved),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.outline,
+                    modifier = Modifier.padding(start = 8.dp)
+                )
+            }
+        }
+        val sub = item.relativePath?.let { path ->
+            item.anchor?.let { "$path#$it" } ?: path
+        } ?: item.anchor
+        if (sub != null) {
+            Text(
+                text = sub,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
+/** 页签空态提示。 */
+@Composable
+private fun EmptyHint(textRes: Int) {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopStart) {
+        Text(
+            text = stringResource(textRes),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp)
+        )
+    }
+}
+
+/** 反向链接索引构建中的提示（带进度）。 */
+@Composable
+private fun LinksLoadingHint(progress: Pair<Int, Int>?) {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            CircularProgressIndicator()
+            if (progress != null && progress.second > 0) {
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    text = stringResource(
+                        R.string.reader_links_scanning,
+                        progress.first,
+                        progress.second
+                    ),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
     }

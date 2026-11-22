@@ -32,11 +32,12 @@ object WikiLinkTransformer {
     /** 尺寸参数（`100` / `100x245`）。 */
     private val SIZE_SPEC = Regex("""(\d{1,4})(?:x(\d{1,4}))?""")
 
-    /** `[[目标#锚点|别名]]` / `![[目标|参数]]`：分组依次为 嵌入标记 / 目标 / 锚点 / 别名。 */
-    private val WIKI = Regex("""(!?)\[\[([^\[\]|\n#]*)(?:#([^\[\]|\n]*))?(?:\|([^\[\]\n]*))?]]""")
+    /** `[[目标#锚点|别名]]` / `![[目标|参数]]`：分组依次为 嵌入标记 / 目标 / 锚点 / 别名。
+     *  internal：与 [WikiLinkExtractor] 共用同一份语法正则，避免转换与提取漂移。 */
+    internal val WIKI = Regex("""(!?)\[\[([^\[\]|\n#]*)(?:#([^\[\]|\n]*))?(?:\|([^\[\]\n]*))?]]""")
 
     /** 行内代码片段（反引号成对包裹，支持多反引号）。 */
-    private val INLINE_CODE = Regex("`+[^`\n]*`+")
+    internal val INLINE_CODE = Regex("`+[^`\n]*`+")
 
     /**
      * 主入口：逐行转换 wikilink（围栏代码块内原样保留，标题行同样转换）。
@@ -147,7 +148,8 @@ object WikiLinkTransformer {
     private fun encode(raw: String): String =
         ImageReference.encodeTarget(raw, escapePercent = true)
 
-    private fun isFenceToggle(line: String): Boolean {
+    /** 围栏代码块开合行（``` / ~~~）。internal：与 [WikiLinkExtractor] 共用判定。 */
+    internal fun isFenceToggle(line: String): Boolean {
         val t = line.trimStart()
         return t.startsWith("```") || t.startsWith("~~~")
     }

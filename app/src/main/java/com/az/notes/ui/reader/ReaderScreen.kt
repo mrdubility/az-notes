@@ -92,8 +92,11 @@ fun ReaderScreen(
     fresh: Boolean = false
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val links by viewModel.links.collectAsStateWithLifecycle()
     val listState = rememberLazyListState()
-    var showOutline by rememberSaveable { mutableStateOf(false) }
+    var showPanel by rememberSaveable { mutableStateOf(false) }
+    // 面板页签（0 大纲 / 1 反向链接 / 2 出链）：本次会话内保持
+    var panelTab by rememberSaveable { mutableStateOf(NOTE_PANEL_OUTLINE) }
     var previewImage by remember { mutableStateOf<File?>(null) }
     // 远程图全屏预览：存规范化 URL（点击回调传入），dialog 内构建同参请求命中内存缓存
     var previewRemote by remember { mutableStateOf<String?>(null) }
@@ -252,7 +255,10 @@ fun ReaderScreen(
                     }
                 },
                 actions = {
-                    IconButton(onClick = { showOutline = true }) {
+                    IconButton(onClick = {
+                        showPanel = true
+                        viewModel.loadLinks()
+                    }) {
                         Icon(Icons.Outlined.List, stringResource(R.string.action_outline))
                     }
                     // 文档信息：文件属性与正文统计
@@ -413,18 +419,30 @@ fun ReaderScreen(
         )
     }
 
-    // 大纲浮层：从右侧滑出（全屏 Dialog 承载：右侧面板 + 半透明遮罩）
-    if (showOutline) {
-        OutlineDialog(
+    // 笔记面板浮层（大纲 / 反向链接 / 出链）：从右侧滑出
+    if (showPanel) {
+        NotePanelDialog(
             headings = state.headings,
             listState = listState,
             blockOffset = blockOffset,
-            onSelect = { h ->
-                showOutline = false
+            selectedTab = panelTab,
+            onTabSelected = { panelTab = it },
+            links = links,
+            onSelectHeading = { h ->
+                showPanel = false
                 // 块偏移：文件名（与属性面板）占位
                 scope.launch { listState.animateScrollToItem(h.blockIndex + blockOffset) }
             },
-            onDismiss = { showOutline = false }
+            onOpenLink = { path, anchor ->
+                showPanel = false
+                // 指向本文：就地滚到锚点，不重复入栈（与正文内点击同一分派）
+                if (path == state.path) {
+                    anchor?.let(viewModel::requestAnchorScroll)
+                } else {
+                    onOpenNote(path, anchor)
+                }
+            },
+            onDismiss = { showPanel = false }
         )
     }
 
