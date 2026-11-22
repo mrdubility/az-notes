@@ -469,9 +469,8 @@ class NotesViewModel @Inject constructor(
                 )
             }
             if (ok) {
-                // 删除后清理置顶记录（已不存在于任何列表）
-                removePinnedTrees(listOf(node.absolutePath))
-                // 保序重载：删除后其余条目保持原位
+                // 保序重载：删除后其余条目保持原位（置顶记录不在此清理：撤销恢复后自动重新置顶，
+                // 残留的已删除路径不会渲染，与收藏同一口径）
                 reloadItems(pullRefresh = false, preserveOrder = true)
                 scheduleSaveSync()
             }
@@ -920,9 +919,7 @@ class NotesViewModel @Inject constructor(
                 )
             }
             exitSelectMode()
-            // 批量删除后清理置顶记录
-            removePinnedTrees(paths)
-            // 保序重载：删除后其余条目保持原位
+            // 保序重载：删除后其余条目保持原位（置顶记录保留，撤销恢复后仍置顶）
             reloadItems(pullRefresh = false, preserveOrder = true)
             if (done > 0) scheduleSaveSync()
         }
@@ -1099,7 +1096,8 @@ class NotesViewModel @Inject constructor(
         if (remaining != favorites) runCatching { settingsRepository.setFavorites(remaining) }
     }
 
-    /** 从当前仓库置顶集移除若干路径及其子孙（跨仓库移动 / 删除后清理；未涉及置顶时不写盘）。 */
+    /** 从当前仓库置顶集移除若干路径及其子孙（跨仓库移动后清理；未涉及置顶时不写盘）。
+     *  删除不清理：残留路径不会渲染，且保留撤销删除后的置顶状态。 */
     private suspend fun removePinnedTrees(absPaths: List<String>) {
         val vault = currentSettings.vaultPath ?: return
         val rels = absPaths.mapNotNull { vaultRelative(vault, it) }.toSet()
