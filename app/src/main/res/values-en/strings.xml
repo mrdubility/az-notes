@@ -601,6 +601,7 @@
     <string name="msg_attr_save_failed">Failed to save properties, please retry</string>
     <string name="msg_attr_advanced_yaml">This property uses nested or advanced YAML. Edit it in the editor.</string>
     <string name="msg_links_updated">Updated %2$d link(s) in %1$d note(s)</string>
+    <string name="reader_mentions_header">Unlinked mentions (%1$d)</string>
     <string name="msg_links_skipped">%1$d link(s) not updated (file changed, please check)</string>
     <string name="editor_external_title">File updated elsewhere</string>
     <string name="editor_external_message">This note was modified elsewhere (sync or link rewrite). Saving now overwrites those changes. What do you want to do?</string>

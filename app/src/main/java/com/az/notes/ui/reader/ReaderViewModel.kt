@@ -94,6 +94,8 @@ data class ReaderUiState(
 data class ReaderLinksUiState(
     val outLinks: List<LinkOutItem> = emptyList(),
     val backLinks: List<BacklinkItem> = emptyList(),
+    /** 未链接提及：正文提到本笔记名 / 别名但未加双链的行 */
+    val mentions: List<BacklinkItem> = emptyList(),
     val loading: Boolean = false,
     /** 链接索引构建进度（当前 / 总数）；null = 未在扫描 */
     val progress: Pair<Int, Int>? = null
@@ -225,6 +227,11 @@ class ReaderViewModel @Inject constructor(
                     }
                     _links.update { it.copy(outLinks = outLinks) }
                 }
+                // 索引预热：打开笔记即在后台静默构建一次链接索引（TTL 内复用），
+                // 等用户真正打开反向链接面板时多半已就绪；不阻塞加载、不回调进度。
+                if (!vault.isNullOrBlank()) {
+                    launch { runCatching { linkIndex.buildOrRefresh(vault) } }
+                }
                 // 记录最近查看（打开即算；重复打开幂等置顶）：读取抛错时不记录
                 vault?.let { v ->
                     vaultRelative(v, absolutePath)?.let { rel ->
@@ -338,7 +345,13 @@ class ReaderViewModel @Inject constructor(
                     linkIndex.backlinksOf(path).filter { it.sourcePath != path }
                 }.getOrDefault(emptyList())
             }
-            _links.update { it.copy(backLinks = backs, loading = false, progress = null) }
+            // 未链接提及：与反链同一轮索引构建后按需扫描（结果内部按版本缓存）
+            val mentions = withContext(Dispatchers.IO) {
+                runCatching { linkIndex.unlinkedMentionsOf(vault, path) }.getOrDefault(emptyList())
+            }
+            _links.update {
+                it.copy(backLinks = backs, mentions = mentions, loading = false, progress = null)
+            }
         }
     }
 

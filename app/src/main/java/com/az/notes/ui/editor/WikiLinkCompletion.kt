@@ -138,29 +138,63 @@ fun buildWikiLinkCandidates(
 }
 
 /**
- * 过滤 + 排序：[query] 为空返回前 [limit] 条；否则大小写不敏感包含匹配
- * （名称 / 插入串），前缀命中优先、字典序次之。
+ * 候选过滤与排序：前缀命中 → 子串命中 → 子序列模糊命中；同档内最近使用的笔记优先，
+ * 其余按名称字典序（保证结果稳定不抖动）。
+ *
+ * @param recentNames 最近查看 / 编辑的笔记名（小写、无扩展名，见 [EditorUiState.recentNoteNames]）
  */
 fun filterWikiLinkCandidates(
     all: List<WikiLinkCandidate>,
     query: String,
-    limit: Int
+    limit: Int,
+    recentNames: Set<String> = emptySet()
 ): List<WikiLinkCandidate> {
     val q = query.trim().lowercase()
-    if (q.isEmpty()) return all.take(limit)
+    if (q.isEmpty()) {
+        return all.sortedWith(
+            compareBy({ !isRecent(it, recentNames) }, { it.label.lowercase() })
+        ).take(limit)
+    }
     return all.asSequence()
-        .filter { it.label.lowercase().contains(q) || it.insertText.lowercase().contains(q) }
+        .mapNotNull { candidate -> matchRank(candidate, q)?.let { rank -> candidate to rank } }
         .sortedWith(
             compareBy(
-                {
-                    !it.label.lowercase().startsWith(q) &&
-                        !it.insertText.lowercase().startsWith(q)
-                },
-                { it.label.lowercase() }
+                { (_, rank) -> rank },
+                { (candidate, _) -> !isRecent(candidate, recentNames) },
+                { (candidate, _) -> candidate.label.lowercase() }
             )
         )
         .take(limit)
+        .map { it.first }
         .toList()
+}
+
+private fun isRecent(candidate: WikiLinkCandidate, recentNames: Set<String>): Boolean =
+    recentNames.isNotEmpty() && candidate.label.lowercase() in recentNames
+
+/** 0 = 前缀，1 = 子串，2 = 子序列；null = 不命中。 */
+private fun matchRank(candidate: WikiLinkCandidate, q: String): Int? {
+    val label = candidate.label.lowercase()
+    val insert = candidate.insertText.lowercase()
+    return when {
+        label.startsWith(q) || insert.startsWith(q) -> 0
+        label.contains(q) || insert.contains(q) -> 1
+        isSubsequence(q, label) || isSubsequence(q, insert) -> 2
+        else -> null
+    }
+}
+
+/** 子序列匹配（字符按顺序出现即可，不要求连续）。 */
+private fun isSubsequence(needle: String, haystack: String): Boolean {
+    if (needle.isEmpty()) return true
+    var matched = 0
+    for (c in haystack) {
+        if (c == needle[matched]) {
+            matched++
+            if (matched == needle.length) return true
+        }
+    }
+    return false
 }
 
 /**
@@ -173,7 +207,9 @@ internal fun WikiLinkPickerDialog(
     initialQuery: String,
     candidates: List<WikiLinkCandidate>?,
     onPick: (WikiLinkCandidate) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    /** 最近查看 / 编辑的笔记名（小写、无扩展名）：同档命中时优先展示 */
+    recentNames: Set<String> = emptySet()
 ) {
     var search by remember { mutableStateOf(initialQuery) }
     val searchFocus = remember { FocusRequester() }
@@ -182,8 +218,8 @@ internal fun WikiLinkPickerDialog(
         withFrameNanos { }
         searchFocus.requestFocus()
     }
-    val filtered = remember(search, candidates) {
-        candidates?.let { filterWikiLinkCandidates(it, search, WIKI_PICKER_LIMIT) }
+    val filtered = remember(search, candidates, recentNames) {
+        candidates?.let { filterWikiLinkCandidates(it, search, WIKI_PICKER_LIMIT, recentNames) }
     }
     Dialog(
         onDismissRequest = onDismiss,

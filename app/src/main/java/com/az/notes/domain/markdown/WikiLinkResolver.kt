@@ -4,8 +4,13 @@ import com.az.notes.data.storage.VaultRepository
 import java.io.File
 import java.text.Normalizer
 
-/** 别名索引条目：别名原文 + 声明该别名的笔记相对路径。 */
-data class NoteAlias(val name: String, val relativePath: String)
+/** 别名索引条目：别名原文 + 声明该别名的笔记相对路径 + 在 aliases 列表中的声明位置。 */
+data class NoteAlias(
+    val name: String,
+    val relativePath: String,
+    /** aliases 列表内的下标（0 基）：同名别名消歧的第三级依据，避免改名后解析结果无提示翻转 */
+    val declarationIndex: Int = 0
+)
 
 /** Wikilink 解析命中的跳转目标：仓库内绝对路径 + 可选标题锚点（`[[X#标题]]` 的标题段）。 */
 data class WikiLinkTarget(val path: String, val anchor: String?)
@@ -98,7 +103,10 @@ object WikiLinkResolver {
             .sortedWith(compareBy({ it.absolutePath.count { c -> c == '/' } }, { it.absolutePath }))
     }
 
-    /** 别名全库匹配：消歧同规则（额外先按同目录优先）。 */
+    /**
+     * 别名全库匹配：消歧规则为 同目录优先 → 层级少者先 → 声明位置靠前 → 路径字典序。
+     * 加入「声明位置」是为了同名别名冲突时解析结果稳定可预期（改名不会让它默默翻转）。
+     */
     private fun aliasHits(
         name: String,
         root: File,
@@ -107,15 +115,17 @@ object WikiLinkResolver {
     ): List<File> {
         if (aliasIndex.isEmpty()) return emptyList()
         return aliasIndex[foldName(name)].orEmpty()
-            .map { File(root, it.relativePath).normalize() }
-            .filter { it.within(root) != null && it.isFile }
+            .map { alias -> File(root, alias.relativePath).normalize() to alias.declarationIndex }
+            .filter { (file, _) -> file.within(root) != null && file.isFile }
             .sortedWith(
                 compareBy(
-                    { if (noteDir != null && it.parentFile?.absolutePath == noteDir.absolutePath) 0 else 1 },
-                    { it.absolutePath.count { c -> c == '/' } },
-                    { it.absolutePath }
+                    { (file, _) -> if (noteDir != null && file.parentFile?.absolutePath == noteDir.absolutePath) 0 else 1 },
+                    { (file, _) -> file.absolutePath.count { c -> c == '/' } },
+                    { (_, declaration) -> declaration },
+                    { (file, _) -> file.absolutePath }
                 )
             )
+            .map { it.first }
     }
 
     /** 越界护栏：路径不在仓库内时返回 null（与 [ImageReference] 同一判定）。 */

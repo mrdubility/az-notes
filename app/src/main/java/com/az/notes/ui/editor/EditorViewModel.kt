@@ -58,7 +58,9 @@ data class EditorUiState(
     /** 移动对话框的目标文件夹列表（null = 尚未加载） */
     val moveTargets: List<FileNode>? = null,
     /** 文件已在别处被修改（保存前发现磁盘 mtime 变过）：UI 弹二选一确认 */
-    val externalChange: Boolean = false
+    val externalChange: Boolean = false,
+    /** 最近查看 / 编辑的笔记名（小写、无扩展名）：`[[` 补全同档命中时优先展示 */
+    val recentNoteNames: Set<String> = emptySet()
 )
 
 /**
@@ -119,7 +121,12 @@ class EditorViewModel @Inject constructor(
                     it.copy(
                         toolbarTools = EditorTool.resolve(s.editorToolOrder, s.editorToolDisabled),
                         vaultPath = s.vaultPath,
-                        imageCompressEnabled = s.imageCompressEnabled
+                        imageCompressEnabled = s.imageCompressEnabled,
+                        recentNoteNames = s.recentPaths.mapTo(HashSet()) { rel ->
+                            val name = rel.substringAfterLast('/')
+                            (if (name.endsWith(".md", ignoreCase = true)) name.dropLast(3) else name)
+                                .lowercase()
+                        }
                     )
                 }
             }

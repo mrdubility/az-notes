@@ -82,4 +82,24 @@ class WikiLinkCompletionTest {
         )
         assertEquals(20, filterWikiLinkCandidates(all, "n", 20).size)
     }
+
+    @Test
+    fun `filter falls back to subsequence match`() {
+        val all = buildWikiLinkCandidates(mapOf("MyProject.md" to listOf("MyProject.md")), emptyMap())
+        // 不连续字母命中（m-y-p），移动端少打字的场景
+        assertEquals(listOf("MyProject"), filterWikiLinkCandidates(all, "myp", 20).map { it.label })
+    }
+
+    @Test
+    fun `recent names win within the same rank`() {
+        val all = buildWikiLinkCandidates(
+            mapOf("a1.md" to listOf("a1.md"), "a2.md" to listOf("a2.md")),
+            emptyMap()
+        )
+        assertEquals(listOf("a1", "a2"), filterWikiLinkCandidates(all, "a", 20).map { it.label })
+        assertEquals(
+            listOf("a2", "a1"),
+            filterWikiLinkCandidates(all, "a", 20, recentNames = setOf("a2")).map { it.label }
+        )
+    }
 }

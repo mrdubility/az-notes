@@ -146,6 +146,24 @@ class WikiLinkResolverTest {
     }
 
     @Test
+    fun `alias conflict prefers earlier declaration over path order`() {
+        val vault = temp.newFolder("vault")
+        val declaredFirst = File(vault, "z.md").apply { writeText("x") }
+        File(vault, "a.md").writeText("x")
+        // 路径字典序会选 a.md，但声明位置更靠前的 z.md 优先
+        val index = mapOf(
+            "dup" to listOf(
+                NoteAlias("dup", "z.md", 0),
+                NoteAlias("dup", "a.md", 3)
+            )
+        )
+        assertEquals(
+            declaredFirst.absolutePath,
+            WikiLinkResolver.resolve("dup", vault, vault, emptyMap(), index)?.absolutePath
+        )
+    }
+
+    @Test
     fun `foldName folds nfd spelling onto nfc`() {
         // macOS / iCloud 同步回来的文件名常为 NFD（字母 + 组合附加符号），键入的目标是 NFC。
         // 索引键与查询键必须走同一个 foldName，否则"明明同名却解析不到"。

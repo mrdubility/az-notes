@@ -241,7 +241,7 @@ private fun OutlineTab(
     }
 }
 
-/** 反向链接页签：来源笔记名 + 相对目录 + 命中行上下文。 */
+/** 反向链接页签：来源笔记名 + 相对目录 + 命中行上下文；末尾追加「未链接提及」分组。 */
 @Composable
 private fun BacklinksTab(
     links: ReaderLinksUiState,
@@ -250,10 +250,24 @@ private fun BacklinksTab(
 ) {
     when {
         links.loading -> LinksLoadingHint(links.progress)
-        links.backLinks.isEmpty() -> EmptyHint(R.string.reader_backlinks_empty)
+        links.backLinks.isEmpty() && links.mentions.isEmpty() ->
+            EmptyHint(R.string.reader_backlinks_empty)
         else -> LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
-            items(links.backLinks) { item ->
+            items(links.backLinks, key = { "bl-${it.sourcePath}:${it.line}" }) { item ->
                 BacklinkRow(item) { onOpenLink(item.sourcePath, null) }
+            }
+            if (links.mentions.isNotEmpty()) {
+                item(key = "mentions_header") {
+                    Text(
+                        text = stringResource(R.string.reader_mentions_header, links.mentions.size),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                    )
+                }
+                items(links.mentions, key = { "mn-${it.sourcePath}:${it.line}" }) { item ->
+                    BacklinkRow(item) { onOpenLink(item.sourcePath, null) }
+                }
             }
         }
     }

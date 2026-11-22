@@ -122,9 +122,9 @@ class VaultNameIndex @Inject constructor() {
                 .getOrDefault(emptyList())
             if (declared.isEmpty()) continue
             val relative = f.absolutePath.removePrefix(rootPath).trimStart('/', '\\')
-            declared.forEach { alias ->
+            declared.forEachIndexed { index, alias ->
                 out.getOrPut(WikiLinkResolver.foldName(alias)) { ArrayList() }
-                    .add(NoteAlias(alias, relative))
+                    .add(NoteAlias(alias, relative, index))
             }
         }
     }

@@ -532,7 +532,8 @@ fun EditorScreen(
             initialQuery = ctx.text,
             candidates = linkCandidates,
             onPick = pickWikiCandidate,
-            onDismiss = dismissWikiPicker
+            onDismiss = dismissWikiPicker,
+            recentNames = state.recentNoteNames
         )
     }
 

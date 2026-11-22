@@ -6,6 +6,7 @@ import com.az.notes.domain.markdown.NoteAlias
 import com.az.notes.domain.markdown.RawLinkRef
 import com.az.notes.domain.markdown.WikiLinkExtractor
 import com.az.notes.domain.markdown.WikiLinkResolver
+import com.az.notes.domain.markdown.WikiLinkTransformer
 import com.az.notes.domain.model.FileNode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
@@ -102,6 +103,52 @@ class VaultLinkIndex @Inject constructor(
      * 改名后的链接改写（[LinkRewritePlanner]）需要"改名前"的解析上下文，故只读暴露。
      */
     fun rawSnapshot(): Map<String, List<RawLinkRef>> = snapshot?.raw.orEmpty()
+
+    /** 未链接提及缓存：`vault|目标|名字索引版本 → 结果`（只保留最近一次）。 */
+    private var mentionsCache: Pair<String, List<BacklinkItem>>? = null
+
+    /**
+     * 未链接提及：全库正文里出现了目标笔记名字 / 别名，但该行没有任何双链的行。
+     *
+     * 面板打开时按需扫描（结果按 vault + 目标 + 名字索引版本缓存），只扫前 [limit] 条；
+     * 已链接的行通过引用行号直接排除，不再依赖文本比对（避免"既算反链又算提及"）。
+     */
+    suspend fun unlinkedMentionsOf(
+        vaultPath: String,
+        path: String,
+        limit: Int = MENTIONS_LIMIT
+    ): List<BacklinkItem> {
+        val root = File(vaultPath).normalize()
+        val target = keyOf(path)
+        buildOrRefresh(vaultPath)
+        val cacheKey = "${root.absolutePath}|$target|${vaultNameIndex.version}"
+        mentionsCache?.let { (key, items) -> if (key == cacheKey) return items }
+        val snap = snapshot ?: return emptyList()
+        val names = mentionNamesOf(root, target)
+        val out = ArrayList<BacklinkItem>()
+        if (names.isNotEmpty()) {
+            withContext(Dispatchers.IO) {
+                for (node in vaultRepository.listAllNotes(root.absolutePath)) {
+                    if (out.size >= limit) break
+                    if (keyOf(node.absolutePath) == target) continue
+                    val text = vaultRepository.contentFor(node, VaultRepository.INDEX_MAX_BYTES)
+                        ?: continue
+                    collectMentions(
+                        root = root,
+                        node = node,
+                        body = FrontmatterParser.split(text).body,
+                        refs = snap.raw[node.absolutePath].orEmpty(),
+                        names = names,
+                        out = out,
+                        limit = limit
+                    )
+                }
+            }
+        }
+        val result = out.toList()
+        mentionsCache = cacheKey to result
+        return result
+    }
 
     /**
      * 标记某篇笔记内容已变（写盘后调用）：下次刷新必定重读该文件，且绕过正文缓存。
@@ -277,9 +324,71 @@ class VaultLinkIndex @Inject constructor(
     private fun displayOf(ref: RawLinkRef): String =
         ref.alias ?: ref.anchor?.let { "${ref.target} > $it" } ?: ref.target
 
+    /** 目标笔记的可搜索名：去扩展名文件名 + 其声明的全部别名。 */
+    private fun mentionNamesOf(root: File, targetAbs: String): List<String> {
+        val names = LinkedHashSet<String>()
+        val fileName = File(targetAbs).name
+        names += if (fileName.endsWith(".md", ignoreCase = true)) fileName.dropLast(3) else fileName
+        runCatching {
+            vaultNameIndex.aliases(root).values.forEach { list ->
+                list.forEach { alias ->
+                    if (File(root, alias.relativePath).normalize().absolutePath == targetAbs) {
+                        names += alias.name
+                    }
+                }
+            }
+        }
+        return names.filter { it.isNotBlank() }
+    }
+
+    /** 逐行找未链接提及：跳过已有链接的行，并把行内双链区段遮蔽后再匹配。 */
+    private fun collectMentions(
+        root: File,
+        node: FileNode,
+        body: String,
+        refs: List<RawLinkRef>,
+        names: List<String>,
+        out: MutableList<BacklinkItem>,
+        limit: Int
+    ) {
+        val lowered = names.map { it.lowercase() }.filter { it.isNotEmpty() }
+        if (lowered.isEmpty()) return
+        val linkedLines = refs.mapTo(HashSet()) { it.line }
+        var line = 0
+        for (raw in body.split('\n')) {
+            if (out.size >= limit) return
+            if (line !in linkedLines && raw.isNotBlank()) {
+                val masked = maskWikiLinks(raw).lowercase()
+                if (lowered.any { masked.contains(it) }) {
+                    out += BacklinkItem(
+                        sourcePath = node.absolutePath,
+                        relativePath = relativePathOf(root, File(node.absolutePath)),
+                        line = line,
+                        display = WikiLinkExtractor.plainLine(raw),
+                        snippet = WikiLinkExtractor.plainLine(raw)
+                    )
+                }
+            }
+            line++
+        }
+    }
+
+    /** 把 `[[...]]` 替换为等长空白（保持字符偏移不变），避免把已链接内容重复算作提及。 */
+    private fun maskWikiLinks(line: String): String {
+        if (!line.contains("[[")) return line
+        val sb = StringBuilder(line)
+        for (m in WikiLinkTransformer.WIKI.findAll(line)) {
+            for (i in m.range) sb.setCharAt(i, ' ')
+        }
+        return sb.toString()
+    }
+
     companion object {
         /** 索引有效期：覆盖同一轮面板内的多次读取；写盘后经 [markChanged] 立即失效。 */
         private const val TTL_MS = 2_000L
+
+        /** 未链接提及单次最多返回条数（面板展示上限）。 */
+        private const val MENTIONS_LIMIT = 100
 
         /**
          * 解析单条引用（索引与「当前笔记出链」共用，避免两处口径漂移）。

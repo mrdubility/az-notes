@@ -601,6 +601,7 @@
     <string name="msg_attr_save_failed">属性保存失败，请重试</string>
     <string name="msg_attr_advanced_yaml">该属性含嵌套或高级 YAML 写法，请到编辑器修改</string>
     <string name="msg_links_updated">已更新 %1$d 篇笔记中的 %2$d 处链接</string>
+    <string name="reader_mentions_header">未链接提及 (%1$d)</string>
     <string name="msg_links_skipped">%1$d 处链接未更新（文件已变化，请手动检查）</string>
     <string name="editor_external_title">文件已更新</string>
     <string name="editor_external_message">该文件已在别处被修改（同步或链接改写），直接保存会覆盖对方的修改。要如何处理？</string>
