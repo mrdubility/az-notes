@@ -214,10 +214,15 @@ fun ReaderScreen(
     // 先滚动后消费：首帧列表尚未测量时 scrollToItem 需挂起等待，若先置空锚点会触发
     // 键变更取消本协程，滚动指令随之丢失（跨笔记跳转不滚动的根因）
     val pendingAnchor by viewModel.pendingAnchor.collectAsStateWithLifecycle()
-    LaunchedEffect(pendingAnchor, state.loading, state.headings) {
+    LaunchedEffect(pendingAnchor, state.loading, state.headings, state.blocks) {
         val anchor = pendingAnchor ?: return@LaunchedEffect
         if (state.loading) return@LaunchedEffect
-        val block = HeadingExtractor.findBlockByTitle(state.headings, anchor)
+        // `#^id` 走块引用表（块末尾的 ^id 标记）；其余按标题文本匹配
+        val block = if (anchor.startsWith("^")) {
+            state.blocks[anchor.removePrefix("^")]
+        } else {
+            HeadingExtractor.findBlockByTitle(state.headings, anchor)
+        }
         if (block != null) listState.scrollToItem(block + blockOffset)
         viewModel.consumeAnchor()
     }

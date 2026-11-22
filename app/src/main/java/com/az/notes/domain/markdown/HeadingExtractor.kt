@@ -18,10 +18,12 @@ import org.intellij.markdown.parser.MarkdownParser
  */
 object HeadingExtractor {
 
-    /** 解析结果：标题列表 + 顶层块总数（阅读进度百分比用）。 */
+    /** 解析结果：标题列表 + 顶层块总数（阅读进度百分比用）+ 块引用表。 */
     data class Result(
         val headings: List<Heading>,
-        val blockCount: Int
+        val blockCount: Int,
+        /** `^id` 块标记 → 顶层块下标（供 `[[笔记#^id]]` 跳转，见 [parse]） */
+        val blocks: Map<String, Int> = emptyMap()
     )
 
     /** 解析：标题（含 ATX 与 Setext 两种写法）+ 顶层块数量。 */
@@ -46,8 +48,37 @@ object HeadingExtractor {
                 blockIndex = index
             )
         }
-        return Result(headings = headings, blockCount = blocks.size)
+        return Result(headings = headings, blockCount = blocks.size, blocks = parseBlockIds(markdown, blocks))
     }
+
+    /**
+     * 块引用 `^id`：块末尾的标记 → 顶层块下标。
+     *
+     * 判定口径：块文本末尾（允许尾部空白）出现 `^id`，`^` 前须为空白或块首；
+     * 代码块内不识别（与双链 / 标签的保护原则一致）。同一 id 重复时取首个。
+     */
+    private fun parseBlockIds(
+        markdown: String,
+        blocks: List<ASTNode>
+    ): Map<String, Int> {
+        if (markdown.indexOf('^') < 0) return emptyMap()
+        val out = HashMap<String, Int>()
+        blocks.forEachIndexed { index, node ->
+            if (node.type == MarkdownElementTypes.CODE_FENCE ||
+                node.type == MarkdownElementTypes.CODE_BLOCK
+            ) {
+                return@forEachIndexed
+            }
+            val end = node.endOffset.coerceAtMost(markdown.length)
+            val start = node.startOffset.coerceAtMost(end)
+            val id = BLOCK_ID.find(markdown.substring(start, end).trimEnd())?.groupValues?.get(1)
+            if (!id.isNullOrEmpty() && id !in out) out[id] = index
+        }
+        return out
+    }
+
+    /** 块末尾的 `^id`（`^` 前为块首或空白，`id` 限字母数字与 `-` `_`）。 */
+    private val BLOCK_ID = Regex("""(?:^|\s)\^([A-Za-z0-9_-]{1,64})\s*$""")
 
     /** 兼容旧入口：仅取标题列表。 */
     fun extract(markdown: String): List<Heading> = parse(markdown).headings

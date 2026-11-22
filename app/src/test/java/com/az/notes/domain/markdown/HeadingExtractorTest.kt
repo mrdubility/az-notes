@@ -32,6 +32,22 @@ class HeadingExtractorTest {
     }
 
     @Test
+    fun `block ids map to top level block index`() {
+        val md = "段落一 ^a1\n\n段落二\n\n段落三 ^b2\n\n```\ncode ^c3\n```\n"
+        val result = HeadingExtractor.parse(md)
+        assertEquals(0, result.blocks["a1"])
+        assertEquals(2, result.blocks["b2"])
+        // 代码块内的 ^id 不识别
+        assertNull(result.blocks["c3"])
+    }
+
+    @Test
+    fun `block id at block start and trailing spaces are accepted`() {
+        val md = "首段\n\n^solo   \n"
+        assertEquals(1, HeadingExtractor.parse(md).blocks["solo"])
+    }
+
+    @Test
     fun `ignores headings inside code fence`() {
         val md = """
             # Real

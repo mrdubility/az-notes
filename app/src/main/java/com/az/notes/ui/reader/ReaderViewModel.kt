@@ -71,6 +71,8 @@ data class ReaderUiState(
     val loading: Boolean = true,
     val content: String = "",
     val headings: List<Heading> = emptyList(),
+    /** 块引用 `^id` → 顶层块下标（`[[笔记#^id]]` 跳转用） */
+    val blocks: Map<String, Int> = emptyMap(),
     /** 当前笔记所属 Vault 根（图片相对路径解析用）。 */
     val vaultPath: String? = null,
     /** 网络图片体积上限（字节）；0 = 不加载网络图片（预览页护栏用）。 */
@@ -217,6 +219,7 @@ class ReaderViewModel @Inject constructor(
                             loading = false,
                             content = previewBody,
                             headings = parsed.headings,
+                            blocks = parsed.blocks,
                             vaultPath = vault,
                             remoteImageMaxBytes = remoteMaxBytes,
                             noteType = noteType,
