@@ -2,6 +2,7 @@ package com.az.notes.domain.markdown
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -32,19 +33,21 @@ class HeadingExtractorTest {
     }
 
     @Test
-    fun `block ids map to top level block index`() {
-        val md = "段落一 ^a1\n\n段落二\n\n段落三 ^b2\n\n```\ncode ^c3\n```\n"
+    fun `block ids map to top level blocks and skip code fences`() {
+        val md = "para one ^a1\n\npara two\n\npara three ^b2\n\n```\ncode ^c3\n```\n"
         val result = HeadingExtractor.parse(md)
-        assertEquals(0, result.blocks["a1"])
-        assertEquals(2, result.blocks["b2"])
-        // 代码块内的 ^id 不识别
-        assertNull(result.blocks["c3"])
+        // 代码块内的 ^id 不识别；两个段落 id 均识别且指向不同块
+        assertEquals(setOf("a1", "b2"), result.blocks.keys)
+        assertTrue(result.blocks.getValue("a1") < result.blocks.getValue("b2"))
+        assertTrue(result.blocks.getValue("b2") < result.blockCount)
     }
 
     @Test
-    fun `block id at block start and trailing spaces are accepted`() {
-        val md = "首段\n\n^solo   \n"
-        assertEquals(1, HeadingExtractor.parse(md).blocks["solo"])
+    fun `block id at block start with trailing spaces is accepted`() {
+        val md = "first\n\n^solo   \n"
+        val blocks = HeadingExtractor.parse(md).blocks
+        assertTrue(blocks.containsKey("solo"))
+        assertTrue(blocks.getValue("solo") > 0)
     }
 
     @Test

@@ -52,33 +52,47 @@ object HeadingExtractor {
     }
 
     /**
-     * 块引用 `^id`：块末尾的标记 → 顶层块下标。
+     * 块引用 `^id`：按行扫描块末尾的标记，再映射到包含该行的顶层块下标。
      *
-     * 判定口径：块文本末尾（允许尾部空白）出现 `^id`，`^` 前须为空白或块首；
-     * 代码块内不识别（与双链 / 标签的保护原则一致）。同一 id 重复时取首个。
+     * 按行扫描而不切 AST 节点文本：行偏移与块偏移都是同一份源码坐标，映射稳定；
+     * 判定条件：`^id` 前为行首或空白、后仅剩空白；代码块内的行整体跳过。
+     * 同一 id 重复时取首个。
      */
     private fun parseBlockIds(
         markdown: String,
         blocks: List<ASTNode>
     ): Map<String, Int> {
-        if (markdown.indexOf('^') < 0) return emptyMap()
+        if (markdown.indexOf('^') < 0 || blocks.isEmpty()) return emptyMap()
         val out = HashMap<String, Int>()
-        blocks.forEachIndexed { index, node ->
-            if (node.type == MarkdownElementTypes.CODE_FENCE ||
-                node.type == MarkdownElementTypes.CODE_BLOCK
-            ) {
-                return@forEachIndexed
+        var offset = 0
+        for (line in markdown.split('\n')) {
+            val id = trailingBlockId(line)
+            if (id != null && id !in out) {
+                val index = blocks.indexOfFirst { offset >= it.startOffset && offset < it.endOffset }
+                if (index >= 0 && !blocks[index].isCodeBlock()) out[id] = index
             }
-            val end = node.endOffset.coerceAtMost(markdown.length)
-            val start = node.startOffset.coerceAtMost(end)
-            val id = BLOCK_ID.find(markdown.substring(start, end).trimEnd())?.groupValues?.get(1)
-            if (!id.isNullOrEmpty() && id !in out) out[id] = index
+            offset += line.length + 1
         }
         return out
     }
 
-    /** 块末尾的 `^id`（`^` 前为块首或空白，`id` 限字母数字与 `-` `_`）。 */
-    private val BLOCK_ID = Regex("""(?:^|\s)\^([A-Za-z0-9_-]{1,64})\s*$""")
+    /** 行尾的 `^id`（`^` 前为行首或空白、其后仅剩空白）；无则 null。 */
+    private fun trailingBlockId(line: String): String? {
+        for (m in BLOCK_ID.findAll(line)) {
+            val at = m.range.first
+            val before = if (at > 0) line[at - 1] else ' '
+            if (!before.isWhitespace()) continue
+            if (line.substring(m.range.last + 1).isNotBlank()) continue
+            return m.groupValues[1]
+        }
+        return null
+    }
+
+    private fun ASTNode.isCodeBlock(): Boolean =
+        type == MarkdownElementTypes.CODE_FENCE || type == MarkdownElementTypes.CODE_BLOCK
+
+    /** `^` 后的块 id（字母数字与 `-` `_`，上限 64）。不用锚点写法，避免跨实现歧义。 */
+    private val BLOCK_ID = Regex("""\^([A-Za-z0-9_-]{1,64})""")
 
     /** 兼容旧入口：仅取标题列表。 */
     fun extract(markdown: String): List<Heading> = parse(markdown).headings
