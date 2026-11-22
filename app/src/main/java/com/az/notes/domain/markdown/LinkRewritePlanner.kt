@@ -20,37 +20,41 @@ data class NoteRewritePlan(val sourcePath: String, val edits: List<PlannedEdit>)
 /**
  * 改名 / 移动后的链接改写计划器（纯 Kotlin，零 IO，可在 JVM 单测运行）。
  *
- * 判定口径不再是"文本是否长得像旧名字"，而是**改名前的解析结果**：只有
- * "改名前解析到被移动文件"的引用才进入计划。因此
- *  - 通过别名命中的 `[[别名]]`（别名本身未变）不会解析结果变化，不会被误改；
- *  - 同名文件的消歧翻转（原本解析到 A，A 改名后改为解析到 B）同样只会命中 A 的引用；
- *  - 图片嵌入 `![[a.png]]` 与笔记嵌入 `![[Note]]` 走同一套判断。
+ * 判定口径不是"文本是否长得像旧名字"，而是**改名前后解析结果是否一致**：
+ *  - 引用必须改前解析到被移动的文件（否则与本次移动无关，不动）；
+ *  - 且改名**后**同一段文本不再指向新位置（否则明文仍能正常解析，不动）。
  *
- * 新文本只替换目标段，保留 `!` 前缀、`#锚点`、`|别名`；若别名与被改名文件的旧文件名
- * 完全相同（`[[旧名|旧名]]` 这类写法），别名同步换成新名。
+ * 第二条专门保护别名写法：`[[别名]]` 指向的笔记改名后，别名不变，同一文本仍解析到
+ * 新路径 → 不需要也不应该改写（否则用户写的别名会被换成新文件名）。
+ * 它同时覆盖同名消歧翻转（原本解析到 A，A 改名后改为解析到 B → 需要改）与相对路径
+ * 写法（改名后旧路径不存在 → 需要改）。
  */
 object LinkRewritePlanner {
 
     /**
      * @param refs 源笔记正文的原始引用（[RawLinkRef.startOffset] 相对正文）
      * @param moveByOldPath 旧绝对路径 → 新绝对路径（目录移动时由调用方展开为逐篇映射）
-     * @param resolve 改名前状态的解析函数（返回绝对路径；未命中 null）
+     * @param resolveBefore 改名前解析（返回绝对路径；未命中 null）
+     * @param resolveAfter 改名**后**的同一文本解析结果：等于新路径时视为无需改写
      */
     fun planForSource(
         sourcePath: String,
         refs: List<RawLinkRef>,
         moveByOldPath: Map<String, String>,
         vaultRoot: File,
-        resolve: (RawLinkRef) -> String?
+        resolveBefore: (RawLinkRef) -> String?,
+        resolveAfter: (RawLinkRef) -> String?
     ): NoteRewritePlan? {
         if (refs.isEmpty() || moveByOldPath.isEmpty()) return null
         val root = vaultRoot.normalize()
         val edits = ArrayList<PlannedEdit>()
         for (ref in refs) {
             if (WikiLinkExtractor.isSelfAnchor(ref)) continue
-            val before = resolve(ref) ?: continue
-            val after = moveByOldPath[before] ?: continue
-            val replacement = rebuild(ref, before, after, root)
+            val before = resolveBefore(ref) ?: continue
+            val newPath = moveByOldPath[before] ?: continue
+            // 改后同一段文本仍能解析到新位置（典型：通过别名指向）→ 保留用户写法
+            if (resolveAfter(ref) == newPath) continue
+            val replacement = rebuild(ref, before, newPath, root)
             if (replacement == ref.raw) continue
             edits += PlannedEdit(
                 startInBody = ref.startOffset,

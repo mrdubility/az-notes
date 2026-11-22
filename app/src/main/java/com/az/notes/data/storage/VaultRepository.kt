@@ -81,6 +81,10 @@ class VaultRepository @Inject constructor() {
         /** 残留临时文件清理阀值：超过该年龄的 `.tmp` / `.bak` 才删除，避开并发写盘。 */
         private const val STALE_TEMP_MS = 60_000L
 
+        /** 大文件索引缓存：覆盖整个索引预算（4MB × 2 篇上上限 ≈ 8MB），超出就弃。 */
+        private const val INDEX_CACHE_MAX_BYTES = INDEX_MAX_BYTES
+        private const val INDEX_CACHE_ENTRIES = 2
+
         /** 正文搜索缓存上限：超过后整体清空，控制内存占用。 */
         private const val CONTENT_CACHE_LIMIT = 512
 
@@ -261,6 +265,16 @@ class VaultRepository @Inject constructor() {
     private val contentCache = ConcurrentHashMap<String, CachedContent>()
 
     /**
+     * 大文件正文缓存（256KB～2MB）：搜索缓存放不下，但索引侧（链接 / 标签 / 未链接提及）
+     * 会反复读同一批大笔记——独立的小容量 LRU 收敛重复 IO；超过 [INDEX_CACHE_MAX_BYTES]
+     * 的文件读完即弃，避免内存失控。
+     */
+    private val indexContentCache = object : java.util.LinkedHashMap<String, CachedContent>(4, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, CachedContent>?): Boolean =
+            size > INDEX_CACHE_ENTRIES
+    }
+
+    /**
      * 读取文件正文（默认搜索口径，mtime 增量缓存）；超大文件返回 null。
      *
      * [maxBytes] 为本次调用的解析预算：搜索用 [CONTENT_SEARCH_MAX_BYTES]，链接 / 标签
@@ -275,14 +289,26 @@ class VaultRepository @Inject constructor() {
     ): String? {
         if (node.size > maxBytes) return null
         val cacheable = node.size <= CONTENT_SEARCH_MAX_BYTES
-        if (cacheable && !forceRead) {
-            val cached = contentCache[node.absolutePath]
-            if (cached != null && cached.lastModified == node.lastModified) return cached.text
+        val indexCacheable = !cacheable && node.size <= INDEX_CACHE_MAX_BYTES
+        if (!forceRead) {
+            if (cacheable) {
+                val cached = contentCache[node.absolutePath]
+                if (cached != null && cached.lastModified == node.lastModified) return cached.text
+            } else if (indexCacheable) {
+                val cached = synchronized(indexContentCache) { indexContentCache[node.absolutePath] }
+                if (cached != null && cached.lastModified == node.lastModified) return cached.text
+            }
         }
         val text = runCatching { readText(node.absolutePath) }.getOrNull() ?: return null
-        if (cacheable) {
-            if (contentCache.size >= CONTENT_CACHE_LIMIT) contentCache.clear()
-            contentCache[node.absolutePath] = CachedContent(node.lastModified, text)
+        val entry = CachedContent(node.lastModified, text)
+        when {
+            cacheable -> {
+                if (contentCache.size >= CONTENT_CACHE_LIMIT) contentCache.clear()
+                contentCache[node.absolutePath] = entry
+            }
+            indexCacheable -> synchronized(indexContentCache) {
+                indexContentCache[node.absolutePath] = entry
+            }
         }
         return text
     }

@@ -4,7 +4,7 @@ package com.az.notes.domain.markdown
  * 属性在原文中的行区间（0 基、闭区间，相对整个文件）与原文形态标记。
  *
  * [advanced] 表示该属性的原文里含当前解析器无法无损表达的 YAML（嵌套子键 / 块标量 /
- * 行尾注释 / 多行纯量）——这类内容一旦整块重写就会被压平，故 [FrontmatterParser.patch]
+ * 行尾注释 / 多行纯量）——这类内容一旦整块重写就会被压平，故 [FrontmatterParser.patchAll]
  * 在该键被修改时直接拒绝，交回编辑器手工处理。
  */
 data class AttrSpan(
@@ -186,6 +186,9 @@ object FrontmatterParser {
      * 属性写回的「外科手术」入口：只改动与 [entries] 不一致的键，其余原文行（含注释、嵌套
      * 子键、块标量、行内列表写法、键序）逐行原样保留。
      *
+     * **注意 [entries] 是完整的属性列表，不是"仅改动的键"**：不在列表里的键视为删除，
+     * 列表为空则删掉整个属性块。只传变动项会误删其它属性。
+     *
      *  - 值未变的键 → 原样输出其行区间，一个字符都不碰；
      *  - 值变化的键 → 只重写该键的行区间；
      *  - 新增键 → 追加在闭合分隔行之前（保持调用方给定顺序）；
@@ -193,7 +196,7 @@ object FrontmatterParser {
      *  - 该键原文含编辑器无法表达的形态（[AttrSpan.advanced]）且被修改 → 返回
      *    [FrontmatterPatchResult.Refused]，绝不静默压平。
      */
-    fun patch(content: String, entries: List<FrontmatterAttribute>): FrontmatterPatchResult {
+    fun patchAll(content: String, entries: List<FrontmatterAttribute>): FrontmatterPatchResult {
         val split = split(content)
         val incoming = entries.filter { it.key.isNotBlank() }
         if (incoming.isEmpty()) return FrontmatterPatchResult.Ok(split.body)
@@ -317,7 +320,7 @@ object FrontmatterParser {
     }
 }
 
-/** [FrontmatterParser.patch] 的结果：成功文本 / 因高级 YAML 被拒绝的键列表。 */
+/** [FrontmatterParser.patchAll] 的结果：成功文本 / 因高级 YAML 被拒绝的键列表。 */
 sealed interface FrontmatterPatchResult {
     data class Ok(val text: String) : FrontmatterPatchResult
 

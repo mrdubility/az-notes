@@ -39,8 +39,8 @@ class VaultNameIndex @Inject constructor() {
     private var aliasSnapshot: AliasSnapshot? = null
 
     /**
-     * 索引版本号：每次重建 / 失效自增。供解析 memo 判定"索引是否变过"（
-     * 不必在每处写盘点逐个清缓存）。
+     * 索引版本号：**内容真的变了**才自增（TTL 到期重建但内容一致时不递增）。
+     * 供解析 memo / 未链接提及缓存判定失效——若每次 TTL 重建都递增，缓存会周期性失效。
      */
     @Volatile
     var version: Long = 0L
@@ -53,8 +53,8 @@ class VaultNameIndex @Inject constructor() {
         val now = System.currentTimeMillis()
         snapshot?.takeIf { it.root == key && now - it.builtAt < TTL_MS }?.let { return it.names }
         val built = buildNames(root, key)
+        if (snapshot?.names != built) version++
         snapshot = Snapshot(key, now, built)
-        version++
         return built
     }
 
@@ -69,8 +69,8 @@ class VaultNameIndex @Inject constructor() {
         aliasSnapshot?.takeIf { it.root == key && now - it.builtAt < ALIAS_TTL_MS }
             ?.let { return it.aliases }
         val built = buildAliases(root, key)
+        if (aliasSnapshot?.aliases != built) version++
         aliasSnapshot = AliasSnapshot(key, now, built)
-        version++
         return built
     }
 

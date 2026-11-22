@@ -10,6 +10,7 @@ import com.az.notes.data.settings.SettingsRepository
 import com.az.notes.data.storage.LinkRewriter
 import com.az.notes.data.storage.TrashItem
 import com.az.notes.data.storage.TrashRepository
+import com.az.notes.data.storage.VaultLinkIndex
 import com.az.notes.data.storage.VaultNameIndex
 import com.az.notes.data.storage.VaultRepository
 import com.az.notes.data.sync.SyncEngine
@@ -18,7 +19,6 @@ import com.az.notes.domain.model.AppSettings
 import com.az.notes.domain.model.FileNode
 import com.az.notes.domain.model.NoteSortOrder
 import com.az.notes.domain.model.VaultInfo
-import com.az.notes.domain.markdown.NoteRewritePlan
 import com.az.notes.domain.notes.resolveStartFolder
 import com.az.notes.domain.notes.splitPinnedNotes
 import com.az.notes.ui.common.UiMessage
@@ -115,6 +115,7 @@ class NotesViewModel @Inject constructor(
     private val vaultRepository: VaultRepository,
     private val vaultNameIndex: VaultNameIndex,
     private val linkRewriter: LinkRewriter,
+    private val linkIndex: VaultLinkIndex,
     private val settingsRepository: SettingsRepository,
     private val trashRepository: TrashRepository,
     private val attachmentRepository: AttachmentRepository,
@@ -147,6 +148,9 @@ class NotesViewModel @Inject constructor(
 
     /** 冷启动「启动时进入文件夹」是否已处理（进程内只跳一次，返回主页 / 切仓库不再跳） */
     private var startFolderApplied = false
+
+    /** 链接索引预热是否已发起（仅一次，避免每次进主页都全局扫一遍）。 */
+    private var linkIndexPrewarmed = false
 
     /** 启动目录解析中：阻断 onScreenEntered 抢先装载根目录（避免闪动与位置漂移） */
     private var pendingStartEntry = false
@@ -257,6 +261,19 @@ class NotesViewModel @Inject constructor(
         // 启动目录解析中：等解析完成后的首次装载，避免先载根目录再跳
         if (pendingStartEntry) return
         if (initialized) reloadItems(pullRefresh = false, preserveOrder = true)
+        prewarmLinkIndex()
+    }
+
+    /**
+     * 链接索引预热：主页就绪后后台建一次（TTL 内复用）。
+     * 目的是把改名 / 移动所需的“改前解析快照”从**点下重命名那一刻的冷扫**移走，
+     * 避免用户操作时卡一次全库扫描；失败静默（真到改写时仍会重试）。
+     */
+    private fun prewarmLinkIndex() {
+        if (linkIndexPrewarmed) return
+        val vault = currentSettings.vaultPath ?: return
+        linkIndexPrewarmed = true
+        viewModelScope.launch { runCatching { linkIndex.buildOrRefresh(vault) } }
     }
 
     /** 下拉刷新。 */
@@ -388,23 +405,27 @@ class NotesViewModel @Inject constructor(
     }
 
     /**
-     * 生成改名 / 移动后的链接改写计划（设置关闭或无仓库时返回空，不产生扫描）。
-     * 必须在文件系统操作**之前**调用。
+     * 生成改名 / 移动后的链接改写快照（设置关闭或无仓库时返回 null，不产生扫描）。
+     * [moves] 必须是**文件级**的旧→新绝对路径映射（目录移动由 [expandMoves] 展开）。
      */
-    private suspend fun planLinkRewrites(moves: Map<String, String>): List<NoteRewritePlan> {
-        if (!currentSettings.alwaysUpdateLinks || moves.isEmpty()) return emptyList()
-        val vault = currentSettings.vaultPath ?: return emptyList()
-        return runCatching { linkRewriter.plan(vault, moves) }.getOrDefault(emptyList())
+    private suspend fun planLinkRewrites(moves: Map<String, String>): LinkRewriter.Prepared? {
+        if (!currentSettings.alwaysUpdateLinks || moves.isEmpty()) return null
+        val vault = currentSettings.vaultPath ?: return null
+        // 索引未就绪时 plan 会冷扫一次全库：先给一次可见反馈
+        if (!linkIndex.isReadyFor(vault)) {
+            _state.update { it.copy(message = UiMessage(UiText.of(R.string.msg_links_checking))) }
+        }
+        return runCatching { linkRewriter.plan(vault, moves) }.getOrNull()
     }
 
     /** 执行链接改写：登记同步强制上传（防指纹未变漏传）。 */
     private suspend fun applyLinkRewrites(
-        plans: List<NoteRewritePlan>,
+        prepared: LinkRewriter.Prepared?,
         succeeded: Set<String>
     ): LinkRewriter.Outcome? {
-        if (plans.isEmpty()) return null
+        if (prepared == null || succeeded.isEmpty()) return null
         val vault = currentSettings.vaultPath ?: return null
-        val outcome = runCatching { linkRewriter.apply(plans, succeeded) }.getOrNull() ?: return null
+        val outcome = runCatching { linkRewriter.apply(prepared, succeeded) }.getOrNull() ?: return null
         if (outcome.links > 0) {
             currentSettings.currentVaultId?.let {
                 syncEngine.markForcedUpload(it, outcome.relativePaths(vault))
@@ -413,11 +434,41 @@ class NotesViewModel @Inject constructor(
         return outcome
     }
 
-    /** 链接改写结果的一次性提示（无命中时不打扰）。 */
+    /** 链接改写结果的一次性提示（未命中 / 被截断 / 跳过都要告知，不静默）。 */
     private fun showLinkRewrite(outcome: LinkRewriter.Outcome?) {
-        if (outcome == null || outcome.links <= 0) return
-        _state.update {
-            it.copy(message = UiMessage(UiText.of(R.string.msg_links_updated, outcome.files, outcome.links)))
+        if (outcome == null) return
+        when {
+            outcome.links > 0 && outcome.truncated > 0 -> _state.update {
+                it.copy(
+                    message = UiMessage(
+                        UiText.of(
+                            R.string.msg_links_updated_truncated,
+                            outcome.files,
+                            outcome.links,
+                            outcome.truncated
+                        )
+                    )
+                )
+            }
+            outcome.links > 0 -> _state.update {
+                it.copy(
+                    message = UiMessage(
+                        UiText.of(R.string.msg_links_updated, outcome.files, outcome.links)
+                    )
+                )
+            }
+            outcome.truncated > 0 -> _state.update {
+                it.copy(
+                    message = UiMessage(
+                        UiText.of(R.string.msg_links_truncated, outcome.truncated)
+                    )
+                )
+            }
+            outcome.skipped > 0 -> _state.update {
+                it.copy(
+                    message = UiMessage(UiText.of(R.string.msg_links_skipped, outcome.skipped))
+                )
+            }
         }
     }
 
@@ -823,14 +874,17 @@ class NotesViewModel @Inject constructor(
             val crossVault = isCrossVaultMove(targetDir)
             var skipped = 0
             val movedPairs = mutableListOf<Pair<String, String>>()
-            // 链接改写计划：目录移动先展开为逐篇旧路径→新路径，再一次性生成（避免逐条全库扫描）
+            // 目录移动先展开为逐篇文件级映射（必须在移动前算：移动后旧目录已不存在）
             val planned = withContext(Dispatchers.IO) {
                 paths.mapNotNull { src ->
                     val dst = File(targetDir, File(src).name).absolutePath
                     if (dst == src) null else src to dst
                 }
             }
-            val plans = if (crossVault) emptyList() else planLinkRewrites(expandMoves(planned))
+            val moves = if (crossVault) emptyMap() else withContext(Dispatchers.IO) {
+                expandMoves(planned)
+            }
+            val plans = planLinkRewrites(moves)
             val moved = withContext(Dispatchers.IO) {
                 var ok = 0
                 for (src in paths) {
@@ -849,7 +903,13 @@ class NotesViewModel @Inject constructor(
             }
             if (moved > 0) vaultNameIndex.invalidate()
             if (!crossVault && movedPairs.isNotEmpty()) {
-                showLinkRewrite(applyLinkRewrites(plans, movedPairs.map { it.first }.toSet()))
+                // 成功集合必须落到文件级：用成功的顶层条目前缀筛出对应的文件级旧路径
+                val succeeded = moves.keys.filterTo(HashSet()) { old ->
+                    movedPairs.any { (src, _) ->
+                        old == src || old.startsWith("$src${File.separator}")
+                    }
+                }
+                showLinkRewrite(applyLinkRewrites(plans, succeeded))
             }
             if (crossVault) {
                 removeFavoriteTrees(movedPairs.map { it.first })
@@ -892,8 +952,13 @@ class NotesViewModel @Inject constructor(
                 return@launch
             }
             val crossVault = isCrossVaultMove(targetDir)
-            // 链接改写计划必须在移动之前生成（用改前解析结果判定指向）
-            val plans = if (crossVault) emptyList() else planLinkRewrites(mapOf(sourcePath to target))
+            // 目录移动必须先展开成逐篇文件映射：改写计划与「成功集合」都以文件级路径为准
+            val moves = if (crossVault) {
+                emptyMap()
+            } else {
+                withContext(Dispatchers.IO) { expandMoves(listOf(sourcePath to target)) }
+            }
+            val plans = planLinkRewrites(moves)
             val ok = withContext(Dispatchers.IO) { vaultRepository.rename(sourcePath, target) }
             if (ok) {
                 vaultNameIndex.invalidate()
@@ -912,7 +977,7 @@ class NotesViewModel @Inject constructor(
                     it.copy(message = UiMessage(UiText.of(R.string.msg_moved_one, src.name)))
                 }
                 // 链接改写放在提示之后：命中时用「已更新 N 篇…」覆盖条目式提示
-                if (!crossVault) showLinkRewrite(applyLinkRewrites(plans, setOf(sourcePath)))
+                if (!crossVault) showLinkRewrite(applyLinkRewrites(plans, moves.keys))
             } else {
                 _state.update { it.copy(message = UiMessage(UiText.of(R.string.msg_move_failed))) }
             }

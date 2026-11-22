@@ -223,8 +223,17 @@ fun ReaderScreen(
         } else {
             HeadingExtractor.findBlockByTitle(state.headings, anchor)
         }
-        if (block != null) listState.scrollToItem(block + blockOffset)
-        viewModel.consumeAnchor()
+        when {
+            // 找到了：先滚动后消费（消费会改键，先滚避免协程被取消）
+            block != null -> {
+                listState.scrollToItem(block + blockOffset)
+                viewModel.consumeAnchor()
+            }
+            // 跨笔记块引用：目标笔记尚未加载出块结构，留给下一次状态变化再试
+            state.blocks.isEmpty() && state.content.isEmpty() -> Unit
+            // 内容已完整却找不到锚点：消费掉，避免反复重试
+            else -> viewModel.consumeAnchor()
+        }
     }
     // LazyColumn 单侧水平内边距：与下方 contentPadding 共用；同时传给 transformer 以修正
     // 库从 parentLayoutCoordinates 拿到的 containerSize 包含 padding 导致的竖图右侧溢出。

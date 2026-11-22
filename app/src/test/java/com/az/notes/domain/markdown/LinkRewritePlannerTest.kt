@@ -42,13 +42,15 @@ class LinkRewritePlannerTest {
         refs: List<RawLinkRef>,
         old: File,
         new: File,
-        resolve: (RawLinkRef) -> String? = { old.absolutePath }
+        resolveAfter: (RawLinkRef) -> String? = { null },
+        resolveBefore: (RawLinkRef) -> String? = { old.absolutePath }
     ): NoteRewritePlan? = LinkRewritePlanner.planForSource(
         sourcePath = File(vault, "src.md").absolutePath,
         refs = refs,
         moveByOldPath = mapOf(old.absolutePath to new.absolutePath),
         vaultRoot = vault,
-        resolve = resolve
+        resolveBefore = resolveBefore,
+        resolveAfter = resolveAfter
     )
 
     @Test
@@ -118,6 +120,22 @@ class LinkRewritePlannerTest {
         val old = File(vault, "Old.md")
         val new = File(vault, "New.md")
         val result = plan(vault, listOf(ref("[[Missing]]", "Missing")), old, new) { null }
+        assertNull(result)
+    }
+
+    @Test
+    fun `alias form keeps user spelling when it still resolves after rename`() {
+        val vault = temp.newFolder("v")
+        val old = File(vault, "Old.md")
+        val new = File(vault, "New.md")
+        // [[别名]] 改前改后都解析到同一笔记 → 不改写，保住用户写的别名
+        val result = plan(
+            vault = vault,
+            refs = listOf(ref("[[别名]]", "别名")),
+            old = old,
+            new = new,
+            resolveAfter = { new.absolutePath }
+        )
         assertNull(result)
     }
 

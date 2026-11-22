@@ -13,13 +13,13 @@ import com.az.notes.data.storage.LinkRewriter
 import com.az.notes.data.storage.PathUpdateBus
 import com.az.notes.data.storage.TagIndex
 import com.az.notes.data.storage.TagRow
+import com.az.notes.data.storage.VaultLinkIndex
 import com.az.notes.data.storage.VaultNameIndex
 import com.az.notes.data.storage.VaultRepository
 import com.az.notes.data.sync.SyncEngine
 import com.az.notes.domain.model.EditorTool
 import com.az.notes.domain.model.AppSettings
 import com.az.notes.domain.model.FileNode
-import com.az.notes.domain.markdown.NoteRewritePlan
 import com.az.notes.ui.common.UiText
 import com.az.notes.ui.common.CreateFolderResult
 import com.az.notes.ui.common.createVaultSubfolder
@@ -79,6 +79,7 @@ class EditorViewModel @Inject constructor(
     private val vaultNameIndex: VaultNameIndex,
     private val pathUpdateBus: PathUpdateBus,
     private val tagIndex: TagIndex,
+    private val linkIndex: VaultLinkIndex,
     private val linkRewriter: LinkRewriter
 ) : ViewModel() {
 
@@ -322,7 +323,7 @@ class EditorViewModel @Inject constructor(
                 pathUpdateBus.post(oldPath, absolutePath)
                 syncRemoteRename(oldPath, absolutePath)
                 lastKnownMtime = target.lastModified()
-                applyLinkRewrites(settings, plans, setOf(oldPath))
+                applyLinkRewrites(settings, plans, setOf(oldPath), _state.value.text)
             } else {
                 _state.update { it.copy(message = UiText.of(R.string.msg_rename_failed_exists)) }
             }
@@ -330,39 +331,79 @@ class EditorViewModel @Inject constructor(
     }
 
     /**
-     * 生成改名 / 移动后的链接改写计划（设置关闭或无仓库时返回空，不产生任何扫描）。
+     * 生成改名 / 移动后的链接改写快照（设置关闭或无仓库时返回 null，不产生任何扫描）。
      * 必须在文件系统操作**之前**调用。
      */
     private suspend fun planLinkRewrites(
         settings: AppSettings?,
         moves: Map<String, String>
-    ): List<NoteRewritePlan> {
-        if (settings?.alwaysUpdateLinks != true) return emptyList()
-        val vault = settings.vaultPath ?: return emptyList()
-        return runCatching { linkRewriter.plan(vault, moves) }.getOrDefault(emptyList())
+    ): LinkRewriter.Prepared? {
+        if (settings?.alwaysUpdateLinks != true) return null
+        val vault = settings.vaultPath ?: return null
+        // 索引未就绪时 plan 会冷扫一次全库：先给一次可见反馈，避免“点下改名没反应”
+        if (!linkIndex.isReadyFor(vault)) {
+            _state.update { it.copy(message = UiText.of(R.string.msg_links_checking)) }
+        }
+        return runCatching { linkRewriter.plan(vault, moves) }.getOrNull()
     }
 
     /**
      * 执行链接改写：登记同步强制上传（防等长改名 + 同秒写盘导致指纹未变而漏传），
-     * 并把"已更新 N 篇笔记中的 M 处链接"作为一次性提示。
+     * 提示结果，并在**本页笔记被改写时**回灌磁盘文本。
      */
     private suspend fun applyLinkRewrites(
         settings: AppSettings?,
-        plans: List<NoteRewritePlan>,
-        succeeded: Set<String>
+        prepared: LinkRewriter.Prepared?,
+        succeeded: Set<String>,
+        textBeforeApply: String
     ) {
-        if (plans.isEmpty() || settings == null) return
+        if (prepared == null || settings == null) return
         val vault = settings.vaultPath ?: return
-        val outcome = runCatching { linkRewriter.apply(plans, succeeded) }.getOrNull() ?: return
+        val outcome = runCatching { linkRewriter.apply(prepared, succeeded) }.getOrNull() ?: return
         if (outcome.links > 0) {
-            settings.currentVaultId?.let { syncEngine.markForcedUpload(it, outcome.relativePaths(vault)) }
-            _state.update {
-                it.copy(message = UiText.of(R.string.msg_links_updated, outcome.files, outcome.links))
+            settings.currentVaultId?.let {
+                syncEngine.markForcedUpload(it, outcome.relativePaths(vault))
             }
             schedulePostSaveSync()
-        } else if (outcome.skipped > 0) {
-            _state.update { it.copy(message = UiText.of(R.string.msg_links_skipped, outcome.skipped)) }
         }
+        val message = when {
+            outcome.links > 0 && outcome.truncated > 0 -> UiText.of(
+                R.string.msg_links_updated_truncated,
+                outcome.files,
+                outcome.links,
+                outcome.truncated
+            )
+            outcome.links > 0 -> UiText.of(R.string.msg_links_updated, outcome.files, outcome.links)
+            outcome.truncated > 0 -> UiText.of(R.string.msg_links_truncated, outcome.truncated)
+            outcome.skipped > 0 -> UiText.of(R.string.msg_links_skipped, outcome.skipped)
+            else -> null
+        }
+        message?.let { text -> _state.update { it.copy(message = text) } }
+        reloadSelfIfRewritten(outcome, textBeforeApply)
+    }
+
+    /**
+     * 当前笔记被链接改写时（典型：正文里 `[[旧名]]` 的自引用）：
+     * 把磁盘新文本回灌内存并同步 [lastKnownMtime]，否则下一次自动保存会被误判成
+     * 「文件已在别处被修改」而被拦下。用户在改写期间继续输入时不覆盖其输入，只同步 mtime。
+     */
+    private suspend fun reloadSelfIfRewritten(
+        outcome: LinkRewriter.Outcome,
+        textBeforeApply: String
+    ) {
+        if (outcome.paths.none { it == absolutePath }) return
+        if (_state.value.text != textBeforeApply) {
+            lastKnownMtime = withContext(Dispatchers.IO) { File(absolutePath).lastModified() }
+            return
+        }
+        val text = withContext(Dispatchers.IO) {
+            runCatching {
+                val loaded = vaultRepository.readText(absolutePath)
+                lastKnownMtime = File(absolutePath).lastModified()
+                loaded
+            }.getOrNull()
+        } ?: return
+        _state.update { it.copy(text = text, dirty = false) }
     }
 
     /**
@@ -547,7 +588,7 @@ class EditorViewModel @Inject constructor(
                 pathUpdateBus.post(oldPath, absolutePath)
                 if (crossVault) schedulePostSaveSync() else syncRemoteRename(oldPath, absolutePath)
                 lastKnownMtime = target.lastModified()
-                if (!crossVault) applyLinkRewrites(settings, plans, setOf(oldPath))
+                if (!crossVault) applyLinkRewrites(settings, plans, setOf(oldPath), _state.value.text)
             } else {
                 _state.update { it.copy(message = UiText.of(R.string.msg_move_failed)) }
             }

@@ -104,6 +104,9 @@ class VaultLinkIndex @Inject constructor(
      */
     fun rawSnapshot(): Map<String, List<RawLinkRef>> = snapshot?.raw.orEmpty()
 
+    /** 该仓库的索引是否已建好：未建时 [LinkRewriter.plan] 会冷扫一次全库。 */
+    fun isReadyFor(vaultPath: String): Boolean = snapshot?.rootPath == keyOf(vaultPath)
+
     /** 未链接提及缓存：`vault|目标|名字索引版本 → 结果`（只保留最近一次）。 */
     private var mentionsCache: Pair<String, List<BacklinkItem>>? = null
 

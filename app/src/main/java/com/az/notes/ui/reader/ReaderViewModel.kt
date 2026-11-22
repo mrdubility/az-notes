@@ -233,7 +233,11 @@ class ReaderViewModel @Inject constructor(
                 // 索引预热：打开笔记即在后台静默构建一次链接索引（TTL 内复用），
                 // 等用户真正打开反向链接面板时多半已就绪；不阻塞加载、不回调进度。
                 if (!vault.isNullOrBlank()) {
-                    launch { runCatching { linkIndex.buildOrRefresh(vault) } }
+                    launch {
+                        runCatching { linkIndex.buildOrRefresh(vault) }
+                        // 未链接提及一并预热：面板打开时通常直接命中缓存
+                        runCatching { linkIndex.unlinkedMentionsOf(vault, absolutePath) }
+                    }
                 }
                 // 记录最近查看（打开即算；重复打开幂等置顶）：读取抛错时不记录
                 vault?.let { v ->
@@ -610,7 +614,7 @@ class ReaderViewModel @Inject constructor(
                         val current = vaultRepository.readText(absolutePath)
                         val split = FrontmatterParser.split(current)
                         val entries = transform(split.entries) ?: return@runCatching AttrWrite.NoChange
-                        when (val patched = FrontmatterParser.patch(current, entries)) {
+                        when (val patched = FrontmatterParser.patchAll(current, entries)) {
                             is FrontmatterPatchResult.Refused -> AttrWrite.Refused
                             is FrontmatterPatchResult.Ok -> {
                                 vaultRepository.writeTextAtomically(absolutePath, patched.text)

@@ -603,6 +603,9 @@
     <string name="msg_links_updated">Updated %2$d link(s) in %1$d note(s)</string>
     <string name="reader_mentions_header">Unlinked mentions (%1$d)</string>
     <string name="msg_links_skipped">%1$d link(s) not updated (file changed, please check)</string>
+    <string name="msg_links_truncated">%1$d more note(s) not updated (per-run limit reached, please move in smaller batches)</string>
+    <string name="msg_links_updated_truncated">Updated %2$d link(s) in %1$d note(s); %3$d more note(s) skipped (per-run limit)</string>
+    <string name="msg_links_checking">Checking references…</string>
     <string name="editor_external_title">File updated elsewhere</string>
     <string name="editor_external_message">This note was modified elsewhere (sync or link rewrite). Saving now overwrites those changes. What do you want to do?</string>
     <string name="editor_external_reload">Reload</string>

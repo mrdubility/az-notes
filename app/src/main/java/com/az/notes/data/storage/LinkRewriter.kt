@@ -2,8 +2,9 @@ package com.az.notes.data.storage
 
 import com.az.notes.domain.markdown.FrontmatterParser
 import com.az.notes.domain.markdown.LinkRewritePlanner
-import com.az.notes.domain.markdown.NoteRewritePlan
+import com.az.notes.domain.markdown.NoteAlias
 import com.az.notes.domain.markdown.PlannedEdit
+import com.az.notes.domain.markdown.RawLinkRef
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -13,15 +14,19 @@ import javax.inject.Singleton
 /**
  * 改名 / 移动后的双链批量改写器（IO 层，两阶段）。
  *
- * 为什么分两阶段：
- *  1. [plan] 必须在**改名之前**运行——它要用"改名前"的解析结果判定哪些引用真的指向
- *     被移动的文件（文本匹配会把同名不同文件、别名命中的链接一起误改）；
- *  2. [apply] 在改名之后运行，逐文件重读、按偏移倒序拼接、写前校验原文切片。
+ * 阶段划分的原因：判定口径是"改前解析到被移动文件、且改后同一段文本不再指向新位置"。
+ *  - [plan] 在**移动之前**运行：只负责把每条引用的"改前解析结果"钉下来；
+ *  - [apply] 在**移动之后**运行：用当前（已移动的）文件系统与索引重算"改后解析结果"，
+ *    只有真的不再指向新位置的引用才改写。
  *
- * 安全口径：
+ * 这条"改前 / 改后"对比是保住用户写法的关键：`[[别名]]`、`[[Note]]` 这类改名后仍能
+ * 解析到同一目标的写法一律不动。
+ *
+ * 其他安全口径：
  *  - 偏移漂移（文件在计划后被改过）→ 该条跳过并计数，不做文本级兜底替换；
- *  - 批量移动部分失败 → 由 [apply] 的 `succeeded` 过滤，失败项的引用一律不动；
- *  - 单次最多改写 [MAX_FILES] 个文件，超出部分留待用户手工处理（并经由返回值告知）。
+ *  - 批量移动部分失败 → 用 [succeeded]（文件级旧绝对路径）过滤，失败项的引用不动；
+ *  - 源笔记自身被移动时，改写目标是它的**新路径**，改后解析也按新目录计算；
+ *  - 单次最多改写 [MAX_FILES] 个源文件，超出部分计入 [Outcome.truncated] 告知用户。
  */
 @Singleton
 class LinkRewriter @Inject constructor(
@@ -30,13 +35,27 @@ class LinkRewriter @Inject constructor(
     private val vaultNameIndex: VaultNameIndex
 ) {
 
-    /** 改写结果：[files] 实际写入的文件数、[links] 替换的链接数、[skipped] 因漂移/失败跳过的条数。 */
+    /**
+     * 计划阶段捕获的快照：[entries] 为"源笔记 → (引用, 改前解析到的绝对路径)"。
+     * [moves] 必须是展开到**文件级**的旧→新绝对路径映射。
+     */
+    data class Prepared(
+        val vaultPath: String,
+        val moves: Map<String, String>,
+        val entries: Map<String, List<Pair<RawLinkRef, String?>>>
+    )
+
+    /**
+     * 改写结果：[files] 写入文件数、[links] 替换链接数、[skipped] 因漂移/失败跳过的条数、
+     * [truncated] 因超过单次上限而未处理的源文件数（>0 时需提示用户）。
+     */
     data class Outcome(
-        val files: Int,
-        val links: Int,
-        val skipped: Int,
+        val files: Int = 0,
+        val links: Int = 0,
+        val skipped: Int = 0,
+        val truncated: Int = 0,
         /** 被写入的源文件绝对路径（供同步强制上传使用） */
-        val paths: List<String>
+        val paths: List<String> = emptyList()
     ) {
         fun relativePaths(vaultPath: String): List<String> {
             val root = File(vaultPath).normalize().absolutePath
@@ -45,48 +64,68 @@ class LinkRewriter @Inject constructor(
     }
 
     /** 生成改写计划（须在改名 / 移动**之前**调用）。 */
-    suspend fun plan(vaultPath: String, moves: Map<String, String>): List<NoteRewritePlan> {
-        if (moves.isEmpty()) return emptyList()
-        // 用现有索引（TTL 内复用）；未构建过则冷扫一次，只为拿到 raw + 解析上下文
+    suspend fun plan(vaultPath: String, moves: Map<String, String>): Prepared? {
+        if (moves.isEmpty()) return null
+        // 用现有索引（TTL 内复用）；未构建过则冷扫一次，只为拿到 raw + 改前解析上下文
         linkIndex.buildOrRefresh(vaultPath)
         val raw = linkIndex.rawSnapshot()
-        if (raw.isEmpty()) return emptyList()
+        if (raw.isEmpty()) return null
         return withContext(Dispatchers.IO) {
             val root = File(vaultPath).normalize()
             val names = vaultNameIndex.names(root)
             val aliases = vaultNameIndex.aliases(root)
-            val plans = ArrayList<NoteRewritePlan>()
+            val entries = HashMap<String, List<Pair<RawLinkRef, String?>>>(raw.size)
             for ((source, refs) in raw) {
                 if (refs.isEmpty()) continue
                 val noteDir = File(source).parentFile
-                val plan = LinkRewritePlanner.planForSource(
-                    sourcePath = source,
-                    refs = refs,
-                    moveByOldPath = moves,
-                    vaultRoot = root,
-                    resolve = { ref ->
-                        when (val r = VaultLinkIndex.resolveLink(ref, root, noteDir, names, aliases)) {
-                            is LinkResolution.Resolved -> r.file.absolutePath
-                            else -> null
-                        }
-                    }
-                )
-                if (plan != null) plans += plan
+                entries[source] = refs.map { ref ->
+                    ref to resolveTo(ref, root, noteDir, names, aliases)
+                }
             }
-            plans.sortedBy { it.sourcePath }.take(MAX_FILES)
+            if (entries.isEmpty()) null else Prepared(root.absolutePath, moves, entries)
         }
     }
 
-    /** 执行改写（在改名 / 移动**之后**调用）；[succeeded] 为真正成功的旧绝对路径集合。 */
-    suspend fun apply(plans: List<NoteRewritePlan>, succeeded: Set<String>): Outcome =
-        withContext(Dispatchers.IO) {
-            if (plans.isEmpty() || succeeded.isEmpty()) return@withContext Outcome(0, 0, 0, emptyList())
+    /**
+     * 执行改写（在改名 / 移动**之后**调用）；[succeeded] 为真正成功的**文件级**旧绝对路径集合。
+     * 调用方应已在移动后失效 [VaultNameIndex]，使这里的解析反映移动后的状态。
+     */
+    suspend fun apply(prepared: Prepared?, succeeded: Set<String>): Outcome {
+        if (prepared == null || succeeded.isEmpty() || prepared.entries.isEmpty()) return Outcome()
+        return withContext(Dispatchers.IO) {
+            val root = File(prepared.vaultPath).normalize()
+            val names = vaultNameIndex.names(root)
+            val aliases = vaultNameIndex.aliases(root)
+            // 只考虑真正成功的移动，失败项的引用一律不动
+            val activeMoves = prepared.moves.filterKeys { it in succeeded }
             var files = 0
             var links = 0
             var skipped = 0
+            var truncated = 0
+            var processed = 0
             val paths = ArrayList<String>()
-            for (plan in plans) {
-                val result = runCatching { rewriteOne(plan, succeeded) }.getOrNull()
+            for ((source, pairs) in prepared.entries) {
+                // 源笔记自身被移动时：读写的目标换成新路径，改后解析也按新目录算
+                val movedSelf = activeMoves[source]
+                val target = movedSelf ?: source
+                val noteDirAfter = File(target).parentFile
+                val beforeByOffset = HashMap<Int, String?>(pairs.size)
+                pairs.forEach { (ref, before) -> beforeByOffset[ref.startOffset] = before }
+                // 判定口径只在 LinkRewritePlanner 一处：改前指向被移动文件、且改后不再指向新位置
+                val plan = LinkRewritePlanner.planForSource(
+                    sourcePath = target,
+                    refs = pairs.map { it.first },
+                    moveByOldPath = activeMoves,
+                    vaultRoot = root,
+                    resolveBefore = { ref -> beforeByOffset[ref.startOffset] },
+                    resolveAfter = { ref -> resolveTo(ref, root, noteDirAfter, names, aliases) }
+                ) ?: continue
+                if (processed >= MAX_FILES) {
+                    truncated++
+                    continue
+                }
+                processed++
+                val result = runCatching { rewriteOne(target, plan.edits) }.getOrNull()
                 if (result == null) {
                     skipped += plan.edits.size
                     continue
@@ -95,31 +134,39 @@ class LinkRewriter @Inject constructor(
                 if (result.links > 0) {
                     files++
                     links += result.links
-                    paths += plan.sourcePath
+                    paths += target
                 }
             }
-            Outcome(files, links, skipped, paths)
+            Outcome(files, links, skipped, truncated, paths)
         }
+    }
 
     // ---------------------------------------------------------------- 内部
 
     private class FileResult(val links: Int, val skipped: Int)
 
-    private fun rewriteOne(plan: NoteRewritePlan, succeeded: Set<String>): FileResult {
-        val content = vaultRepository.readText(plan.sourcePath)
+    private fun resolveTo(
+        ref: RawLinkRef,
+        root: File,
+        noteDir: File?,
+        names: Map<String, List<String>>,
+        aliases: Map<String, List<NoteAlias>>
+    ): String? = when (val r = VaultLinkIndex.resolveLink(ref, root, noteDir, names, aliases)) {
+        is LinkResolution.Resolved -> r.file.absolutePath
+        else -> null
+    }
+
+    private fun rewriteOne(sourcePath: String, edits: List<PlannedEdit>): FileResult {
+        val content = vaultRepository.readText(sourcePath)
         val split = FrontmatterParser.split(content)
         val offset = split.prefix.length
         val body = split.body
         // 前缀 + 正文必须正好等于原文：否则偏移口径不可信，整篇跳过（不做猜测性修补）
-        if (offset + body.length != content.length) return FileResult(0, plan.edits.size)
+        if (offset + body.length != content.length) return FileResult(0, edits.size)
 
-        val usable = ArrayList<PlannedEdit>(plan.edits.size)
+        val usable = ArrayList<PlannedEdit>(edits.size)
         var skipped = 0
-        for (edit in plan.edits.sortedByDescending { it.startInBody }) {
-            if (edit.movedFrom !in succeeded) {
-                skipped++
-                continue
-            }
+        for (edit in edits.sortedByDescending { it.startInBody }) {
             val inRange = edit.startInBody >= 0 && edit.endInBody <= body.length &&
                 edit.startInBody <= edit.endInBody
             val matches = inRange && body.substring(edit.startInBody, edit.endInBody) == edit.expectedRaw
@@ -129,9 +176,9 @@ class LinkRewriter @Inject constructor(
 
         val sb = StringBuilder(body)
         for (edit in usable) sb.replace(edit.startInBody, edit.endInBody, edit.replacement)
-        vaultRepository.writeTextAtomically(plan.sourcePath, split.prefix + sb.toString())
+        vaultRepository.writeTextAtomically(sourcePath, split.prefix + sb.toString())
         // 同秒写盘时 size + mtime 可能都不变：必须显式标脏，否则索引会读到旧引用
-        linkIndex.markChanged(plan.sourcePath)
+        linkIndex.markChanged(sourcePath)
         return FileResult(usable.size, skipped)
     }
 
