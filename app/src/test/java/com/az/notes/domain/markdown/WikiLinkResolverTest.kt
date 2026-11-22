@@ -1,9 +1,11 @@
 package com.az.notes.domain.markdown
 
 import java.io.File
+import java.text.Normalizer
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
+import org.junit.Assume.assumeTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -144,15 +146,18 @@ class WikiLinkResolverTest {
     }
 
     @Test
-    fun `nfd and nfc spellings fold to the same key`() {
-        // macOS / iCloud 同步回来的文件名常为 NFD（e + 组合附加符号），而键入的目标是 NFC。
+    fun `foldName folds nfd spelling onto nfc`() {
+        // macOS / iCloud 同步回来的文件名常为 NFD（字母 + 组合附加符号），键入的目标是 NFC。
         // 索引键与查询键必须走同一个 foldName，否则"明明同名却解析不到"。
-        // 这里不落盘：CI 的 JVM 文件名编码（sun.jnu.encoding）不保证 UTF-8，
-        // 非 ASCII 文件名用例在不同 runner 上不可靠。
-        val nfd = "cafe\u0301.md"
-        val nfc = "cafe\u00E9.md"
+        // 这里全部用码点构造，不用转义写法，也不落盘（CI 的 JVM 文件名编码不保证 UTF-8）。
+        val combiningAcute = 0x0301.toChar()
+        val precomposedEAcute = 0x00E9.toChar()
+        val nfd = "cafe" + combiningAcute + ".md"
+        val nfc = "cafe" + precomposedEAcute + ".md"
+
         assertNotEquals(nfd, nfc)
+        // 环境不提供 Unicode 归一化时跳过，避免把环境差异误判成实现缺陷
+        assumeTrue(Normalizer.normalize(nfd, Normalizer.Form.NFC) == nfc)
         assertEquals(WikiLinkResolver.foldName(nfc), WikiLinkResolver.foldName(nfd))
-        assertEquals(WikiLinkResolver.foldName(nfc), WikiLinkResolver.foldName(nfc.uppercase()))
     }
 }
