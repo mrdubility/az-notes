@@ -216,6 +216,13 @@
     <string name="settings_editor_toolbar_reset">Reset to default</string>
     <string name="settings_always_update_links">Update links automatically</string>
     <string name="settings_always_update_links_subtitle">Rewrite links in other notes when a note is renamed or moved</string>
+    <string name="settings_link_update_always">Always update</string>
+    <string name="settings_link_update_ask">Ask every time</string>
+    <string name="settings_link_update_never">Never update</string>
+    <string name="link_confirm_title">Update links?</string>
+    <string name="link_confirm_message">This rename affects %1$d link(s) in other notes.</string>
+    <string name="link_confirm_update">Update links</string>
+    <string name="link_confirm_skip">Don\'t update (links will break)</string>
     <string name="settings_toolbar_move_up">Move up</string>
     <string name="settings_toolbar_move_down">Move down</string>
     <string name="settings_notes_list">Note list</string>
@@ -612,6 +619,8 @@
     <string name="sync_restore_backup">Restore previous version</string>
     <string name="sync_restore_done">Previous version restored and queued for sync</string>
     <string name="sync_restore_failed">Restore failed (backup may have been cleaned up)</string>
+    <string name="delete_note_backlinks">%1$d link(s) point to it; they will break after deletion</string>
+    <string name="delete_note_backlinks_unknown">Link index not ready; backlinks were not checked</string>
     <string name="editor_external_title">File updated elsewhere</string>
     <string name="editor_external_message">This note was modified elsewhere (sync or link rewrite). Saving now overwrites those changes. What do you want to do?</string>
     <string name="editor_external_reload">Reload</string>

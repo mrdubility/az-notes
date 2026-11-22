@@ -56,6 +56,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -291,6 +295,32 @@ private fun SearchHistoryRow(query: String, onClick: () -> Unit, onRemove: () ->
     }
 }
 
+/** 命中区间加底色（标题与正文预览共用；区间越界时自动截断）。 */
+@Composable
+private fun highlighted(text: String, ranges: List<IntRange>): AnnotatedString {
+    if (ranges.isEmpty()) return AnnotatedString(text)
+    val background = MaterialTheme.colorScheme.tertiaryContainer
+    val foreground = MaterialTheme.colorScheme.onTertiaryContainer
+    return buildAnnotatedString {
+        append(text)
+        ranges.forEach { range ->
+            val start = range.first.coerceIn(0, text.length)
+            val end = (range.last + 1).coerceIn(0, text.length)
+            if (end > start) {
+                addStyle(
+                    SpanStyle(
+                        background = background,
+                        color = foreground,
+                        fontWeight = FontWeight.SemiBold
+                    ),
+                    start,
+                    end
+                )
+            }
+        }
+    }
+}
+
 /** 单条：文件夹 → 图标 + 名称；笔记 → 日期 / 标题 + ⋮ / 正文预览；多选模式：选中高亮 + 勾选指示（仅选中显示）。 */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -361,7 +391,11 @@ private fun NoteRow(
             )
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    text = displayTitle(node),
+                    text = if (item.highlightInTitle) {
+                        highlighted(displayTitle(node), item.highlight)
+                    } else {
+                        AnnotatedString(displayTitle(node))
+                    },
                     style = MaterialTheme.typography.titleLarge,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -402,7 +436,11 @@ private fun NoteRow(
             }
             if (item.preview.isNotEmpty()) {
                 Text(
-                    text = item.preview,
+                    text = if (item.highlightInTitle) {
+                        AnnotatedString(item.preview)
+                    } else {
+                        highlighted(item.preview, item.highlight)
+                    },
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 4,

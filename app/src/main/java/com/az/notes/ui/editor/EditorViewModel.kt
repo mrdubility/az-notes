@@ -20,6 +20,7 @@ import com.az.notes.data.sync.ConflictMarkerResolver
 import com.az.notes.data.sync.SyncEngine
 import com.az.notes.domain.model.EditorTool
 import com.az.notes.domain.model.AppSettings
+import com.az.notes.domain.model.LinkUpdateMode
 import com.az.notes.domain.model.FileNode
 import com.az.notes.ui.common.UiText
 import com.az.notes.ui.common.CreateFolderResult
@@ -28,6 +29,7 @@ import com.az.notes.ui.common.toUiText
 import com.az.notes.work.SyncScheduler
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -61,7 +63,9 @@ data class EditorUiState(
     /** 文件已在别处被修改（保存前发现磁盘 mtime 变过）：UI 弹二选一确认 */
     val externalChange: Boolean = false,
     /** 最近查看 / 编辑的笔记名（小写、无扩展名）：`[[` 补全同档命中时优先展示 */
-    val recentNoteNames: Set<String> = emptySet()
+    val recentNoteNames: Set<String> = emptySet(),
+    /** ASK 模式下待确认的链接改写影响面（null = 无待确认） */
+    val linkConfirmAffected: Int? = null
 )
 
 /**
@@ -114,6 +118,9 @@ class EditorViewModel @Inject constructor(
      * 把本文件写盘，而编辑页仍持着内存里的旧文本——直接保存会把对方的修改覆盖掉。
      */
     private var lastKnownMtime: Long = 0L
+
+    /** ASK 模式下的待确认请求（await 期间挂起改名 / 移动流程）。 */
+    private var linkConfirmDeferred: CompletableDeferred<Boolean>? = null
 
     init {
         // 工具栏配置：设置页调整顺序 / 启用状态后实时生效
@@ -339,13 +346,39 @@ class EditorViewModel @Inject constructor(
         settings: AppSettings?,
         moves: Map<String, String>
     ): LinkRewriter.Prepared? {
-        if (settings?.alwaysUpdateLinks != true) return null
+        val mode = settings?.linkUpdateMode ?: return null
+        if (mode == LinkUpdateMode.NEVER) return null
         val vault = settings.vaultPath ?: return null
         // 索引未就绪时 plan 会冷扫一次全库：先给一次可见反馈，避免“点下改名没反应”
         if (!linkIndex.isReadyFor(vault)) {
             _state.update { it.copy(message = UiText.of(R.string.msg_links_checking)) }
         }
-        return runCatching { linkRewriter.plan(vault, moves) }.getOrNull()
+        val prepared = runCatching { linkRewriter.plan(vault, moves) }.getOrNull() ?: return null
+        if (mode == LinkUpdateMode.ASK) {
+            val affected = prepared.entries.values.sumOf { list ->
+                list.count { (_, before) -> before != null && before in moves }
+            }
+            if (affected > 0 && !askLinkUpdate(affected)) return null
+        }
+        return prepared
+    }
+
+    /** ASK 模式：挂起等待用户选择是否更新链接（取消 = 不改写，改名继续）。 */
+    private suspend fun askLinkUpdate(affected: Int): Boolean {
+        val deferred = CompletableDeferred<Boolean>()
+        linkConfirmDeferred = deferred
+        _state.update { it.copy(linkConfirmAffected = affected) }
+        return try {
+            deferred.await()
+        } finally {
+            linkConfirmDeferred = null
+            _state.update { s -> s.copy(linkConfirmAffected = null) }
+        }
+    }
+
+    /** 链接改写确认框的回答（true = 更新链接）。 */
+    fun answerLinkConfirm(update: Boolean) {
+        linkConfirmDeferred?.complete(update)
     }
 
     /**

@@ -18,6 +18,7 @@ import com.az.notes.domain.model.AppSettings
 import com.az.notes.domain.model.DefaultNoteMode
 import com.az.notes.domain.model.EditorTool
 import com.az.notes.domain.model.FontFamilyPreference
+import com.az.notes.domain.model.LinkUpdateMode
 import com.az.notes.domain.model.NoteSortOrder
 import com.az.notes.domain.model.ThemeMode
 import com.az.notes.domain.model.VaultInfo
@@ -85,6 +86,7 @@ class SettingsRepository @Inject constructor(
         val IMAGE_COMPRESS = booleanPreferencesKey("image_compress_enabled")
         val ATTACHMENT_PROMPT = booleanPreferencesKey("attachment_prompt_enabled")
         val ALWAYS_UPDATE_LINKS = booleanPreferencesKey("always_update_links")
+        val LINK_UPDATE_MODE = stringPreferencesKey("link_update_mode")
         val REMOTE_IMAGE_MAX_MB = intPreferencesKey("remote_image_max_mb")
         val REMOTE_IMAGE_TIMEOUT = intPreferencesKey("remote_image_timeout_seconds")
         val AI_PRIVACY_ACK = booleanPreferencesKey("ai_privacy_acknowledged")
@@ -140,7 +142,13 @@ class SettingsRepository @Inject constructor(
                 ?.let { runCatching { AppLanguage.valueOf(it) }.getOrNull() }
                 ?: AppLanguage.SYSTEM,
             trashEnabled = prefs[Keys.TRASH_ENABLED] ?: true,
-            alwaysUpdateLinks = prefs[Keys.ALWAYS_UPDATE_LINKS] ?: true,
+            linkUpdateMode = prefs[Keys.LINK_UPDATE_MODE]
+                ?.let { runCatching { LinkUpdateMode.valueOf(it) }.getOrNull() }
+                ?: if (prefs[Keys.ALWAYS_UPDATE_LINKS] == false) {
+                    LinkUpdateMode.NEVER
+                } else {
+                    LinkUpdateMode.ALWAYS
+                },
             editorToolOrder = prefs[Keys.TOOL_ORDER]
                 ?.split(',')
                 ?.filter { EditorTool.fromId(it) != null }
@@ -346,8 +354,11 @@ class SettingsRepository @Inject constructor(
     /** 是否启用回收站。 */
     suspend fun setTrashEnabled(enabled: Boolean) = edit { it[Keys.TRASH_ENABLED] = enabled }
 
-    /** 改名 / 移动时是否自动更新其它笔记里的双链（默认开）。 */
-    suspend fun setAlwaysUpdateLinks(enabled: Boolean) = edit { it[Keys.ALWAYS_UPDATE_LINKS] = enabled }
+    /** 改名 / 移动时的双链处理方式（同时写旧布尔键，便于回退旧版本）。 */
+    suspend fun setLinkUpdateMode(mode: LinkUpdateMode) = edit {
+        it[Keys.LINK_UPDATE_MODE] = mode.name
+        it[Keys.ALWAYS_UPDATE_LINKS] = mode != LinkUpdateMode.NEVER
+    }
 
     /** 编辑器工具栏顺序（存工具 id，逗号分隔）。 */
     suspend fun setEditorToolOrder(order: List<String>) = edit {

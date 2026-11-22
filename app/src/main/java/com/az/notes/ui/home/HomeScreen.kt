@@ -140,6 +140,8 @@ fun HomeScreen(
     var deleteTarget by remember { mutableStateOf<NoteListItem?>(null) }
     // 删除确认时的附件引用统计（仅笔记、开关开启时非 null）
     var deleteReferenced by remember { mutableStateOf<AttachmentRepository.ReferencedAttachments?>(null) }
+    // 删除确认时的反链影响（索引未就绪时只报“未检查”，不会为它触发全库扫描）
+    var deleteImpact by remember { mutableStateOf<com.az.notes.ui.notes.DeleteImpact?>(null) }
     var newFolderDialog by remember { mutableStateOf(false) }
     var moveDialog by remember { mutableStateOf(false) }
     var moveSingle by remember { mutableStateOf<String?>(null) }
@@ -203,6 +205,7 @@ fun HomeScreen(
     LaunchedEffect(deleteTarget) {
         val target = deleteTarget
         deleteReferenced = if (target != null) viewModel.referencedAttachmentsFor(target.node) else null
+        deleteImpact = target?.let { viewModel.deleteBacklinkImpact(listOf(it.node.absolutePath)) }
     }
 
     // 一次性提示（重命名/删除/收藏等结果）；携带撤销动作时显示横幅与「撤销」按钮，
@@ -517,10 +520,34 @@ fun HomeScreen(
         )
     }
 
+    // ASK 模式：改名 / 移动前先告知影响面，由用户决定是否改写链接
+    state.linkConfirmAffected?.let { affected ->
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { viewModel.answerLinkConfirm(update = false) },
+            title = { androidx.compose.material3.Text(stringResource(R.string.link_confirm_title)) },
+            text = {
+                androidx.compose.material3.Text(
+                    stringResource(R.string.link_confirm_message, affected)
+                )
+            },
+            confirmButton = {
+                androidx.compose.material3.TextButton(
+                    onClick = { viewModel.answerLinkConfirm(update = true) }
+                ) { androidx.compose.material3.Text(stringResource(R.string.link_confirm_update)) }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(
+                    onClick = { viewModel.answerLinkConfirm(update = false) }
+                ) { androidx.compose.material3.Text(stringResource(R.string.link_confirm_skip)) }
+            }
+        )
+    }
+
     deleteTarget?.let { target ->
         DeleteDialog(
             node = target.node,
             referenced = deleteReferenced,
+            backlinkImpact = deleteImpact,
             onDismiss = { deleteTarget = null },
             onConfirm = { alsoTrashAttachments ->
                 // 复用打开对话框时已查的引用索引，避免确认后再全库重扫

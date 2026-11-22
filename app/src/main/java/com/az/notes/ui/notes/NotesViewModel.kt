@@ -18,6 +18,7 @@ import com.az.notes.data.sync.SyncRunNotifier
 import com.az.notes.domain.model.AppSettings
 import com.az.notes.domain.model.FileNode
 import com.az.notes.domain.model.NoteSortOrder
+import com.az.notes.domain.model.LinkUpdateMode
 import com.az.notes.domain.model.VaultInfo
 import com.az.notes.domain.notes.resolveStartFolder
 import com.az.notes.domain.notes.splitPinnedNotes
@@ -29,6 +30,7 @@ import com.az.notes.ui.common.toUiText
 import com.az.notes.work.SyncScheduler
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -54,8 +56,18 @@ import javax.inject.Inject
 data class NoteListItem(
     val node: FileNode,
     val preview: String = "",
-    val subtitle: String? = null
+    val subtitle: String? = null,
+    /** 搜索命中区间（[highlightInTitle] 为 true 时相对文件名，否则相对 [preview]） */
+    val highlight: List<IntRange> = emptyList(),
+    /** 命中在标题上而不是正文预览上 */
+    val highlightInTitle: Boolean = false
 )
+
+/**
+ * 删除前的反链影响：[indexReady] 为 false 表示链接索引未就绪（未做检查，不因此触发全库扫描），
+ * [backlinks] 为被引用的处数。
+ */
+data class DeleteImpact(val backlinks: Int = 0, val indexReady: Boolean = false)
 
 data class NotesUiState(
     val vaultPath: String? = null,
@@ -88,7 +100,9 @@ data class NotesUiState(
     val moveTargetVaultId: String? = null,
     val error: UiText? = null,
     /** 一次性提示（Snackbar），消费后清空；携带撤销动作时横幅右侧显示「撤销」按钮 */
-    val message: UiMessage? = null
+    val message: UiMessage? = null,
+    /** ASK 模式下待确认的链接改写影响面（null = 无待确认） */
+    val linkConfirmAffected: Int? = null
 ) {
     val currentDir: String? get() = dirStack.lastOrNull()
     val atRoot: Boolean get() = dirStack.isEmpty()
@@ -148,6 +162,9 @@ class NotesViewModel @Inject constructor(
 
     /** 冷启动「启动时进入文件夹」是否已处理（进程内只跳一次，返回主页 / 切仓库不再跳） */
     private var startFolderApplied = false
+
+    /** ASK 模式下的待确认请求（await 期间挂起改名 / 移动流程）。 */
+    private var linkConfirmDeferred: CompletableDeferred<Boolean>? = null
 
     /** 链接索引预热是否已发起（仅一次，避免每次进主页都全局扫一遍）。 */
     private var linkIndexPrewarmed = false
@@ -326,7 +343,9 @@ class NotesViewModel @Inject constructor(
                                 node = hit.node,
                                 // 正文命中展示上下文片段，文件名命中展示正文预览
                                 preview = hit.snippet ?: previewFor(hit.node, previewChars),
-                                subtitle = hit.node.relativePath.substringBeforeLast('/', "").ifEmpty { null }
+                                subtitle = hit.node.relativePath.substringBeforeLast('/', "").ifEmpty { null },
+                                highlight = hit.ranges,
+                                highlightInTitle = hit.snippet == null
                             )
                         }
                     }
@@ -409,13 +428,39 @@ class NotesViewModel @Inject constructor(
      * [moves] 必须是**文件级**的旧→新绝对路径映射（目录移动由 [expandMoves] 展开）。
      */
     private suspend fun planLinkRewrites(moves: Map<String, String>): LinkRewriter.Prepared? {
-        if (!currentSettings.alwaysUpdateLinks || moves.isEmpty()) return null
+        val mode = currentSettings.linkUpdateMode
+        if (mode == LinkUpdateMode.NEVER || moves.isEmpty()) return null
         val vault = currentSettings.vaultPath ?: return null
         // 索引未就绪时 plan 会冷扫一次全库：先给一次可见反馈
         if (!linkIndex.isReadyFor(vault)) {
             _state.update { it.copy(message = UiMessage(UiText.of(R.string.msg_links_checking))) }
         }
-        return runCatching { linkRewriter.plan(vault, moves) }.getOrNull()
+        val prepared = runCatching { linkRewriter.plan(vault, moves) }.getOrNull() ?: return null
+        if (mode == LinkUpdateMode.ASK) {
+            val affected = prepared.entries.values.sumOf { list ->
+                list.count { (_, before) -> before != null && before in moves }
+            }
+            if (affected > 0 && !askLinkUpdate(affected)) return null
+        }
+        return prepared
+    }
+
+    /** ASK 模式：挂起等待用户在对话框里选择是否更新链接（取消 = 不改写，改名继续）。 */
+    private suspend fun askLinkUpdate(affected: Int): Boolean {
+        val deferred = CompletableDeferred<Boolean>()
+        linkConfirmDeferred = deferred
+        _state.update { it.copy(linkConfirmAffected = affected) }
+        return try {
+            deferred.await()
+        } finally {
+            linkConfirmDeferred = null
+            _state.update { s -> s.copy(linkConfirmAffected = null) }
+        }
+    }
+
+    /** 链接改写确认框的回答（true = 更新链接）。 */
+    fun answerLinkConfirm(update: Boolean) {
+        linkConfirmDeferred?.complete(update)
     }
 
     /** 执行链接改写：登记同步强制上传（防指纹未变漏传）。 */
@@ -520,6 +565,17 @@ class NotesViewModel @Inject constructor(
         return withContext(Dispatchers.IO) {
             runCatching { attachmentRepository.referencedByNote(File(vault), node.absolutePath) }.getOrNull()
         }
+    }
+
+    /**
+     * 删除前的反链统计：直接读倒排表（O(1)/篇），索引未就绪时返回“未检查”而**不**触发全库扫描
+     * （主页预热已覆盖绝大多数情况）。
+     */
+    fun deleteBacklinkImpact(paths: List<String>): DeleteImpact {
+        val vault = currentSettings.vaultPath
+        val ready = vault != null && linkIndex.isReadyFor(vault)
+        if (!ready) return DeleteImpact(indexReady = false)
+        return DeleteImpact(backlinks = paths.sumOf { linkIndex.backlinksOf(it).size }, indexReady = true)
     }
 
     /**
@@ -1387,8 +1443,14 @@ class NotesViewModel @Inject constructor(
     ): ListingPage = coroutineScope {
         val nodesAsync = async(Dispatchers.IO) { vaultRepository.listChildren(dirPath, vaultPath) }
         val nodes = nodesAsync.await()
-        val folders = nodes.filter { it.isDirectory }.sortedBy { it.name.lowercase() }
-        val sorted = sortNotes(nodes.filter { it.isMarkdown }, currentSettings.sortOrder)
+        // 单趟分区：文件夹与笔记各自归类，之后只对需要排序的段排序
+        val folders = ArrayList<FileNode>(nodes.size)
+        val noteNodes = ArrayList<FileNode>(nodes.size)
+        nodes.forEach { node ->
+            if (node.isDirectory) folders += node else if (node.isMarkdown) noteNodes += node
+        }
+        folders.sortWith(NAME_ORDER)
+        val sorted = sortNotes(noteNodes, currentSettings.sortOrder)
         val notes = if (keepOrder != null) applyOrderSnapshot(sorted, keepOrder) else sorted
         // 置顶切分：仅按相对路径命中（笔记只会出现在其父目录列表，故天然限定在所在文件夹）
         val (pinnedNotes, restNotes) = splitPinnedNotes(notes, currentSettings.pinnedPaths)
@@ -1427,10 +1489,15 @@ class NotesViewModel @Inject constructor(
      * 相对顺序（标题 / 时间 / 预览均为最新），新出现（快照中无）的笔记按最新排序置顶。
      */
     private fun applyOrderSnapshot(sorted: List<FileNode>, snapshot: List<String>): List<FileNode> {
-        val byPath = sorted.associateBy { it.absolutePath }
-        val kept = snapshot.mapNotNull { byPath[it] }
-        val known = snapshot.toHashSet()
-        val newcomers = sorted.filter { it.absolutePath !in known }
+        val byPath = HashMap<String, FileNode>(sorted.size * 2)
+        sorted.forEach { byPath[it.absolutePath] = it }
+        val kept = ArrayList<FileNode>(snapshot.size)
+        val known = HashSet<String>(snapshot.size * 2)
+        snapshot.forEach { path ->
+            if (known.add(path)) byPath[path]?.let { kept += it }
+        }
+        val newcomers = ArrayList<FileNode>(sorted.size)
+        sorted.forEach { if (it.absolutePath !in known) newcomers += it }
         return newcomers + kept
     }
 
@@ -1455,11 +1522,17 @@ class NotesViewModel @Inject constructor(
     private fun sortNotes(notes: List<FileNode>, order: NoteSortOrder): List<FileNode> = when (order) {
         NoteSortOrder.MODIFIED_DESC -> notes.sortedByDescending { it.lastModified }
         NoteSortOrder.MODIFIED_ASC -> notes.sortedBy { it.lastModified }
-        NoteSortOrder.NAME_ASC -> notes.sortedBy { it.name.lowercase() }
-        NoteSortOrder.NAME_DESC -> notes.sortedByDescending { it.name.lowercase() }
+        NoteSortOrder.NAME_ASC -> notes.sortedWith(NAME_ORDER)
+        NoteSortOrder.NAME_DESC -> notes.sortedWith(NAME_ORDER.reversed())
     }
 
     private companion object {
+        /**
+         * 名称排序：用平台大小写不敏感比较器，避免每次比较都 `name.lowercase()` 分配新字符串。
+         * 与旧实现的差异仅在“名称只差大小写”时（比较器视为相等，保持稳定排序原序）。
+         */
+        val NAME_ORDER: Comparator<FileNode> = compareBy(String.CASE_INSENSITIVE_ORDER) { it.name }
+
         /** 预览缓存上限：超过后按访问序逐出最旧条目（LRU），控制内存占用。 */
         const val PREVIEW_CACHE_LIMIT = 2000
 

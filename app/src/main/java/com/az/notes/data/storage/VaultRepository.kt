@@ -12,8 +12,18 @@ import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 
-/** 全局搜索命中：snippet 为正文命中位置的上下文片段（null = 仅文件名命中）。 */
-data class SearchHit(val node: FileNode, val snippet: String? = null)
+/**
+ * 全局搜索命中：
+ * - [snippet] 为正文命中位置的上下文片段（null = 仅文件名命中）；
+ * - [rank] 为排序权重：0 = 标题前缀命中、1 = 标题包含、2 = 正文命中；
+ * - [ranges] 为命中区间（相对 [snippet]；仅文件名命中时相对文件名），供列表底色高亮。
+ */
+data class SearchHit(
+    val node: FileNode,
+    val snippet: String? = null,
+    val rank: Int = 2,
+    val ranges: List<IntRange> = emptyList()
+)
 
 /**
  * Vault 文件存储仓库（§4.1 / §2.1）。
@@ -90,6 +100,10 @@ class VaultRepository @Inject constructor() {
 
         /** 片段压缩用的连续空白。 */
         private val WHITESPACE_RUN = Regex("\\s+")
+
+        /** 命中片段的前后取字符数。 */
+        private const val SNIPPET_BEFORE = 30
+        private const val SNIPPET_AFTER = 50
 
         /** 文件名（不含扩展）对应的 Markdown 判断 */
         fun isMarkdownName(name: String): Boolean =
@@ -212,29 +226,63 @@ class VaultRepository @Inject constructor() {
 
     /**
      * 递归搜索 Vault 中的 Markdown 笔记（主页全局搜索）：
-     * 按修改时间从新到旧逐条匹配（文件名或正文命中即收集），结果严格倒序；
+     * 查询按空白分词，**所有词都命中**才算命中（标题优先，其次正文）；
+     * 结果按「标题前缀 → 标题包含 → 正文」再按修改时间从新到旧排序，表头高亮区间随命中返回。
      * 正文读取走 mtime 增量缓存（见 [contentFor]），大文件跳过正文匹配。
-     * 最多返回 [limit] 条；正文命中时附带 [SearchHit.snippet] 上下文片段。
      */
     fun searchNotes(rootPath: String, query: String, limit: Int = 100): List<SearchHit> {
         val root = File(rootPath)
         val trimmed = query.trim()
         if (!root.isDirectory || trimmed.isEmpty()) return emptyList()
-        val notes = listAllNotes(rootPath)
-        // 从新到旧单轮遍历：命中即收集，输出天然严格按修改时间倒序
-        val ordered = notes.sortedByDescending { it.lastModified }
-        val out = ArrayList<SearchHit>()
+        val terms = trimmed.split(WHITESPACE_RUN).filter { it.isNotBlank() }
+        if (terms.isEmpty()) return emptyList()
+        val ordered = listAllNotes(rootPath).sortedByDescending { it.lastModified }
+        val matched = ArrayList<SearchHit>()
+        // 先收集比限额多一些的命中再排序，避免先到的正文命中把标题命中挤出去
+        val cap = limit * 4
         for (node in ordered) {
-            if (out.size >= limit) break
-            if (node.name.contains(trimmed, ignoreCase = true)) {
-                out += SearchHit(node)
+            if (matched.size >= cap) break
+            val titleHits = termHits(node.name, terms)
+            if (titleHits != null) {
+                val rank = if (terms.all { node.name.startsWith(it, ignoreCase = true) }) 0 else 1
+                matched += SearchHit(node, null, rank, rangesIn(node.name, terms))
                 continue
             }
             val text = contentFor(node) ?: continue
-            val index = text.indexOf(trimmed, ignoreCase = true)
-            if (index >= 0) out += SearchHit(node, snippetAround(text, index, trimmed.length))
+            val hits = termHits(text, terms) ?: continue
+            val anchor = hits.minOrNull() ?: continue
+            val start = (anchor - SNIPPET_BEFORE).coerceAtLeast(0)
+            val end = (anchor + terms[0].length + SNIPPET_AFTER).coerceAtMost(text.length)
+            val snippet = text.substring(start, end)
+            matched += SearchHit(node, snippet, rank = 2, ranges = rangesIn(snippet, terms))
+        }
+        return matched.sortedWith(compareBy({ it.rank }, { -it.node.lastModified })).take(limit)
+    }
+
+    /** 每个词在 [text] 中的首次命中位置；任一词未命中返回 null。 */
+    private fun termHits(text: String, terms: List<String>): IntArray? {
+        val out = IntArray(terms.size)
+        terms.forEachIndexed { index, term ->
+            val hit = text.indexOf(term, ignoreCase = true)
+            if (hit < 0) return null
+            out[index] = hit
         }
         return out
+    }
+
+    /** 每个词在 [text] 中的全部命中区间（大小写不敏感，重叠不管，按起点排序）。 */
+    private fun rangesIn(text: String, terms: List<String>): List<IntRange> {
+        val out = ArrayList<IntRange>()
+        terms.forEach { term ->
+            var from = 0
+            while (from <= text.length) {
+                val hit = text.indexOf(term, from, ignoreCase = true)
+                if (hit < 0) break
+                out += hit until (hit + term.length)
+                from = hit + term.length.coerceAtLeast(1)
+            }
+        }
+        return out.sortedBy { it.first }
     }
 
     /** 递归收集全部 Markdown 笔记（忽略隐藏项），标签索引等全库扫描场景复用。 */
@@ -311,13 +359,6 @@ class VaultRepository @Inject constructor() {
             }
         }
         return text
-    }
-
-    /** 命中位置的上下文片段：前后各截一段并压缩连续空白。 */
-    private fun snippetAround(text: String, index: Int, length: Int): String {
-        val start = (index - 30).coerceAtLeast(0)
-        val end = (index + length + 50).coerceAtMost(text.length)
-        return text.substring(start, end).replace(WHITESPACE_RUN, " ").trim()
     }
 
     /** 递归收集全部子目录（忽略隐藏项，含 depth），供批量移动选择目标文件夹。 */

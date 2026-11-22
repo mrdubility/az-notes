@@ -46,8 +46,10 @@ data class BackupSettings(
     val trashRetentionDays: Int? = null,
     val language: String? = null,
     val trashEnabled: Boolean? = null,
-    /** 改名 / 移动时自动更新双链（缺失回落默认开） */
+    /** 改名 / 移动时自动更新双链（旧字段：布尔；导入时作为 [linkUpdateMode] 的回退） */
     val alwaysUpdateLinks: Boolean? = null,
+    /** 改名 / 移动时的双链处理方式（ALWAYS / ASK / NEVER）；缺失时回退 [alwaysUpdateLinks] */
+    val linkUpdateMode: String? = null,
     val editorToolOrder: List<String>? = null,
     val editorToolDisabled: List<String>? = null,
     /** 打开笔记的默认落点（查看页 / 编辑页；缺失回落查看页） */

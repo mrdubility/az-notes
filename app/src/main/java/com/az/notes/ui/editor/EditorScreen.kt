@@ -360,6 +360,25 @@ fun EditorScreen(
         }
     }
 
+    // ASK 模式：改名 / 移动前先告知影响面（取消 = 不改写链接，改名继续）
+    state.linkConfirmAffected?.let { affected ->
+        AlertDialog(
+            onDismissRequest = { viewModel.answerLinkConfirm(update = false) },
+            title = { Text(stringResource(R.string.link_confirm_title)) },
+            text = { Text(stringResource(R.string.link_confirm_message, affected)) },
+            confirmButton = {
+                TextButton(onClick = { viewModel.answerLinkConfirm(update = true) }) {
+                    Text(stringResource(R.string.link_confirm_update))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { viewModel.answerLinkConfirm(update = false) }) {
+                    Text(stringResource(R.string.link_confirm_skip))
+                }
+            }
+        )
+    }
+
     // 同步冲突消解：保留本地 / 保留云端（均为整篇替换，标记行一并移除）
     if (conflictDialog) {
         AlertDialog(

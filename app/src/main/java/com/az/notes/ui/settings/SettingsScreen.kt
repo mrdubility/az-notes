@@ -173,17 +173,20 @@ fun SettingsScreen(
                 )
             }
             item {
-                SettingsRow(
+                val modeOptions = listOf(
+                    com.az.notes.domain.model.LinkUpdateMode.ALWAYS to
+                        stringResource(R.string.settings_link_update_always),
+                    com.az.notes.domain.model.LinkUpdateMode.ASK to
+                        stringResource(R.string.settings_link_update_ask),
+                    com.az.notes.domain.model.LinkUpdateMode.NEVER to
+                        stringResource(R.string.settings_link_update_never)
+                )
+                SettingsChoiceRow(
                     icon = Icons.Outlined.Description,
                     title = stringResource(R.string.settings_always_update_links),
-                    subtitle = stringResource(R.string.settings_always_update_links_subtitle),
-                    trailing = {
-                        Switch(
-                            checked = settings.alwaysUpdateLinks,
-                            onCheckedChange = viewModel::setAlwaysUpdateLinks
-                        )
-                    },
-                    onClick = { viewModel.setAlwaysUpdateLinks(!settings.alwaysUpdateLinks) }
+                    options = modeOptions,
+                    selected = settings.linkUpdateMode,
+                    onSelect = viewModel::setLinkUpdateMode
                 )
             }
 

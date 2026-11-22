@@ -29,13 +29,15 @@ data class LinkOutItem(
     val count: Int
 )
 
-/** 反向链接条目：某篇笔记在 [line] 行提到了当前笔记（[snippet] 为该行可读上下文）。 */
+/** 反向链接条目：某篇笔记在 [line] 行提到了当前笔记（[snippet] 为该行可读上下文）。
+ * [count] 为同一来源笔记指向本笔记的引用次数（同一篇引用多行时大于 1）。 */
 data class BacklinkItem(
     val sourcePath: String,
     val relativePath: String,
     val line: Int,
     val display: String,
-    val snippet: String
+    val snippet: String,
+    val count: Int = 1
 )
 
 /** 单条引用的解析结果（三态：命中 / 普通链接未解析 / 不计入出链）。 */
@@ -89,6 +91,12 @@ class VaultLinkIndex @Inject constructor(
 
     private val buildMutex = Mutex()
 
+    /** 是否正在构建索引（UI 可据此区分"没反链"与"正在扫"）。 */
+    @Volatile
+    private var building: Boolean = false
+
+    val isBuilding: Boolean get() = building
+
     @Volatile
     private var snapshot: Snapshot? = null
 
@@ -106,6 +114,58 @@ class VaultLinkIndex @Inject constructor(
 
     /** 该仓库的索引是否已建好：未建时 [LinkRewriter.plan] 会冷扫一次全库。 */
     fun isReadyFor(vaultPath: String): Boolean = snapshot?.rootPath == keyOf(vaultPath)
+
+    /**
+     * 外部改动检测结果（同步拉取 / 其他 App 或脚本修改）：只做 size + mtime 比对，不读正文。
+     * [isEmpty] 为 true 表示索引快照仍可信。
+     */
+    data class ExternalDiff(
+        val changed: List<String> = emptyList(),
+        val removed: List<String> = emptyList(),
+        val added: List<String> = emptyList()
+    ) {
+        val isEmpty: Boolean get() = changed.isEmpty() && removed.isEmpty() && added.isEmpty()
+    }
+
+    /**
+     * 与快照指纹对比检测外部改动；索引未构建时返回空 diff（未建就没有可信度可言）。
+     * 发现差异后调用方应 [invalidate]，让下一次 [buildOrRefresh] 全量重算。
+     */
+    suspend fun detectExternalChanges(vaultPath: String): ExternalDiff {
+        val key = keyOf(vaultPath)
+        val current = snapshot?.takeIf { it.rootPath == key } ?: return ExternalDiff()
+        return withContext(Dispatchers.IO) {
+            val notes = vaultRepository.listAllNotes(key)
+            val now = HashMap<String, Fingerprint>(notes.size)
+            notes.forEach { now[it.absolutePath] = Fingerprint(it.size, it.lastModified) }
+            val changed = ArrayList<String>()
+            val added = ArrayList<String>()
+            for ((path, fingerprint) in now) {
+                val prev = current.fingerprints[path]
+                when {
+                    prev == null -> added += path
+                    prev != fingerprint -> changed += path
+                }
+            }
+            val removed = current.fingerprints.keys.filter { it !in now }
+            ExternalDiff(changed, removed, added)
+        }
+    }
+
+    /**
+     * 确保索引可用：已就绪直接返回 true；否则构建一次并返回是否成功。
+     * 与 [buildOrRefresh] 同一构建路径（不另开扫描逻辑）。
+     */
+    suspend fun ensureReady(
+        vaultPath: String,
+        onProgress: ((Int, Int) -> Unit)? = null
+    ): Boolean {
+        if (isReadyFor(vaultPath)) return true
+        return runCatching {
+            buildOrRefresh(vaultPath) { done, total -> onProgress?.invoke(done, total) }
+            isReadyFor(vaultPath)
+        }.getOrDefault(false)
+    }
 
     /** 未链接提及缓存：`vault|目标|名字索引版本 → 结果`（只保留最近一次）。 */
     private var mentionsCache: Pair<String, List<BacklinkItem>>? = null
@@ -188,7 +248,12 @@ class VaultLinkIndex @Inject constructor(
         buildMutex.withLock {
             if (!force && isFresh(key)) return
             val prev = snapshot
-            withContext(Dispatchers.IO) { rebuild(root, key, prev, onProgress) }
+            building = true
+            try {
+                withContext(Dispatchers.IO) { rebuild(root, key, prev, onProgress) }
+            } finally {
+                building = false
+            }
         }
     }
 
@@ -292,6 +357,12 @@ class VaultLinkIndex @Inject constructor(
         reverse.values.forEach { list ->
             list.sortWith(compareBy({ it.relativePath.lowercase() }, { it.line }))
         }
+        // 同一来源的多行引用 → 回填"该来源指向本笔记的次数"，供面板显示 ×N
+        val counted = reverse.mapValues { (_, list) ->
+            val perSource = HashMap<String, Int>()
+            list.forEach { perSource[it.sourcePath] = (perSource[it.sourcePath] ?: 0) + 1 }
+            list.map { it.copy(count = perSource[it.sourcePath] ?: 1) }
+        }
         snapshot = Snapshot(
             rootPath = key,
             builtAt = System.currentTimeMillis(),
@@ -299,7 +370,7 @@ class VaultLinkIndex @Inject constructor(
             dirty = emptySet(),
             raw = raw,
             forward = forward,
-            reverse = reverse.mapValues { it.value.toList() }
+            reverse = counted.mapValues { it.value.toList() }
         )
     }
 

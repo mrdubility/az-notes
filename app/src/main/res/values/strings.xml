@@ -216,6 +216,13 @@
     <string name="settings_editor_toolbar_reset">恢复默认</string>
     <string name="settings_always_update_links">自动更新双链</string>
     <string name="settings_always_update_links_subtitle">重命名或移动笔记时，改写其它笔记里指向它的链接</string>
+    <string name="settings_link_update_always">总是自动更新</string>
+    <string name="settings_link_update_ask">每次询问</string>
+    <string name="settings_link_update_never">从不更新</string>
+    <string name="link_confirm_title">更新链接？</string>
+    <string name="link_confirm_message">这次改名将影响其它笔记中的 %1$d 处链接。</string>
+    <string name="link_confirm_update">更新链接</string>
+    <string name="link_confirm_skip">不改（链接会断）</string>
     <string name="settings_toolbar_move_up">上移</string>
     <string name="settings_toolbar_move_down">下移</string>
     <string name="settings_notes_list">笔记列表</string>
@@ -612,6 +619,8 @@
     <string name="sync_restore_backup">恢复旧版本</string>
     <string name="sync_restore_done">已恢复旧版本，并已排队同步</string>
     <string name="sync_restore_failed">恢复失败（备份可能已被清理）</string>
+    <string name="delete_note_backlinks">有 %1$d 处链接指向它，删除后这些链接会失效</string>
+    <string name="delete_note_backlinks_unknown">链接索引尚未就绪，未检查反向链接</string>
     <string name="editor_external_title">文件已更新</string>
     <string name="editor_external_message">该文件已在别处被修改（同步或链接改写），直接保存会覆盖对方的修改。要如何处理？</string>
     <string name="editor_external_reload">重新载入</string>

@@ -343,6 +343,8 @@ class ReaderViewModel @Inject constructor(
             val path = absolutePath
             val backs = withContext(Dispatchers.IO) {
                 runCatching {
+                    // 外部改动（同步下载 / 其他 App 编辑）会让倒排陈旧：先轻量 stat 比对，有差异就失效重算
+                    if (!linkIndex.detectExternalChanges(vault).isEmpty) linkIndex.invalidate()
                     linkIndex.buildOrRefresh(vault) { done, total ->
                         // 进度节流：每 15 篇或最后一篇时发布，避免千级 StateFlow 写入
                         if (done == total || done and 15 == 0) {

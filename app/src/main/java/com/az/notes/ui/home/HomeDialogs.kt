@@ -33,6 +33,7 @@ import com.az.notes.domain.model.FileNode
 internal fun DeleteDialog(
     node: FileNode,
     referenced: AttachmentRepository.ReferencedAttachments?,
+    backlinkImpact: com.az.notes.ui.notes.DeleteImpact?,
     onDismiss: () -> Unit,
     onConfirm: (alsoTrashAttachments: Boolean) -> Unit
 ) {
@@ -51,6 +52,25 @@ internal fun DeleteDialog(
                         stringResource(R.string.delete_note_message, node.name)
                     }
                 )
+                // 反链提示（只告知不阻断）：索引未就绪时明确说“未检查”，不制造假安全
+                if (backlinkImpact != null && !backlinkImpact.indexReady) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text = stringResource(R.string.delete_note_backlinks_unknown),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else if (backlinkImpact != null && backlinkImpact.backlinks > 0) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text = stringResource(
+                            R.string.delete_note_backlinks,
+                            backlinkImpact.backlinks
+                        ),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
                 if (referenced != null && referenced.total > 0) {
                     Spacer(Modifier.height(8.dp))
                     Text(

@@ -12,6 +12,13 @@ enum class NoteSortOrder { MODIFIED_DESC, MODIFIED_ASC, NAME_ASC, NAME_DESC }
 /** 打开笔记的默认落点（设置 → 编辑器和查看器）：查看页（阅读器）/ 编辑页。 */
 enum class DefaultNoteMode { VIEW, EDIT }
 
+/**
+ * 改名 / 移动时的双链处理方式。
+ *
+ * [ALWAYS] 直接改写并提示结果；[ASK] 先算出影响面再让用户决定；[NEVER] 完全不改写（也不扫索引）。
+ */
+enum class LinkUpdateMode { ALWAYS, ASK, NEVER }
+
 /** 应用语言：跟随系统 / 简体中文 / English；[tag] 为 Locale 标签（null = 跟随系统）。 */
 enum class AppLanguage(val tag: String?) { SYSTEM(null), ZH("zh"), EN("en") }
 
@@ -46,10 +53,9 @@ data class AppSettings(
     /** 是否启用回收站；关闭后删除将直接物理删除且抽屉隐藏入口 */
     val trashEnabled: Boolean = true,
     /**
-     * 改名 / 移动时是否自动更新其它笔记里指向它的双链（默认开）。
-     * 关闭后行为回到"只改文件名、链接可能断"，由用户自行处理。
+     * 改名 / 移动时如何处理其它笔记里指向它的双链（默认总是自动改写）。
      */
-    val alwaysUpdateLinks: Boolean = true,
+    val linkUpdateMode: LinkUpdateMode = LinkUpdateMode.ALWAYS,
     /** 编辑器工具栏的工具顺序（存 [EditorTool.id] 列表） */
     val editorToolOrder: List<String> = EditorTool.defaultOrder,
     /** 编辑器工具栏中被禁用的工具 id 集合 */

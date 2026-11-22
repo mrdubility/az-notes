@@ -307,7 +307,11 @@ private fun BacklinkRow(item: BacklinkItem, onClick: () -> Unit) {
             .padding(horizontal = 20.dp, vertical = 10.dp)
     ) {
         Text(
-            text = item.sourcePath.substringAfterLast('/'),
+            text = buildString {
+                append(item.sourcePath.substringAfterLast('/'))
+                // 同一篇笔记的多行引用：右侧标出该来源的引用次数
+                if (item.count > 1) append("  ×").append(item.count)
+            },
             style = MaterialTheme.typography.bodyLarge,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
