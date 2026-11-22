@@ -71,8 +71,10 @@ class BackupRepository @Inject constructor(
                 builtin = vault.builtin,
                 hidden = vault.hidden,
                 favoritePaths = perVault.favorites.sorted(),
+                pinnedPaths = perVault.pinned.sorted(),
                 recentPaths = perVault.recents,
                 shareFolder = perVault.shareFolder,
+                startFolder = perVault.startFolder,
                 sync = runCatching { syncConfigRepository.configOf(vault.id) }.getOrNull()?.toBackup()
             )
         }
@@ -150,8 +152,10 @@ class BackupRepository @Inject constructor(
             takenIds += id
             perVault[id] = VaultPerVault(
                 favorites = item.favoritePaths.orEmpty().filter { it.isNotBlank() }.toSet(),
+                pinned = item.pinnedPaths.orEmpty().filter { it.isNotBlank() }.toSet(),
                 recents = item.recentPaths.orEmpty().filter { it.isNotBlank() },
-                shareFolder = item.shareFolder?.trim()?.takeIf { it.isNotBlank() }
+                shareFolder = item.shareFolder?.trim()?.takeIf { it.isNotBlank() },
+                startFolder = item.startFolder?.trim()?.takeIf { it.isNotBlank() }
             )
             item.sync?.toSyncConfig()?.let { syncConfigs[id] = it }
         }
@@ -170,7 +174,14 @@ class BackupRepository @Inject constructor(
             restored.forEach { vault ->
                 perVault[vault.id]?.let { per ->
                     runCatching {
-                        settingsRepository.restorePerVault(vault.id, per.favorites, per.recents, per.shareFolder)
+                        settingsRepository.restorePerVault(
+                            vault.id,
+                            per.favorites,
+                            per.recents,
+                            per.shareFolder,
+                            per.pinned,
+                            per.startFolder
+                        )
                     }
                 }
                 syncConfigs[vault.id]?.let { config ->

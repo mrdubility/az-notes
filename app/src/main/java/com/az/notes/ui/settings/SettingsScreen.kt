@@ -84,6 +84,7 @@ fun SettingsScreen(
     var trashDisableConfirm by remember { mutableStateOf(false) }
     var retentionDialog by remember { mutableStateOf(false) }
     var shareFolderDialog by remember { mutableStateOf(false) }
+    var startFolderDialog by remember { mutableStateOf(false) }
     var imageMaxMbDialog by remember { mutableStateOf(false) }
     var imageTimeoutDialog by remember { mutableStateOf(false) }
     val context = LocalContext.current
@@ -179,6 +180,19 @@ fun SettingsScreen(
                     title = stringResource(R.string.settings_preview_chars),
                     subtitle = stringResource(R.string.settings_preview_chars_value, settings.previewChars),
                     onClick = { previewDialog = true }
+                )
+            }
+            item {
+                SettingsRow(
+                    icon = Icons.Outlined.FolderOpen,
+                    title = stringResource(R.string.settings_start_folder),
+                    subtitle = settings.startFolder?.let {
+                        stringResource(R.string.settings_start_folder_current, it)
+                    } ?: stringResource(R.string.settings_start_folder_root),
+                    onClick = {
+                        viewModel.loadMoveTargets()
+                        startFolderDialog = true
+                    }
                 )
             }
             item {
@@ -437,7 +451,22 @@ fun SettingsScreen(
                 shareFolderDialog = false
             },
             title = stringResource(R.string.settings_share_folder),
-            onCreateFolder = viewModel::createShareFolder
+            onCreateFolder = viewModel::createTargetFolder
+        )
+    }
+
+    // 启动目录选择：列出 Vault 根与全部子目录（选择根目录即恢复默认）
+    if (startFolderDialog) {
+        MoveTargetDialog(
+            vaultPath = settings.vaultPath,
+            targets = moveTargets,
+            onDismiss = { startFolderDialog = false },
+            onSelect = { dir ->
+                viewModel.setStartFolderAbsolute(dir)
+                startFolderDialog = false
+            },
+            title = stringResource(R.string.settings_start_folder),
+            onCreateFolder = viewModel::createTargetFolder
         )
     }
 

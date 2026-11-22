@@ -53,6 +53,10 @@ data class AppSettings(
     val defaultNoteMode: DefaultNoteMode = DefaultNoteMode.VIEW,
     /** 收藏的笔记相对路径集合（相对当前仓库根；仅本地，不参与同步） */
     val favoritePaths: Set<String> = emptySet(),
+    /** 置顶的笔记相对路径集合（相对当前仓库根；仅在所在文件夹列表生效；仅本地，不参与同步） */
+    val pinnedPaths: Set<String> = emptySet(),
+    /** 冷启动进入主页时自动打开的文件夹（相对当前仓库根；null = 仓库根目录） */
+    val startFolder: String? = null,
     /** 最近查看的笔记相对路径（最近优先，上限 50；仅本地，不参与同步，按仓库隔离） */
     val recentPaths: List<String> = emptyList(),
     /** 分享进入的笔记默认保存文件夹（相对当前仓库根；null = 跟随当前目录） */

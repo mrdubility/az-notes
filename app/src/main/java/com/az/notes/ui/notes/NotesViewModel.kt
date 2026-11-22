@@ -16,6 +16,8 @@ import com.az.notes.domain.model.AppSettings
 import com.az.notes.domain.model.FileNode
 import com.az.notes.domain.model.NoteSortOrder
 import com.az.notes.domain.model.VaultInfo
+import com.az.notes.domain.notes.resolveStartFolder
+import com.az.notes.domain.notes.splitPinnedNotes
 import com.az.notes.ui.common.UiMessage
 import com.az.notes.ui.common.UiText
 import com.az.notes.ui.common.CreateFolderResult
@@ -70,6 +72,8 @@ data class NotesUiState(
     val trashEnabled: Boolean = true,
     /** 收藏的笔记相对路径集合（仅本地，不参与同步） */
     val favoritePaths: Set<String> = emptySet(),
+    /** 置顶的笔记相对路径集合（仅本地；仅在所在文件夹列表生效） */
+    val pinnedPaths: Set<String> = emptySet(),
     /** 是否还有后续批次未装载（滚动到底自动加载） */
     val hasMore: Boolean = false,
     /** 多选模式（长按进入）：批量移动笔记 */
@@ -136,6 +140,12 @@ class NotesViewModel @Inject constructor(
     /** 当前目录尚未装载预览的后续笔记（滚动到底逐批加载） */
     private var pendingNotes: List<FileNode> = emptyList()
 
+    /** 冷启动「启动时进入文件夹」是否已处理（进程内只跳一次，返回主页 / 切仓库不再跳） */
+    private var startFolderApplied = false
+
+    /** 启动目录解析中：阻断 onScreenEntered 抢先装载根目录（避免闪动与位置漂移） */
+    private var pendingStartEntry = false
+
     /**
      * 笔记显示顺序快照（绝对路径，与 [orderSnapshotDir] 配对）：编辑返回、增删改等
      * 重载时按它保持条目位置（标题 / 时间 / 预览仍取最新）；下拉刷新、切换目录、
@@ -172,6 +182,7 @@ class NotesViewModel @Inject constructor(
                 sortOrder = s.sortOrder,
                 trashEnabled = s.trashEnabled,
                 favoritePaths = s.favoritePaths,
+                pinnedPaths = s.pinnedPaths,
                 vaults = s.vaults,
                 currentVaultId = s.currentVaultId
             )
@@ -197,21 +208,49 @@ class NotesViewModel @Inject constructor(
                     _state.update { it.copy(loading = false, error = UiText.of(R.string.home_no_vault)) }
                 } else {
                     initialized = true
-                    // 已切换仓库：新仓库列表从头装载，不沿用旧仓库的装载数量
-                    reloadItems(pullRefresh = false, keepLoadedNotes = false)
+                    // 冷启动（首次偏好回流）且配置了启动目录：先解析目录再装载，只发一次装载
+                    // （避免先载根目录再跳目录造成闪动与滚动位置漂移）
+                    val startRelative = if (startFolderApplied) null else s.startFolder
+                    startFolderApplied = true
+                    if (startRelative != null) {
+                        pendingStartEntry = true
+                        viewModelScope.launch {
+                            val vault = s.vaultPath ?: return@launch
+                            val startDir = runCatching {
+                                withContext(Dispatchers.IO) {
+                                    resolveStartFolder(vault, startRelative) { File(it).isDirectory }
+                                }
+                            }.getOrNull()
+                            // 目录不存在 / 越界：回落根目录（保留偏好，便于临时不可用后恢复）
+                            if (startDir != null) {
+                                _state.update { it.copy(dirStack = listOf(startDir)) }
+                            }
+                            pendingStartEntry = false
+                            reloadItems(pullRefresh = false, keepLoadedNotes = false)
+                        }
+                    } else {
+                        // 已切换仓库 / 未配置启动目录：新仓库列表从头装载
+                        reloadItems(pullRefresh = false, keepLoadedNotes = false)
+                    }
                 }
             }
             // 预览字符数 / 排序方式变化：保持当前目录重新加载
-            initialized && (s.previewChars != prev.previewChars || s.sortOrder != prev.sortOrder) -> {
+            initialized && !pendingStartEntry &&
+                (s.previewChars != prev.previewChars || s.sortOrder != prev.sortOrder) -> {
                 if (s.previewChars != prev.previewChars) previewCache.clear() // 预览长度变化：缓存失效
                 // 改排序：按新排序立即重排；仅预览长度变化：保持现有条目位置
                 reloadItems(pullRefresh = false, preserveOrder = s.sortOrder == prev.sortOrder)
             }
+            // 置顶变化：保序重载（置顶项立即跳到最前，其余条目保持原位）
+            initialized && !pendingStartEntry && s.pinnedPaths != prev.pinnedPaths ->
+                reloadItems(pullRefresh = false, preserveOrder = true)
         }
     }
 
     /** 进入主页（含从阅读/编辑页返回）时调用：静默重读当前目录，条目保持原位（内容取最新）。 */
     fun onScreenEntered() {
+        // 启动目录解析中：等解析完成后的首次装载，避免先载根目录再跳
+        if (pendingStartEntry) return
         if (initialized) reloadItems(pullRefresh = false, preserveOrder = true)
     }
 
@@ -328,6 +367,7 @@ class NotesViewModel @Inject constructor(
             }
             if (ok) {
                 migrateFavorite(node.absolutePath, target)
+                migratePinned(node.absolutePath, target)
                 // 顺序快照同步替换为新路径：重命名后条目保持原位
                 orderSnapshot = orderSnapshot?.map { if (it == node.absolutePath) target else it }
                 reloadItems(pullRefresh = false, preserveOrder = true)
@@ -429,6 +469,8 @@ class NotesViewModel @Inject constructor(
                 )
             }
             if (ok) {
+                // 删除后清理置顶记录（已不存在于任何列表）
+                removePinnedTrees(listOf(node.absolutePath))
                 // 保序重载：删除后其余条目保持原位
                 reloadItems(pullRefresh = false, preserveOrder = true)
                 scheduleSaveSync()
@@ -737,9 +779,11 @@ class NotesViewModel @Inject constructor(
             }
             if (crossVault) {
                 removeFavoriteTrees(movedPairs.map { it.first })
+                removePinnedTrees(movedPairs.map { it.first })
             } else {
                 movedPairs.forEach { (src, target) ->
                     migrateFavorite(src, target)
+                    migratePinned(src, target)
                     migrateRecent(src, target)
                     syncRemoteRename(src, target)
                 }
@@ -776,9 +820,12 @@ class NotesViewModel @Inject constructor(
             val crossVault = isCrossVaultMove(targetDir)
             val ok = withContext(Dispatchers.IO) { vaultRepository.rename(sourcePath, target) }
             if (ok) {
-                if (crossVault) removeFavoriteTrees(listOf(sourcePath))
-                else {
+                if (crossVault) {
+                    removeFavoriteTrees(listOf(sourcePath))
+                    removePinnedTrees(listOf(sourcePath))
+                } else {
                     migrateFavorite(sourcePath, target)
+                    migratePinned(sourcePath, target)
                     migrateRecent(sourcePath, target)
                 }
                 reloadItems(pullRefresh = false, preserveOrder = true)
@@ -873,6 +920,8 @@ class NotesViewModel @Inject constructor(
                 )
             }
             exitSelectMode()
+            // 批量删除后清理置顶记录
+            removePinnedTrees(paths)
             // 保序重载：删除后其余条目保持原位
             reloadItems(pullRefresh = false, preserveOrder = true)
             if (done > 0) scheduleSaveSync()
@@ -900,6 +949,39 @@ class NotesViewModel @Inject constructor(
                             viewModelScope.launch {
                                 if (adding) settingsRepository.removeFavorite(rel)
                                 else settingsRepository.addFavorite(rel)
+                            }
+                        }
+                    )
+                )
+            }
+        }
+    }
+
+    // ——————————————— 置顶（仅本地，不参与同步；仅在所在文件夹列表生效） ———————————————
+
+    /**
+     * 单条置顶 / 取消置顶（条目三个点菜单入口）：按相对路径记录，改名与移动后自动迁移。
+     * 置顶只在笔记所在文件夹的列表中生效：列表装配时切分到最前（文件夹之上），
+     * 普通区不再出现该条目（不重复显示）。
+     */
+    fun togglePin(node: FileNode) {
+        if (node.isDirectory) return
+        val vault = currentSettings.vaultPath ?: return
+        val rel = vaultRelative(vault, node.absolutePath) ?: return
+        val adding = rel !in currentSettings.pinnedPaths
+        viewModelScope.launch {
+            if (adding) settingsRepository.addPin(rel)
+            else settingsRepository.removePin(rel)
+            _state.update {
+                it.copy(
+                    // 置顶 / 取消置顶均可撤销：横幅右侧「撤销」执行反向操作
+                    message = UiMessage(
+                        text = if (adding) UiText.of(R.string.msg_pinned, node.name)
+                        else UiText.of(R.string.msg_unpinned, node.name),
+                        undo = {
+                            viewModelScope.launch {
+                                if (adding) settingsRepository.removePin(rel)
+                                else settingsRepository.addPin(rel)
                             }
                         }
                     )
@@ -961,6 +1043,25 @@ class NotesViewModel @Inject constructor(
     }
 
     /**
+     * 应用内改名 / 移动后迁移置顶记录：文件本身与其子孙目录内的置顶一并迁移，
+     * 保证置顶始终指向原始文档（未涉及置顶时不做任何事）。
+     */
+    private suspend fun migratePinned(oldAbsPath: String, newAbsPath: String) {
+        val vault = currentSettings.vaultPath ?: return
+        val oldRel = vaultRelative(vault, oldAbsPath) ?: return
+        val newRel = vaultRelative(vault, newAbsPath) ?: return
+        val pinned = currentSettings.pinnedPaths
+        val migrated = pinned.map { rel ->
+            when {
+                rel == oldRel -> newRel
+                rel.startsWith("$oldRel/") -> newRel + rel.removePrefix(oldRel)
+                else -> rel
+            }
+        }.toSet()
+        if (migrated != pinned) runCatching { settingsRepository.setPinnedPaths(migrated) }
+    }
+
+    /**
      * 应用内改名 / 移动后迁移最近查看记录：文件本身与其子孙目录内的记录一并迁移，
      * 保证记录始终指向原始文档（未涉及记录时不做任何事）。
      */
@@ -996,6 +1097,18 @@ class NotesViewModel @Inject constructor(
             .filterNot { rel -> rels.any { r -> rel == r || rel.startsWith("$r/") } }
             .toSet()
         if (remaining != favorites) runCatching { settingsRepository.setFavorites(remaining) }
+    }
+
+    /** 从当前仓库置顶集移除若干路径及其子孙（跨仓库移动 / 删除后清理；未涉及置顶时不写盘）。 */
+    private suspend fun removePinnedTrees(absPaths: List<String>) {
+        val vault = currentSettings.vaultPath ?: return
+        val rels = absPaths.mapNotNull { vaultRelative(vault, it) }.toSet()
+        if (rels.isEmpty()) return
+        val pinned = currentSettings.pinnedPaths
+        val remaining = pinned
+            .filterNot { rel -> rels.any { r -> rel == r || rel.startsWith("$r/") } }
+            .toSet()
+        if (remaining != pinned) runCatching { settingsRepository.setPinnedPaths(remaining) }
     }
 
     /** 绝对路径 → Vault 根相对路径（不在 Vault 内返回 null）。 */
@@ -1118,6 +1231,8 @@ class NotesViewModel @Inject constructor(
      * 预览读取走 [previewFor] 内存缓存，未变化文件不重读、往返目录零等待。
      * [minNoteCount]：首批至少装载的笔记数（同目录重载时传已显示数量，列表不缩水）。
      * [keepOrder]：非空时按该顺序（上次显示顺序）排列笔记，内容取最新（保序重载）。
+     * 置顶笔记（[AppSettings.pinnedPaths] 命中）切分到列表最前（文件夹之上）且不参与
+     * 分页，普通区不再包含该条目。
      */
     private suspend fun loadListing(
         dirPath: String,
@@ -1130,9 +1245,11 @@ class NotesViewModel @Inject constructor(
         val folders = nodes.filter { it.isDirectory }.sortedBy { it.name.lowercase() }
         val sorted = sortNotes(nodes.filter { it.isMarkdown }, currentSettings.sortOrder)
         val notes = if (keepOrder != null) applyOrderSnapshot(sorted, keepOrder) else sorted
+        // 置顶切分：仅按相对路径命中（笔记只会出现在其父目录列表，故天然限定在所在文件夹）
+        val (pinnedNotes, restNotes) = splitPinnedNotes(notes, currentSettings.pinnedPaths)
         val previewChars = currentSettings.previewChars
         val firstCount = maxOf(PAGE_SIZE, minNoteCount)
-        val firstBatch = notes.take(firstCount)
+        val firstBatch = restNotes.take(firstCount)
         // 首批预览并行读取（单文件为小字节读，并行显著缩短首屏等待；awaitAll 保序）
         val firstItems = firstBatch
             .map { node ->
@@ -1144,8 +1261,20 @@ class NotesViewModel @Inject constructor(
                 }
             }
             .awaitAll()
-        val items = folders.map { NoteListItem(it) } + firstItems
-        ListingPage(items, notes.drop(firstCount), notes.map { it.absolutePath })
+        // 置顶项恒进首批（数量通常极少），同样并行读预览后置于列表最前
+        val pinnedItems = pinnedNotes
+            .map { node ->
+                async(Dispatchers.IO) {
+                    NoteListItem(
+                        node = node,
+                        preview = previewFor(node, previewChars)
+                    )
+                }
+            }
+            .awaitAll()
+        val items = pinnedItems + folders.map { NoteListItem(it) } + firstItems
+        val ordered = (pinnedNotes + restNotes).map { it.absolutePath }
+        ListingPage(items, restNotes.drop(firstCount), ordered)
     }
 
     /**

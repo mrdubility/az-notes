@@ -68,6 +68,10 @@ data class BackupVault(
     val hidden: Boolean? = null,
     /** 收藏的笔记（相对仓库根路径） */
     val favoritePaths: List<String>? = null,
+    /** 置顶的笔记（相对仓库根路径；仅在所在文件夹列表生效） */
+    val pinnedPaths: List<String>? = null,
+    /** 启动时进入的文件夹（相对仓库根；缺失 = 仓库根目录） */
+    val startFolder: String? = null,
     /** 最近查看记录（相对仓库根路径，最近优先） */
     val recentPaths: List<String>? = null,
     /** 分享笔记默认保存文件夹（相对仓库根） */

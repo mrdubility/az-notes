@@ -32,6 +32,7 @@ import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Star
+import androidx.compose.material.icons.outlined.VerticalAlignTop
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -86,6 +87,7 @@ internal fun NotesListContent(
     onLongPress: (NoteListItem) -> Unit,
     onToggleSelect: (NoteListItem) -> Unit,
     onToggleFavorite: (NoteListItem) -> Unit,
+    onTogglePin: (NoteListItem) -> Unit,
     onMove: (NoteListItem) -> Unit,
     onDuplicate: (NoteListItem) -> Unit,
     onSearchHistorySelect: (String) -> Unit,
@@ -182,6 +184,7 @@ internal fun NotesListContent(
                                 selectMode = state.selectMode,
                                 selected = item.node.absolutePath in state.selectedPaths,
                                 isFavorite = item.node.relativePath in state.favoritePaths,
+                                isPinned = item.node.relativePath in state.pinnedPaths,
                                 onClick = {
                                     if (state.selectMode) onToggleSelect(item) else onOpen(item)
                                 },
@@ -191,6 +194,7 @@ internal fun NotesListContent(
                                 onRename = { onRename(item) },
                                 onDelete = { onDelete(item) },
                                 onToggleFavorite = { onToggleFavorite(item) },
+                                onTogglePin = { onTogglePin(item) },
                                 onMove = { onMove(item) },
                                 onDuplicate = { onDuplicate(item) }
                             )
@@ -295,11 +299,13 @@ private fun NoteRow(
     selectMode: Boolean,
     selected: Boolean,
     isFavorite: Boolean,
+    isPinned: Boolean,
     onClick: () -> Unit,
     onLongPress: () -> Unit,
     onRename: () -> Unit,
     onDelete: () -> Unit,
     onToggleFavorite: () -> Unit,
+    onTogglePin: () -> Unit,
     onMove: () -> Unit,
     onDuplicate: () -> Unit
 ) {
@@ -337,7 +343,9 @@ private fun NoteRow(
                     // 文件夹同样提供重命名 / 移动 / 删除入口（改名与移动由云端 MOVE 同步）
                     NoteMoreButton(
                         isFavorite = false,
+                        isPinned = false,
                         onToggleFavorite = null,
+                        onTogglePin = null,
                         onRename = onRename,
                         onDuplicate = null,
                         onMove = onMove,
@@ -359,6 +367,15 @@ private fun NoteRow(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f)
                 )
+                if (isPinned) {
+                    Spacer(Modifier.width(6.dp))
+                    Icon(
+                        imageVector = Icons.Outlined.VerticalAlignTop,
+                        contentDescription = stringResource(R.string.home_pinned),
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
                 if (isFavorite) {
                     Spacer(Modifier.width(6.dp))
                     Icon(
@@ -373,7 +390,9 @@ private fun NoteRow(
                 } else {
                     NoteMoreButton(
                         isFavorite = isFavorite,
+                        isPinned = isPinned,
                         onToggleFavorite = onToggleFavorite,
+                        onTogglePin = onTogglePin,
                         onRename = onRename,
                         onDuplicate = onDuplicate,
                         onMove = onMove,
@@ -416,13 +435,15 @@ private fun SelectIndicator(selected: Boolean) {
 }
 
 /**
- * ⋮ 按钮：点击在按钮旁弹出浮层菜单（收藏 / 重命名 / 复制 / 移动 / 删除），替代底部弹窗以便单手操作；
- * 文件夹不显示收藏与复制项（[onToggleFavorite] / [onDuplicate] 为 null）。
+ * ⋮ 按钮：点击在按钮旁弹出浮层菜单（收藏 / 置顶 / 重命名 / 复制 / 移动 / 删除），替代底部弹窗以便单手操作；
+ * 文件夹不显示收藏、置顶与复制项（[onToggleFavorite] / [onTogglePin] / [onDuplicate] 为 null）。
  */
 @Composable
 private fun NoteMoreButton(
     isFavorite: Boolean,
+    isPinned: Boolean,
     onToggleFavorite: (() -> Unit)?,
+    onTogglePin: (() -> Unit)?,
     onRename: () -> Unit,
     onDuplicate: (() -> Unit)?,
     onMove: () -> Unit,
@@ -456,6 +477,20 @@ private fun NoteMoreButton(
                             null
                         )
                     },
+                    onClick = {
+                        menuOpen = false
+                        toggle()
+                    }
+                )
+            }
+            onTogglePin?.let { toggle ->
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            stringResource(if (isPinned) R.string.action_unpin else R.string.action_pin)
+                        )
+                    },
+                    leadingIcon = { Icon(Icons.Outlined.VerticalAlignTop, null) },
                     onClick = {
                         menuOpen = false
                         toggle()

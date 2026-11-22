@@ -442,6 +442,7 @@ fun HomeScreen(
                     onLongPress = { item -> viewModel.enterSelectMode(item.node.absolutePath) },
                     onToggleSelect = { item -> viewModel.toggleSelected(item.node.absolutePath) },
                     onToggleFavorite = { item -> viewModel.toggleFavorite(item.node) },
+                    onTogglePin = { item -> viewModel.togglePin(item.node) },
                     onMove = { item ->
                         viewModel.loadMoveTargets()
                         moveSingle = item.node.absolutePath

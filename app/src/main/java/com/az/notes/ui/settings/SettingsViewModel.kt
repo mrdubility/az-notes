@@ -49,10 +49,10 @@ class SettingsViewModel @Inject constructor(
     }
 
     /**
-     * 分享目录选择器内「新建文件夹」：在 [parentPath] 下创建（名称清洗 + 重名保护），
-     * 成功后刷新目录列表（组件随后把新目录作为分享目录回调）并调度保存同步。
+     * 设置页目录选择器内「新建文件夹」（分享位置 / 启动目录共用）：在 [parentPath] 下创建
+     * （名称清洗 + 重名保护），成功后刷新目录列表（组件随后把新目录作为目标回调）并调度保存同步。
      */
-    suspend fun createShareFolder(parentPath: String, input: String): CreateFolderResult {
+    suspend fun createTargetFolder(parentPath: String, input: String): CreateFolderResult {
         val result = createVaultSubfolder(vaultRepository, parentPath, input)
         if (result is CreateFolderResult.Created) {
             val vault = settings.value.vaultPath
@@ -74,11 +74,25 @@ class SettingsViewModel @Inject constructor(
             val vault = settings.value.vaultPath ?: return@launch
             val root = vault.trimEnd('/')
             val rel = when {
-                targetDir == root -> null
+                targetDir.trimEnd('/') == root -> null
                 targetDir.startsWith("$root/") -> targetDir.removePrefix("$root/")
                 else -> return@launch
             }
             settingsRepository.setShareFolder(rel)
+        }
+    }
+
+    /** 「启动时进入文件夹」：选择目标目录（绝对路径），Vault 根 → null（恢复默认根目录）。 */
+    fun setStartFolderAbsolute(targetDir: String) {
+        viewModelScope.launch {
+            val vault = settings.value.vaultPath ?: return@launch
+            val root = vault.trimEnd('/')
+            val rel = when {
+                targetDir.trimEnd('/') == root -> null
+                targetDir.startsWith("$root/") -> targetDir.removePrefix("$root/")
+                else -> return@launch
+            }
+            settingsRepository.setStartFolder(rel)
         }
     }
 

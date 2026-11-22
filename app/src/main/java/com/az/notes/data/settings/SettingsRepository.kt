@@ -38,11 +38,16 @@ import kotlinx.serialization.json.Json
 
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "az_notes_settings")
 
-/** 某仓库的 per-vault 设置快照（收藏路径 + 最近查看 + 分享目录），用于配置备份导出。 */
+/**
+ * 某仓库的 per-vault 设置快照（收藏路径 + 置顶路径 + 最近查看 + 分享目录 + 启动目录），
+ * 用于配置备份导出。
+ */
 data class VaultPerVault(
     val favorites: Set<String>,
+    val pinned: Set<String> = emptySet(),
     val recents: List<String>,
-    val shareFolder: String?
+    val shareFolder: String?,
+    val startFolder: String? = null
 )
 
 /**
@@ -148,8 +153,10 @@ class SettingsRepository @Inject constructor(
                 ?.let { runCatching { DefaultNoteMode.valueOf(it) }.getOrNull() }
                 ?: DefaultNoteMode.VIEW,
             favoritePaths = prefs[favoritesKey(currentId)] ?: emptySet(),
+            pinnedPaths = prefs[pinnedKey(currentId)] ?: emptySet(),
             recentPaths = decodeStringList(prefs[recentKey(currentId)]),
             shareFolder = prefs[shareFolderKey(currentId)]?.takeIf { it.isNotBlank() },
+            startFolder = prefs[startFolderKey(currentId)]?.takeIf { it.isNotBlank() },
             imageCompressEnabled = prefs[Keys.IMAGE_COMPRESS] ?: true,
             attachmentPromptEnabled = prefs[Keys.ATTACHMENT_PROMPT] ?: true,
             remoteImageMaxMb = (prefs[Keys.REMOTE_IMAGE_MAX_MB]
@@ -262,8 +269,10 @@ class SettingsRepository @Inject constructor(
         }
         persistVaults(prefs, vaults)
         prefs.remove(stringSetPreferencesKey("favorite_paths_$id"))
+        prefs.remove(stringSetPreferencesKey("pinned_paths_$id"))
         prefs.remove(stringPreferencesKey("recent_paths_$id"))
         prefs.remove(stringPreferencesKey("share_folder_$id"))
+        prefs.remove(stringPreferencesKey("start_folder_$id"))
         if (prefs[Keys.CURRENT_VAULT_ID] == id) {
             prefs[Keys.CURRENT_VAULT_ID] = vaults.first().id
         }
@@ -351,6 +360,12 @@ class SettingsRepository @Inject constructor(
         if (relativePath.isNullOrBlank()) prefs.remove(key) else prefs[key] = relativePath
     }
 
+    /** 冷启动进入主页时自动打开的文件夹（相对当前仓库根；null = 仓库根目录）。 */
+    suspend fun setStartFolder(relativePath: String?) = edit { prefs ->
+        val key = startFolderKey(currentVaultIdOf(prefs))
+        if (relativePath.isNullOrBlank()) prefs.remove(key) else prefs[key] = relativePath
+    }
+
     // ---------------------------------------------------------------- 搜索历史（全局）
 
     /** 搜索历史（最近优先；上限 [SEARCH_HISTORY_LIMIT] 条）。 */
@@ -412,8 +427,10 @@ class SettingsRepository @Inject constructor(
         val prefs = dataStore.data.first()
         return VaultPerVault(
             favorites = prefs[favoritesKey(vaultId)] ?: emptySet(),
+            pinned = prefs[pinnedKey(vaultId)] ?: emptySet(),
             recents = decodeStringList(prefs[recentKey(vaultId)]),
-            shareFolder = prefs[shareFolderKey(vaultId)]?.takeIf { it.isNotBlank() }
+            shareFolder = prefs[shareFolderKey(vaultId)]?.takeIf { it.isNotBlank() },
+            startFolder = prefs[startFolderKey(vaultId)]?.takeIf { it.isNotBlank() }
         )
     }
 
@@ -442,22 +459,31 @@ class SettingsRepository @Inject constructor(
         }
     }
 
-    /** 备份导入：按 id 恢复某仓库的 per-vault 设置（收藏 / 最近查看 / 分享目录）；仓库不存在时忽略。 */
+    /**
+     * 备份导入：按 id 恢复某仓库的 per-vault 设置（收藏 / 置顶 / 最近查看 / 分享目录 / 启动目录）；
+     * 仓库不存在时忽略。
+     */
     suspend fun restorePerVault(
         vaultId: String,
         favorites: Set<String>,
         recents: List<String>,
-        shareFolder: String?
+        shareFolder: String?,
+        pinned: Set<String> = emptySet(),
+        startFolder: String? = null
     ) = edit { prefs ->
         if (parseVaults(prefs[Keys.VAULTS]).none { it.id == vaultId }) return@edit
         val favKey = favoritesKey(vaultId)
         if (favorites.isEmpty()) prefs.remove(favKey) else prefs[favKey] = favorites
+        val pinKey = pinnedKey(vaultId)
+        if (pinned.isEmpty()) prefs.remove(pinKey) else prefs[pinKey] = pinned
         val recentK = recentKey(vaultId)
         val recentsClean = recents.filter { it.isNotBlank() }.take(RECENT_LIMIT)
         if (recentsClean.isEmpty()) prefs.remove(recentK)
         else prefs[recentK] = json.encodeToString(recentsClean)
         val sfKey = shareFolderKey(vaultId)
         if (shareFolder.isNullOrBlank()) prefs.remove(sfKey) else prefs[sfKey] = shareFolder
+        val stKey = startFolderKey(vaultId)
+        if (startFolder.isNullOrBlank()) prefs.remove(stKey) else prefs[stKey] = startFolder
     }
 
     // ------------------------------------------------------- 收藏夹（per-vault）
@@ -492,6 +518,26 @@ class SettingsRepository @Inject constructor(
     /** 以现存集合覆盖收藏（用于清理已失效的路径）。 */
     suspend fun setFavorites(relativePaths: Set<String>) = edit { prefs ->
         prefs[favoritesKey(currentVaultIdOf(prefs))] = relativePaths
+    }
+
+    // ------------------------------------------------------- 置顶（per-vault）
+
+    /** 置顶一条笔记（相对当前仓库根的路径；仅本地，不参与同步）。 */
+    suspend fun addPin(relativePath: String) = edit { prefs ->
+        val key = pinnedKey(currentVaultIdOf(prefs))
+        prefs[key] = (prefs[key] ?: emptySet()) + relativePath
+    }
+
+    /** 取消置顶。 */
+    suspend fun removePin(relativePath: String) = edit { prefs ->
+        val key = pinnedKey(currentVaultIdOf(prefs))
+        prefs[key] = (prefs[key] ?: emptySet()) - relativePath
+    }
+
+    /** 以现存集合覆盖置顶（改名 / 移动迁移与删除清理用）。 */
+    suspend fun setPinnedPaths(relativePaths: Set<String>) = edit { prefs ->
+        val key = pinnedKey(currentVaultIdOf(prefs))
+        if (relativePaths.isEmpty()) prefs.remove(key) else prefs[key] = relativePaths
     }
 
     // ------------------------------------------------------- 最近查看（per-vault）
@@ -547,9 +593,17 @@ class SettingsRepository @Inject constructor(
             ?.filter { it.isNotBlank() }
             .orEmpty()
 
+    /** 置顶键：按仓库 id 隔离；回退规则同 [favoritesKey]。 */
+    private fun pinnedKey(vaultId: String?): Preferences.Key<Set<String>> =
+        stringSetPreferencesKey("pinned_paths_${vaultId ?: DEFAULT_VAULT_ID}")
+
     /** 分享目录键：按仓库 id 隔离；回退规则同 [favoritesKey]。 */
     private fun shareFolderKey(vaultId: String?): Preferences.Key<String> =
         stringPreferencesKey("share_folder_${vaultId ?: DEFAULT_VAULT_ID}")
+
+    /** 启动目录键：按仓库 id 隔离；回退规则同 [favoritesKey]。 */
+    private fun startFolderKey(vaultId: String?): Preferences.Key<String> =
+        stringPreferencesKey("start_folder_${vaultId ?: DEFAULT_VAULT_ID}")
 
     private fun parseVaults(raw: String?): List<VaultInfo> =
         raw?.let { runCatching { json.decodeFromString<List<VaultInfo>>(it) }.getOrNull() } ?: emptyList()

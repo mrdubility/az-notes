@@ -33,6 +33,7 @@
     <string name="home_back_to_top">Back to top</string>
     <string name="home_no_vault">No Vault folder selected</string>
     <string name="home_folder">Folder</string>
+    <string name="home_pinned">Pinned</string>
     <string name="action_menu">Menu</string>
     <string name="action_close">Close</string>
     <string name="action_more">More</string>
@@ -41,6 +42,8 @@
     <string name="action_delete">Delete</string>
     <string name="action_favorite">Favorite</string>
     <string name="action_unfavorite">Unfavorite</string>
+    <string name="action_pin">Pin to top</string>
+    <string name="action_unpin">Unpin</string>
     <string name="action_confirm">OK</string>
     <string name="action_cancel">Cancel</string>
     <string name="rename_hint">Name</string>
@@ -86,6 +89,8 @@
     <string name="msg_vault_unset">No Vault folder selected</string>
     <string name="msg_favorited">Added %1$s to Favorites</string>
     <string name="msg_unfavorited">Removed %1$s from Favorites</string>
+    <string name="msg_pinned">Pinned %1$s</string>
+    <string name="msg_unpinned">Unpinned %1$s</string>
     <string name="msg_favorited_count">Added %1$d notes to Favorites</string>
     <string name="msg_move_failed">Failed to move</string>
     <string name="msg_move_failed_exists">Move failed: a file with the same name already exists in the target folder</string>
@@ -233,6 +238,9 @@
     <string name="settings_share_folder">Location for shared notes</string>
     <string name="settings_share_folder_current">Current: %1$s</string>
     <string name="settings_share_folder_root">Default: vault root</string>
+    <string name="settings_start_folder">Folder to open on launch</string>
+    <string name="settings_start_folder_current">Current: %1$s</string>
+    <string name="settings_start_folder_root">Default: vault root</string>
     <string name="settings_trash_retention">Auto-clean Trash</string>
     <string name="settings_trash_retention_value">Clean after %1$d days</string>
     <string name="settings_trash_retention_never">Never</string>
