@@ -205,7 +205,9 @@ object FrontmatterParser {
         val actions = HashMap<Int, AttrAction>(originals.size)
         val refused = ArrayList<String>()
         originals.forEachIndexed { oi, old ->
-            val ni = incoming.indexOfFirst { !consumed[it] && it.key.trim() == old.key.trim() }
+            val ni = incoming.indices.firstOrNull {
+                !consumed[it] && incoming[it].key.trim() == old.key.trim()
+            } ?: -1
             if (ni < 0) {
                 actions[oi] = AttrAction.Delete
                 return@forEachIndexed
