@@ -70,6 +70,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.az.notes.R
 import com.az.notes.data.media.AttachmentRepository
+import com.az.notes.domain.model.ConflictMergeState
 import com.az.notes.ui.common.resolve
 import com.az.notes.ui.common.showTimedSnackbar
 import com.az.notes.ui.components.MoveTargetDialog
@@ -376,7 +377,10 @@ fun HomeScreen(
                     // 同步入口仅配置了同步账号后出现（loaded 前不显示，避免「出现又消失」闪烁）
                     syncConfigured = syncState.loaded && syncState.config.configured,
                     onSync = { syncViewModel.startSync() },
-                    conflictCount = conflicts.size,
+                    conflictCount = conflicts.count {
+                        it.mergeState == ConflictMergeState.MERGED_MARKED.name ||
+                            it.mergeState == ConflictMergeState.FAILED.name
+                    },
                     syncActive = syncRunning,
                     onExitSelect = { viewModel.exitSelectMode() },
                     onSelectAll = { viewModel.toggleSelectAll() },

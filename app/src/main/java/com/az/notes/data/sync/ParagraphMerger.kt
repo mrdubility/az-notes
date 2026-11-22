@@ -1,5 +1,7 @@
 package com.az.notes.data.sync
 
+import com.az.notes.domain.markdown.FrontmatterParser
+
 /**
  * 段落级三方文本合并（纯逻辑、零 IO、可在 JVM 单测运行）。
  *
@@ -12,14 +14,24 @@ package com.az.notes.data.sync
  *  - 找不到锚点时按 diff3 的常规规则判定（只有一侧改 → 取改的一侧；两侧改成同一结果 →
  *    取其一；两侧改成不同结果 → 计一处冲突）。
  *
- * 只要 [Result.conflicts] > 0，[Result.text] 就退回为本地原文（调用方应放弃合并、
- * 走"择一覆盖 + 备份"或标记流程），因此不存在"半合并"被写盘的可能。
+ * 只要 [Result.conflicts] > 0，[Result.text] 里就会带内联标记（只保留本地的那份写法会丢内容）；
+ * 无祖先（[Result.usedBase] = false）时才退回本地原文。frontmatter 不参与段落合并：
+ * 两侧都改了属性块且结果不同时整篇回退为冲突（避免拼出非法 YAML）。
  */
 object ParagraphMerger {
 
+    /** 冲突块起始标记（本地侧） */
+    const val MARK_LOCAL = "<<<<<<< 本地"
+
+    /** 冲突块分隔标记 */
+    const val MARK_SEPARATOR = "======="
+
+    /** 冲突块结束标记（云端侧） */
+    const val MARK_REMOTE = ">>>>>>> 云端"
+
     /**
-     * 合并结果：[text] 为合并文本（冲突时等于 [local]）、[conflicts] 为冲突块数、
-     * [usedBase] 表示是否真的用了祖先（false 表示调用方传了 null 祖先）。
+     * 合并结果：[text] 为合并文本（有冲突块时带内联标记；无祖先时等于 [local]）、
+     * [conflicts] 为冲突块数、[usedBase] 表示是否真的用了祖先。
      */
     data class Result(val text: String, val conflicts: Int, val usedBase: Boolean)
 
@@ -28,17 +40,44 @@ object ParagraphMerger {
         if (local == remote) return Result(local, 0, usedBase = base != null)
         if (base == null) return Result(local, 1, usedBase = false)
 
+        val baseSplit = FrontmatterParser.split(base)
+        val localSplit = FrontmatterParser.split(local)
+        val remoteSplit = FrontmatterParser.split(remote)
+        val localFmChanged = localSplit.prefix != baseSplit.prefix
+        val remoteFmChanged = remoteSplit.prefix != baseSplit.prefix
+        // 属性块两侧都改且改得不一样：拼合会产出非法 YAML，整篇回退为冲突
+        if (localFmChanged && remoteFmChanged && localSplit.prefix != remoteSplit.prefix) {
+            return Result(local, 1, usedBase = true)
+        }
+        val prefix = when {
+            localFmChanged -> localSplit.prefix
+            remoteFmChanged -> remoteSplit.prefix
+            else -> localSplit.prefix
+        }
+
+        val out = StringBuilder(maxOf(local.length, remote.length))
+        val counter = Counter()
+        mergeBlockLevel(baseSplit.body, localSplit.body, remoteSplit.body, out, counter)
+        return Result(prefix + out.toString(), counter.value, usedBase = true)
+    }
+
+    /** 正文段落合并（frontmatter 已在外层剥离）。 */
+    private fun mergeBlockLevel(
+        base: String,
+        local: String,
+        remote: String,
+        out: StringBuilder,
+        counter: Counter
+    ) {
         val baseChunks = split(base)
         val localChunks = split(local)
         val remoteChunks = split(remote)
-        val out = StringBuilder(maxOf(local.length, remote.length))
-        val counter = Counter()
-        mergeRange(baseChunks, 0, baseChunks.size, localChunks, 0, localChunks.size, remoteChunks, 0, remoteChunks.size, out, counter)
-        return if (counter.value > 0) {
-            Result(local, counter.value, usedBase = true)
-        } else {
-            Result(out.toString(), 0, usedBase = true)
-        }
+        mergeRange(
+            baseChunks, 0, baseChunks.size,
+            localChunks, 0, localChunks.size,
+            remoteChunks, 0, remoteChunks.size,
+            out, counter
+        )
     }
 
     // ---------------------------------------------------------------- 合并
@@ -116,8 +155,22 @@ object ParagraphMerger {
             // 一侧整段删除、另一侧保留原样 → 删除生效
             l0 == l1 && keysEqual(base, b0, b1, remote, r0, r1) -> Unit
             r0 == r1 && keysEqual(base, b0, b1, local, l0, l1) -> Unit
-            else -> conflicts.value++
+            else -> {
+                // 两侧对同一段改成不同内容：该段内联标记，其余段落仍正常合并
+                conflicts.value++
+                out.append(MARK_LOCAL).append('\n')
+                appendRange(local, l0, l1, out)
+                ensureNewline(out)
+                out.append(MARK_SEPARATOR).append('\n')
+                appendRange(remote, r0, r1, out)
+                ensureNewline(out)
+                out.append(MARK_REMOTE).append('\n')
+            }
         }
+    }
+
+    private fun ensureNewline(out: StringBuilder) {
+        if (out.isNotEmpty() && out.last() != '\n') out.append('\n')
     }
 
     private fun appendRange(chunks: List<Chunk>, from: Int, to: Int, out: StringBuilder) {

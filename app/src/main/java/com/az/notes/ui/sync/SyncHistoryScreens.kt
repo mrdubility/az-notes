@@ -285,6 +285,14 @@ private fun ConflictRow(record: ConflictRecordEntity) {
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.tertiary
         )
+        if (record.markerCount > 0) {
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = stringResource(R.string.sync_conflict_markers, record.markerCount),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.error
+            )
+        }
         if (record.backupPath.isNotEmpty()) {
             Spacer(Modifier.height(2.dp))
             Text(

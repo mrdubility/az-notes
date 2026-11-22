@@ -25,16 +25,21 @@ class ParagraphMergerTest {
     }
 
     @Test
-    fun `same paragraph changed differently is a conflict`() {
+    fun `same paragraph changed differently is a conflict with markers`() {
         val base = "A1\n\nB1"
         val local = "A1\n\nB2"
         val remote = "A1\n\nB3"
 
         val result = ParagraphMerger.merge(base, local, remote)
 
-        assertTrue(result.conflicts > 0)
-        // 冲突时退回本地原文，绝不写半合并结果
-        assertEquals(local, result.text)
+        assertEquals(1, result.conflicts)
+        // 两侧内容都保留在标记块里，其余段落仍是正常合并结果
+        assertTrue(result.text.contains(ParagraphMerger.MARK_LOCAL))
+        assertTrue(result.text.contains(ParagraphMerger.MARK_SEPARATOR))
+        assertTrue(result.text.contains(ParagraphMerger.MARK_REMOTE))
+        assertTrue(result.text.contains("B2"))
+        assertTrue(result.text.contains("B3"))
+        assertTrue(result.text.startsWith("A1"))
     }
 
     @Test
@@ -113,6 +118,31 @@ class ParagraphMergerTest {
 
         val result = ParagraphMerger.merge(base, local, remote)
 
-        assertTrue(result.conflicts > 0)
+        assertEquals(1, result.conflicts)
+        assertTrue(result.text.contains(ParagraphMerger.MARK_LOCAL))
+    }
+
+    @Test
+    fun `frontmatter changed on one side only is merged`() {
+        val base = "---\ntitle: t\n---\n\nA"
+        val local = "---\ntitle: local\n---\n\nA"
+        val remote = "---\ntitle: t\n---\n\nA2"
+
+        val result = ParagraphMerger.merge(base, local, remote)
+
+        assertEquals(0, result.conflicts)
+        assertEquals("---\ntitle: local\n---\n\nA2", result.text)
+    }
+
+    @Test
+    fun `frontmatter changed on both sides differently falls back`() {
+        val base = "---\ntitle: t\n---\n\nA"
+        val local = "---\ntitle: L\n---\n\nA"
+        val remote = "---\ntitle: R\n---\n\nA"
+
+        val result = ParagraphMerger.merge(base, local, remote)
+
+        assertEquals(1, result.conflicts)
+        assertEquals(local, result.text)
     }
 }

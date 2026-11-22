@@ -69,6 +69,9 @@ class SyncEngine @Inject constructor(
 
     private data class LocalStat(val size: Long, val mtime: Long)
 
+    /** 同文件内合并的结果：状态 + 残留冲突块数（0 = 干净合并）。 */
+    private data class MergeInfo(val state: ConflictMergeState, val markers: Int)
+
     /** 当前仓库引用：同步数据（基线 / 日志 / 冲突记录）按 [id] 隔离，文件操作走 [path]。 */
     private data class VaultRef(val id: String, val path: String)
 
@@ -509,8 +512,8 @@ class SyncEngine @Inject constructor(
         val downloadedStats = HashMap<String, LocalStat>()
         // 执行成功的冲突副本：全部操作完成后统一计算指纹写入 conflict_record（§4.2）
         val conflictOps = ArrayList<SyncOp>()
-        // 同文件内合并的结果（path → 状态），供基线刷新与冲突记录写入使用
-        val mergeOutcomes = HashMap<String, ConflictMergeState>()
+        // 同文件内合并的结果（path → 状态与残留冲突块数），供基线刷新与冲突记录写入使用
+        val mergeOutcomes = HashMap<String, MergeInfo>()
         // 冲突副本（败方备份）失败的路径：同路径的覆盖操作必须跳过，避免丢失版本
         val unprotectedConflict = HashSet<String>()
         val logs = ArrayList<SyncLogEntity>()
@@ -586,8 +589,9 @@ class SyncEngine @Inject constructor(
                         conflictCopies++
                         conflictOps += op
                         // 合并成功：本地内容已变，按上传口径刷新基线（下轮不再判为冲突）
-                        if (mergeOutcomes[op.path] == ConflictMergeState.MERGED_CLEAN) {
-                            merged++
+                        val mergeInfo = mergeOutcomes[op.path]
+                        if (mergeInfo != null) {
+                            if (mergeInfo.state == ConflictMergeState.MERGED_CLEAN) merged++
                             localStatOf(vault, op.path)?.let {
                                 uploadedStats[op.path] = it
                                 persistBaselineEntry(ref.id, op.path, it)
@@ -655,7 +659,7 @@ class SyncEngine @Inject constructor(
                 for (op in conflictOps) {
                     // 胜方内容在 path（覆盖 / 合并成功后）；败方在私有备份里（合并成功或二进制则无备份）
                     val state = mergeOutcomes[op.path]
-                    val mergedClean = state == ConflictMergeState.MERGED_CLEAN
+                    val mergedClean = state?.state == ConflictMergeState.MERGED_CLEAN
                     val winHash = if (op.path in failedPaths) null else sha1(File(vault, op.path))
                     val backupFile = if (mergedClean) {
                         null
@@ -673,10 +677,11 @@ class SyncEngine @Inject constructor(
                             resolvedBy = "${config.conflictStrategy.name}:${op.detail}",
                             backupPath = backupFile?.absolutePath.orEmpty(),
                             mergeState = when {
-                                state != null -> state.name
+                                state != null -> state.state.name
                                 backupFile != null -> ConflictMergeState.BACKED_UP.name
                                 else -> ConflictMergeState.BINARY_KEEP.name
                             },
+                            markerCount = state?.markers ?: 0,
                             createdAt = now
                         )
                     )
@@ -769,7 +774,7 @@ class SyncEngine @Inject constructor(
         vaultId: String,
         client: WebDavClient,
         op: SyncOp,
-        mergeOutcomes: MutableMap<String, ConflictMergeState>
+        mergeOutcomes: MutableMap<String, MergeInfo>
     ): Boolean =
         when (op.type) {
             SyncOpType.UPLOAD -> {
@@ -1092,36 +1097,47 @@ class SyncEngine @Inject constructor(
 
     /**
      * 尝试同文件内三方合并：下载远端 → 读祖先与本地 → 段落级合并 → 写回并上传。
-     * 任一步失败或仍有冲突块时返回 false，由调用方退回“择一覆盖 + 私有备份”。
+     * 有残留冲突块时写入内联标记并把远端原文存进私有备份；若下载/读取失败则返回 false，
+     * 由调用方退回“择一覆盖 + 私有备份”。
      */
     private suspend fun tryMergeText(
         vaultRoot: String,
         vaultId: String,
         client: WebDavClient,
         op: SyncOp,
-        mergeOutcomes: MutableMap<String, ConflictMergeState>
+        mergeOutcomes: MutableMap<String, MergeInfo>
     ): Boolean {
         val base = conflictBaseStore.read(vaultId, op.path) ?: return false
         val localFile = File(vaultRoot, op.path)
         if (!localFile.isFile) return false
         val remoteFile = conflictBackupStore.tempFile(vaultId, op.path)
         remoteFile.parentFile?.mkdirs()
+        var info: MergeInfo? = null
         val ok = runCatching {
             if (!client.download(op.path, remoteFile)) return@runCatching false
             val remoteText = remoteFile.readText()
             val localText = localFile.readText()
             val result = ParagraphMerger.merge(base, localText, remoteText)
-            when {
-                result.conflicts > 0 -> false
-                result.text == localText -> client.upload(localFile, op.path)
-                else -> {
-                    vaultRepository.writeTextAtomically(localFile.absolutePath, result.text)
-                    client.upload(localFile, op.path)
+            info = if (result.conflicts > 0) {
+                // 有残留冲突块：远端原文存进私有备份（本地内容已保留在标记块里）
+                op.backupPath?.takeIf { it.isNotEmpty() }?.let { path ->
+                    val backup = File(path)
+                    backup.parentFile?.mkdirs()
+                    remoteFile.copyTo(backup, overwrite = true)
                 }
+                MergeInfo(ConflictMergeState.MERGED_MARKED, result.conflicts)
+            } else {
+                MergeInfo(ConflictMergeState.MERGED_CLEAN, 0)
+            }
+            if (result.text == localText) {
+                client.upload(localFile, op.path)
+            } else {
+                vaultRepository.writeTextAtomically(localFile.absolutePath, result.text)
+                client.upload(localFile, op.path)
             }
         }.getOrDefault(false)
         runCatching { remoteFile.delete() }
-        if (ok) mergeOutcomes[op.path] = ConflictMergeState.MERGED_CLEAN
+        if (ok) info?.let { mergeOutcomes[op.path] = it }
         return ok
     }
 
