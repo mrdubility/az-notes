@@ -33,6 +33,7 @@ import java.security.MessageDigest
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -81,6 +82,21 @@ class SyncEngine @Inject constructor(
     /** 同步会话互斥：手动与自动同步不能并发（并发会双写基线、重复传输）。 */
     private val sessionMutex = Mutex()
 
+    /**
+     * 待强制上传的相对路径（vaultId → 路径集）。
+     *
+     * 存在理由：差异判定是宽松模式（本地 size + mtime）。改名后的链接改写、以及
+     * 等长改名（`笔记A` → `笔记B`）可能让 size 与 mtime 都"看起来没变"，若只靠指纹
+     * 这个变更会被**永久漏传**（基线一直停在旧值）。写盘方登记后，下一轮直接按本地为准上传。
+     */
+    private val forcedUploads = ConcurrentHashMap<String, MutableSet<String>>()
+
+    /** 登记下一轮同步需强制上传的路径（相对仓库根）。 */
+    fun markForcedUpload(vaultId: String, relativePaths: Collection<String>) {
+        if (relativePaths.isEmpty()) return
+        forcedUploads.getOrPut(vaultId) { ConcurrentHashMap.newKeySet() }.addAll(relativePaths)
+    }
+
     /** 调试日志快捷入口（type=SYNC）：未开启收集时仅一次 volatile 读，零开销短路。 */
     private fun syncLog(
         level: DebugLogLevel,
@@ -127,6 +143,7 @@ class SyncEngine @Inject constructor(
     suspend fun plan(config: SyncConfig, onStatus: (String) -> Unit): SyncPlan {
         val ref = requireVaultRef()
         val vault = ref.path
+        val forced = forcedUploads[ref.id].orEmpty()
         // 本轮计划开始时刻：用于区分「历史冲突记录」与「本轮执行新写入的记录」
         val planStartedAt = System.currentTimeMillis()
         val ignore = IgnoreRules(config.ignoreRules)
@@ -293,7 +310,11 @@ class SyncEngine @Inject constructor(
             }
 
             // —— 有基线：三方对比 ——
-            val lChanged = l != null && (l.size != b.localSize || l.mtime != b.localMtime)
+            // 强制上传：改名后的链接改写可能让 size 与 mtime 都"看起来没变"
+            // （等长改名 + 同一秒写盘），仅靠宽松指纹会永久漏传
+            val lChanged = l != null && (
+                path in forced || l.size != b.localSize || l.mtime != b.localMtime
+                )
             val rChanged = r != null && (
                 r.size != b.remoteSize ||
                     (r.etag != null && b.remoteEtag != null && r.etag != b.remoteEtag)
@@ -523,6 +544,8 @@ class SyncEngine @Inject constructor(
                 when (op.type) {
                     SyncOpType.UPLOAD -> {
                         uploaded++
+                        // 已按本地为准上传，强制标记消费完毕
+                        forcedUploads[ref.id]?.remove(op.path)
                         capturedStat?.let {
                             uploadedStats[op.path] = it
                             // 写透：远端内容此刻已与上传时刻的本地一致

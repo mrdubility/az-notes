@@ -214,6 +214,8 @@
     <string name="settings_editor_toolbar">编辑器工具栏</string>
     <string name="settings_editor_toolbar_subtitle">选择在编辑页底部显示的工具，并用箭头调整顺序</string>
     <string name="settings_editor_toolbar_reset">恢复默认</string>
+    <string name="settings_always_update_links">自动更新双链</string>
+    <string name="settings_always_update_links_subtitle">重命名或移动笔记时，改写其它笔记里指向它的链接</string>
     <string name="settings_toolbar_move_up">上移</string>
     <string name="settings_toolbar_move_down">下移</string>
     <string name="settings_notes_list">笔记列表</string>
@@ -598,6 +600,12 @@
     <string name="msg_task_save_failed">待办保存失败，请重试</string>
     <string name="msg_attr_save_failed">属性保存失败，请重试</string>
     <string name="msg_attr_advanced_yaml">该属性含嵌套或高级 YAML 写法，请到编辑器修改</string>
+    <string name="msg_links_updated">已更新 %1$d 篇笔记中的 %2$d 处链接</string>
+    <string name="msg_links_skipped">%1$d 处链接未更新（文件已变化，请手动检查）</string>
+    <string name="editor_external_title">文件已更新</string>
+    <string name="editor_external_message">该文件已在别处被修改（同步或链接改写），直接保存会覆盖对方的修改。要如何处理？</string>
+    <string name="editor_external_reload">重新载入</string>
+    <string name="editor_external_keep">保留我的修改</string>
 
     <!-- 回收站（恢复被云端删除波及的本地文件） -->
     <string name="trash_title">回收站</string>

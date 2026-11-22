@@ -84,6 +84,7 @@ class SettingsRepository @Inject constructor(
         val SEARCH_HISTORY = stringPreferencesKey("search_history")
         val IMAGE_COMPRESS = booleanPreferencesKey("image_compress_enabled")
         val ATTACHMENT_PROMPT = booleanPreferencesKey("attachment_prompt_enabled")
+        val ALWAYS_UPDATE_LINKS = booleanPreferencesKey("always_update_links")
         val REMOTE_IMAGE_MAX_MB = intPreferencesKey("remote_image_max_mb")
         val REMOTE_IMAGE_TIMEOUT = intPreferencesKey("remote_image_timeout_seconds")
         val AI_PRIVACY_ACK = booleanPreferencesKey("ai_privacy_acknowledged")
@@ -139,6 +140,7 @@ class SettingsRepository @Inject constructor(
                 ?.let { runCatching { AppLanguage.valueOf(it) }.getOrNull() }
                 ?: AppLanguage.SYSTEM,
             trashEnabled = prefs[Keys.TRASH_ENABLED] ?: true,
+            alwaysUpdateLinks = prefs[Keys.ALWAYS_UPDATE_LINKS] ?: true,
             editorToolOrder = prefs[Keys.TOOL_ORDER]
                 ?.split(',')
                 ?.filter { EditorTool.fromId(it) != null }
@@ -343,6 +345,9 @@ class SettingsRepository @Inject constructor(
 
     /** 是否启用回收站。 */
     suspend fun setTrashEnabled(enabled: Boolean) = edit { it[Keys.TRASH_ENABLED] = enabled }
+
+    /** 改名 / 移动时是否自动更新其它笔记里的双链（默认开）。 */
+    suspend fun setAlwaysUpdateLinks(enabled: Boolean) = edit { it[Keys.ALWAYS_UPDATE_LINKS] = enabled }
 
     /** 编辑器工具栏顺序（存工具 id，逗号分隔）。 */
     suspend fun setEditorToolOrder(order: List<String>) = edit {

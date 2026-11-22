@@ -214,6 +214,8 @@
     <string name="settings_editor_toolbar">Editor toolbar</string>
     <string name="settings_editor_toolbar_subtitle">Choose tools shown at the bottom of the editor and reorder them with the arrows</string>
     <string name="settings_editor_toolbar_reset">Reset to default</string>
+    <string name="settings_always_update_links">Update links automatically</string>
+    <string name="settings_always_update_links_subtitle">Rewrite links in other notes when a note is renamed or moved</string>
     <string name="settings_toolbar_move_up">Move up</string>
     <string name="settings_toolbar_move_down">Move down</string>
     <string name="settings_notes_list">Note list</string>
@@ -598,6 +600,12 @@
     <string name="msg_task_save_failed">Failed to save task, please retry</string>
     <string name="msg_attr_save_failed">Failed to save properties, please retry</string>
     <string name="msg_attr_advanced_yaml">This property uses nested or advanced YAML. Edit it in the editor.</string>
+    <string name="msg_links_updated">Updated %2$d link(s) in %1$d note(s)</string>
+    <string name="msg_links_skipped">%1$d link(s) not updated (file changed, please check)</string>
+    <string name="editor_external_title">File updated elsewhere</string>
+    <string name="editor_external_message">This note was modified elsewhere (sync or link rewrite). Saving now overwrites those changes. What do you want to do?</string>
+    <string name="editor_external_reload">Reload</string>
+    <string name="editor_external_keep">Keep my changes</string>
 
     <!-- Trash -->
     <string name="trash_title">Trash</string>

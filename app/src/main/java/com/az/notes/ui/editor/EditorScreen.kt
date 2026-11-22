@@ -28,6 +28,7 @@ import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Visibility
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -39,6 +40,7 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -348,6 +350,25 @@ fun EditorScreen(
         } finally {
             viewModel.consumeMessage(msg)
         }
+    }
+
+    // 外部修改拦截：保存前发现磁盘 mtime 变过（同步拉取 / 链接改写）→ 二选一，不默默覆盖
+    if (state.externalChange) {
+        AlertDialog(
+            onDismissRequest = { viewModel.resolveExternalChange(keepLocal = false) },
+            title = { Text(stringResource(R.string.editor_external_title)) },
+            text = { Text(stringResource(R.string.editor_external_message)) },
+            confirmButton = {
+                TextButton(onClick = { viewModel.resolveExternalChange(keepLocal = true) }) {
+                    Text(stringResource(R.string.editor_external_keep))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { viewModel.resolveExternalChange(keepLocal = false) }) {
+                    Text(stringResource(R.string.editor_external_reload))
+                }
+            }
+        )
     }
 
     // —— 保存状态反馈：顶栏标题旁文字常驻显示；分享创建的笔记在进入编辑页时

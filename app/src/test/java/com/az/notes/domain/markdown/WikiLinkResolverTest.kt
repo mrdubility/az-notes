@@ -141,4 +141,15 @@ class WikiLinkResolverTest {
         assertNull(WikiLinkResolver.createNotePath("", vault))
         assertNull(WikiLinkResolver.createNotePath("../outside", vault))
     }
+
+    @Test
+    fun `nfd file name resolves from nfc target`() {
+        val vault = temp.newFolder("vault")
+        // macOS / iCloud 同步回来的文件名常为 NFD（e + 组合附加符号）；目标则是 NFC
+        val nfdName = "cafe\u0301.md"
+        File(vault, nfdName).writeText("x")
+        val index = com.az.notes.data.storage.VaultNameIndex().names(vault)
+        val hit = WikiLinkResolver.resolve("cafe\u00E9", vault, vault, index)
+        assertEquals(File(vault, nfdName).absolutePath, hit?.absolutePath)
+    }
 }

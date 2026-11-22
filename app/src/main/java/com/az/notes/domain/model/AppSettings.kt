@@ -45,6 +45,11 @@ data class AppSettings(
     val language: AppLanguage = AppLanguage.SYSTEM,
     /** 是否启用回收站；关闭后删除将直接物理删除且抽屉隐藏入口 */
     val trashEnabled: Boolean = true,
+    /**
+     * 改名 / 移动时是否自动更新其它笔记里指向它的双链（默认开）。
+     * 关闭后行为回到"只改文件名、链接可能断"，由用户自行处理。
+     */
+    val alwaysUpdateLinks: Boolean = true,
     /** 编辑器工具栏的工具顺序（存 [EditorTool.id] 列表） */
     val editorToolOrder: List<String> = EditorTool.defaultOrder,
     /** 编辑器工具栏中被禁用的工具 id 集合 */

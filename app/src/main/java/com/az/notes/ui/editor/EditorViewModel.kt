@@ -9,6 +9,7 @@ import com.az.notes.data.media.AttachmentRepository
 import com.az.notes.data.media.ImageImportRepository
 import com.az.notes.data.media.ImportedMedia
 import com.az.notes.data.settings.SettingsRepository
+import com.az.notes.data.storage.LinkRewriter
 import com.az.notes.data.storage.PathUpdateBus
 import com.az.notes.data.storage.TagIndex
 import com.az.notes.data.storage.TagRow
@@ -16,7 +17,9 @@ import com.az.notes.data.storage.VaultNameIndex
 import com.az.notes.data.storage.VaultRepository
 import com.az.notes.data.sync.SyncEngine
 import com.az.notes.domain.model.EditorTool
+import com.az.notes.domain.model.AppSettings
 import com.az.notes.domain.model.FileNode
+import com.az.notes.domain.markdown.NoteRewritePlan
 import com.az.notes.ui.common.UiText
 import com.az.notes.ui.common.CreateFolderResult
 import com.az.notes.ui.common.createVaultSubfolder
@@ -53,7 +56,9 @@ data class EditorUiState(
     /** 图片压缩导入开关（来自设置，默认开） */
     val imageCompressEnabled: Boolean = true,
     /** 移动对话框的目标文件夹列表（null = 尚未加载） */
-    val moveTargets: List<FileNode>? = null
+    val moveTargets: List<FileNode>? = null,
+    /** 文件已在别处被修改（保存前发现磁盘 mtime 变过）：UI 弹二选一确认 */
+    val externalChange: Boolean = false
 )
 
 /**
@@ -71,7 +76,8 @@ class EditorViewModel @Inject constructor(
     private val attachmentRepository: AttachmentRepository,
     private val vaultNameIndex: VaultNameIndex,
     private val pathUpdateBus: PathUpdateBus,
-    private val tagIndex: TagIndex
+    private val tagIndex: TagIndex,
+    private val linkRewriter: LinkRewriter
 ) : ViewModel() {
 
     private var absolutePath: String =
@@ -97,6 +103,14 @@ class EditorViewModel @Inject constructor(
 
     private var autoSaveJob: Job? = null
 
+    /**
+     * 上次读/写磁盘时的 mtime（0 = 尚未取到）。
+     *
+     * 用于拦截"文件已在别处被修改"：同步拉取了远端新版、或改名后的批量链接改写
+     * 把本文件写盘，而编辑页仍持着内存里的旧文本——直接保存会把对方的修改覆盖掉。
+     */
+    private var lastKnownMtime: Long = 0L
+
     init {
         // 工具栏配置：设置页调整顺序 / 启用状态后实时生效
         viewModelScope.launch {
@@ -112,7 +126,11 @@ class EditorViewModel @Inject constructor(
         }
         viewModelScope.launch {
             val text = runCatching {
-                withContext(Dispatchers.IO) { vaultRepository.readText(absolutePath) }
+                withContext(Dispatchers.IO) {
+                    val loaded = vaultRepository.readText(absolutePath)
+                    lastKnownMtime = File(absolutePath).lastModified()
+                    loaded
+                }
             }.getOrElse { e ->
                 _state.update { s -> s.copy(loading = false, error = e.toUiText(R.string.msg_read_failed)) }
                 return@launch
@@ -151,16 +169,69 @@ class EditorViewModel @Inject constructor(
             _state.update { it.copy(saving = true) }
             val result = runCatching {
                 withContext(Dispatchers.IO) {
+                    // 外部修改检测：磁盘 mtime 与本次打开 / 上次写盘不一致 → 不覆盖，交用户决定
+                    val diskMtime = File(absolutePath).lastModified()
+                    if (lastKnownMtime != 0L && diskMtime != lastKnownMtime) return@withContext false
                     vaultRepository.writeTextAtomically(absolutePath, current.text)
+                    lastKnownMtime = File(absolutePath).lastModified()
+                    true
                 }
             }
             result.fold(
-                onSuccess = {
-                    _state.update { it.copy(saving = false, dirty = false, savedAt = System.currentTimeMillis()) }
-                    schedulePostSaveSync()
+                onSuccess = { written ->
+                    if (written) {
+                        _state.update {
+                            it.copy(saving = false, dirty = false, savedAt = System.currentTimeMillis())
+                        }
+                        schedulePostSaveSync()
+                    } else {
+                        // 保持 dirty，等用户选「重新载入 / 保留我的修改」
+                        _state.update { it.copy(saving = false, externalChange = true) }
+                    }
                 },
-                onFailure = { e -> _state.update { it.copy(saving = false, error = e.toUiText(R.string.msg_save_failed)) } }
+                onFailure = { e ->
+                    _state.update { it.copy(saving = false, error = e.toUiText(R.string.msg_save_failed)) }
+                }
             )
+        }
+    }
+
+    /**
+     * 外部修改的二选一：
+     * - [keepLocal] 为 true → 用内存文本覆盖磁盘（用户明确选择放弃对方修改）；
+     * - 否则重新载入磁盘内容（丢弃内存里的未保存修改）。
+     */
+    fun resolveExternalChange(keepLocal: Boolean) {
+        viewModelScope.launch {
+            if (keepLocal) {
+                val text = _state.value.text
+                _state.update { it.copy(externalChange = false) }
+                runCatching {
+                    withContext(Dispatchers.IO) {
+                        vaultRepository.writeTextAtomically(absolutePath, text)
+                        lastKnownMtime = File(absolutePath).lastModified()
+                    }
+                }.onSuccess {
+                    _state.update { it.copy(dirty = false, savedAt = System.currentTimeMillis()) }
+                    schedulePostSaveSync()
+                }.onFailure { e ->
+                    _state.update { it.copy(error = e.toUiText(R.string.msg_save_failed)) }
+                }
+            } else {
+                val text = runCatching {
+                    withContext(Dispatchers.IO) {
+                        val loaded = vaultRepository.readText(absolutePath)
+                        lastKnownMtime = File(absolutePath).lastModified()
+                        loaded
+                    }
+                }.getOrElse { e ->
+                    _state.update {
+                        s -> s.copy(externalChange = false, error = e.toUiText(R.string.msg_read_failed))
+                    }
+                    return@launch
+                }
+                _state.update { it.copy(text = text, dirty = false, externalChange = false) }
+            }
         }
     }
 
@@ -182,6 +253,7 @@ class EditorViewModel @Inject constructor(
                 vaultNameIndex.invalidate()
             } else if (current.dirty) {
                 flushed = runCatching { vaultRepository.writeTextAtomically(path, current.text) }.isSuccess
+                if (flushed) lastKnownMtime = File(path).lastModified()
             }
         }
         if (flushed) schedulePostSaveSync()
@@ -211,6 +283,9 @@ class EditorViewModel @Inject constructor(
             val src = File(absolutePath)
             if (newName == src.name) return@launch
             val target = File(src.parentFile, newName)
+            val settings = runCatching { settingsRepository.settings.first() }.getOrNull()
+            // 链接改写计划必须在文件系统改名之前生成：要用"改名前"的解析结果判定哪些引用指向它
+            val plans = planLinkRewrites(settings, mapOf(src.absolutePath to target.absolutePath))
             val ok = runCatching {
                 withContext(Dispatchers.IO) {
                     // 目标已存在则失败（与后续写盘、改名为同块 IO，避免主线程 stat）
@@ -239,9 +314,47 @@ class EditorViewModel @Inject constructor(
                 // 广播路径变更：预览页从本页返回时按旧路径跟进新路径，避免报「找不到文件」
                 pathUpdateBus.post(oldPath, absolutePath)
                 syncRemoteRename(oldPath, absolutePath)
+                lastKnownMtime = target.lastModified()
+                applyLinkRewrites(settings, plans, setOf(oldPath))
             } else {
                 _state.update { it.copy(message = UiText.of(R.string.msg_rename_failed_exists)) }
             }
+        }
+    }
+
+    /**
+     * 生成改名 / 移动后的链接改写计划（设置关闭或无仓库时返回空，不产生任何扫描）。
+     * 必须在文件系统操作**之前**调用。
+     */
+    private suspend fun planLinkRewrites(
+        settings: AppSettings?,
+        moves: Map<String, String>
+    ): List<NoteRewritePlan> {
+        if (settings?.alwaysUpdateLinks != true) return emptyList()
+        val vault = settings.vaultPath ?: return emptyList()
+        return runCatching { linkRewriter.plan(vault, moves) }.getOrDefault(emptyList())
+    }
+
+    /**
+     * 执行链接改写：登记同步强制上传（防等长改名 + 同秒写盘导致指纹未变而漏传），
+     * 并把"已更新 N 篇笔记中的 M 处链接"作为一次性提示。
+     */
+    private suspend fun applyLinkRewrites(
+        settings: AppSettings?,
+        plans: List<NoteRewritePlan>,
+        succeeded: Set<String>
+    ) {
+        if (plans.isEmpty() || settings == null) return
+        val vault = settings.vaultPath ?: return
+        val outcome = runCatching { linkRewriter.apply(plans, succeeded) }.getOrNull() ?: return
+        if (outcome.links > 0) {
+            settings.currentVaultId?.let { syncEngine.markForcedUpload(it, outcome.relativePaths(vault)) }
+            _state.update {
+                it.copy(message = UiText.of(R.string.msg_links_updated, outcome.files, outcome.links))
+            }
+            schedulePostSaveSync()
+        } else if (outcome.skipped > 0) {
+            _state.update { it.copy(message = UiText.of(R.string.msg_links_skipped, outcome.skipped)) }
         }
     }
 
@@ -365,6 +478,13 @@ class EditorViewModel @Inject constructor(
                     }.getOrDefault(emptyList())
                 }
             } else emptyList()
+            val settingsSnapshot = settings
+            // 链接改写计划在移动之前生成（同改名：用改前解析结果判定）
+            val plans = if (crossVault) {
+                emptyList()
+            } else {
+                planLinkRewrites(settingsSnapshot, mapOf(absolutePath to target.absolutePath))
+            }
             val ok = runCatching {
                 withContext(Dispatchers.IO) {
                     // 先保存未落盘内容，避免移动后丢失编辑
@@ -419,6 +539,8 @@ class EditorViewModel @Inject constructor(
                 // 广播路径变更：预览页从本页返回时按旧路径跟进新路径，避免报「找不到文件」
                 pathUpdateBus.post(oldPath, absolutePath)
                 if (crossVault) schedulePostSaveSync() else syncRemoteRename(oldPath, absolutePath)
+                lastKnownMtime = target.lastModified()
+                if (!crossVault) applyLinkRewrites(settings, plans, setOf(oldPath))
             } else {
                 _state.update { it.copy(message = UiText.of(R.string.msg_move_failed)) }
             }

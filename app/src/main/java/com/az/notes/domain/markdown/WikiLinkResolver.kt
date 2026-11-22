@@ -2,6 +2,7 @@ package com.az.notes.domain.markdown
 
 import com.az.notes.data.storage.VaultRepository
 import java.io.File
+import java.text.Normalizer
 
 /** 别名索引条目：别名原文 + 声明该别名的笔记相对路径。 */
 data class NoteAlias(val name: String, val relativePath: String)
@@ -40,7 +41,7 @@ object WikiLinkResolver {
         nameIndex: Map<String, List<String>> = emptyMap(),
         aliasIndex: Map<String, List<NoteAlias>> = emptyMap()
     ): File? {
-        val cleaned = target.trim().trimStart('/').replace('\\', '/')
+        val cleaned = nfc(target.trim().trimStart('/').replace('\\', '/'))
         if (cleaned.isEmpty()) return null
         val root = vaultRoot.normalize()
         val slashed = cleaned.contains('/')
@@ -90,7 +91,7 @@ object WikiLinkResolver {
         nameIndex: Map<String, List<String>>
     ): List<File> {
         if (nameIndex.isEmpty()) return emptyList()
-        val key = (if (VaultRepository.isMarkdownName(name)) name else "$name.md").lowercase()
+        val key = foldName(if (VaultRepository.isMarkdownName(name)) name else "$name.md")
         return nameIndex[key].orEmpty()
             .map { File(root, it).normalize() }
             .filter { it.within(root) != null && it.isFile }
@@ -105,7 +106,7 @@ object WikiLinkResolver {
         aliasIndex: Map<String, List<NoteAlias>>
     ): List<File> {
         if (aliasIndex.isEmpty()) return emptyList()
-        return aliasIndex[name.lowercase()].orEmpty()
+        return aliasIndex[foldName(name)].orEmpty()
             .map { File(root, it.relativePath).normalize() }
             .filter { it.within(root) != null && it.isFile }
             .sortedWith(
@@ -122,4 +123,14 @@ object WikiLinkResolver {
         val rootAbs = root.absolutePath
         return if (absolutePath == rootAbs || absolutePath.startsWith(rootAbs + File.separator)) this else null
     }
+
+    /**
+     * 名称比较用的归一化：NFC（消除 macOS / iCloud 同步回来的 NFD 文件名差异）+ 小写。
+     * 索引键与查询键必须走同一函数，否则"明明同名却解析不到"。
+     */
+    fun foldName(raw: String): String = nfc(raw).lowercase()
+
+    /** Unicode NFC 归一化（只影响比较，不改动磁盘文件名）。 */
+    private fun nfc(raw: String): String =
+        runCatching { Normalizer.normalize(raw, Normalizer.Form.NFC) }.getOrDefault(raw)
 }

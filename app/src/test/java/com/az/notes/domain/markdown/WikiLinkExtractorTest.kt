@@ -107,4 +107,15 @@ class WikiLinkExtractorTest {
         val body = (1..(WikiLinkExtractor.MAX_REFS_PER_NOTE + 100)).joinToString("\n") { "[[n$it]]" }
         assertEquals(WikiLinkExtractor.MAX_REFS_PER_NOTE, WikiLinkExtractor.extract(body).size)
     }
+
+    @Test
+    fun `offsets point at the exact raw slice`() {
+        val body = "第一行无链接\n见 [[目标|别名]] 与 [[b]]\n下一行 [[c#H]]"
+        val refs = WikiLinkExtractor.extract(body)
+        assertEquals(3, refs.size)
+        // 每条引用的区间必须能原样取回该条原文（改名改写依赖此不变量）
+        refs.forEach { assertEquals(it.raw, body.substring(it.startOffset, it.endOffset)) }
+        assertEquals("[[目标|别名]]", refs[0].raw)
+        assertEquals("[[c#H]]", refs[2].raw)
+    }
 }

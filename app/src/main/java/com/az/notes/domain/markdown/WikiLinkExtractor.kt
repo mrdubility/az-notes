@@ -15,8 +15,14 @@ data class RawLinkRef(
     val alias: String?,
     /** `![[...]]` 嵌入标记 */
     val isEmbed: Boolean,
-    /** 该行可读上下文（已折叠空白并截断） */
-    val snippet: String
+    /**
+     * 该行可读上下文（已折叠空白并截断）
+     */
+    val snippet: String,
+    /** 在 [WikiLinkExtractor.extract] 入参正文中的绝对起始偏移 */
+    val startOffset: Int = 0,
+    /** 绝对结束偏移（该链接末尾之后一位，供 substring(start, end) 取回原文） */
+    val endOffset: Int = 0
 )
 
 /**
@@ -41,17 +47,20 @@ object WikiLinkExtractor {
     /** `[[#标题]]` 页内自锚点：出链与反向链接都不计入（已由大纲承担）。 */
     fun isSelfAnchor(ref: RawLinkRef): Boolean = ref.target.isEmpty()
 
-    /** 逐行提取（围栏内原样跳过）。 */
+    /** 逐行提取（围栏内原样跳过）；同时记录每条链接在正文中的字符区间。 */
     fun extract(body: String): List<RawLinkRef> {
         if (body.isEmpty() || !body.contains("[[")) return emptyList()
         val out = ArrayList<RawLinkRef>()
         var inFence = false
         var line = 0
+        // 行首在正文中的字符偏移：逐行累加（split 已丢弃分隔符，故每行 +1）
+        var lineStart = 0
         for (text in body.split('\n')) {
             if (out.size >= MAX_REFS_PER_NOTE) break
             if (WikiLinkTransformer.isFenceToggle(text)) inFence = !inFence
-            if (!inFence && text.contains("[[")) collect(line, text, out)
+            if (!inFence && text.contains("[[")) collect(line, text, lineStart, out)
             line++
+            lineStart += text.length + 1
         }
         return out
     }
@@ -84,7 +93,7 @@ object WikiLinkExtractor {
 
     private val WHITESPACE_RUN = Regex("\\s+")
 
-    private fun collect(line: Int, text: String, out: MutableList<RawLinkRef>) {
+    private fun collect(line: Int, text: String, lineStart: Int, out: MutableList<RawLinkRef>) {
         if (!text.contains("]]")) return
         val codeSpans = WikiLinkTransformer.INLINE_CODE.findAll(text).map { it.range }.toList()
         for (m in WikiLinkTransformer.WIKI.findAll(text)) {
@@ -104,7 +113,9 @@ object WikiLinkExtractor {
                 anchor = anchor,
                 alias = m.groupValues[4].trim().ifEmpty { null },
                 isEmbed = m.groupValues[1] == "!",
-                snippet = plainLine(text)
+                snippet = plainLine(text),
+                startOffset = lineStart + start,
+                endOffset = lineStart + m.range.last + 1
             )
         }
     }

@@ -95,7 +95,7 @@ object ImageReference {
         if (nameIndex.isNotEmpty()) {
             val name = cleaned.substringAfterLast('/')
             if (name.isNotEmpty()) {
-                val key = name.lowercase()
+                val key = WikiLinkResolver.foldName(name)
                 val relatives = if (name.contains('.')) {
                     nameIndex[key].orEmpty()
                 } else {

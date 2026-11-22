@@ -98,6 +98,12 @@ class VaultLinkIndex @Inject constructor(
     fun backlinksOf(path: String): List<BacklinkItem> = snapshot?.reverse?.get(keyOf(path)).orEmpty()
 
     /**
+     * 当前快照的原始引用表（源绝对路径 → 正文引用，偏移相对正文）。
+     * 改名后的链接改写（[LinkRewritePlanner]）需要"改名前"的解析上下文，故只读暴露。
+     */
+    fun rawSnapshot(): Map<String, List<RawLinkRef>> = snapshot?.raw.orEmpty()
+
+    /**
      * 标记某篇笔记内容已变（写盘后调用）：下次刷新必定重读该文件，且绕过正文缓存。
      * 同秒写盘（mtime 未变且 size 相同）时，正文缓存会命中旧文本——必须直读磁盘。
      * 笔记尚未进入索引时忽略（首次构建会自然读到最新内容）。

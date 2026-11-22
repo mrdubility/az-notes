@@ -219,6 +219,7 @@ class BackupRepository @Inject constructor(
         trashRetentionDays = trashRetentionDays,
         language = language.name,
         trashEnabled = trashEnabled,
+        alwaysUpdateLinks = alwaysUpdateLinks,
         editorToolOrder = editorToolOrder,
         editorToolDisabled = editorToolDisabled.sorted(),
         defaultNoteMode = defaultNoteMode.name,
@@ -285,6 +286,7 @@ class BackupRepository @Inject constructor(
         s.trashRetentionDays?.let { settingsRepository.setTrashRetentionDays(it); applied = true }
         enumOf<AppLanguage>(s.language)?.let { settingsRepository.setLanguage(it); applied = true }
         s.trashEnabled?.let { settingsRepository.setTrashEnabled(it); applied = true }
+        s.alwaysUpdateLinks?.let { settingsRepository.setAlwaysUpdateLinks(it); applied = true }
         s.editorToolOrder?.let { settingsRepository.setEditorToolOrder(it); applied = true }
         s.editorToolDisabled?.let { settingsRepository.setEditorToolDisabled(it.toSet()); applied = true }
         enumOf<DefaultNoteMode>(s.defaultNoteMode)?.let {

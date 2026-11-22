@@ -2,6 +2,7 @@ package com.az.notes.data.storage
 
 import com.az.notes.domain.markdown.FrontmatterParser
 import com.az.notes.domain.markdown.NoteAlias
+import com.az.notes.domain.markdown.WikiLinkResolver
 import java.io.File
 import java.nio.charset.StandardCharsets
 import javax.inject.Inject
@@ -37,6 +38,14 @@ class VaultNameIndex @Inject constructor() {
     private var snapshot: Snapshot? = null
     private var aliasSnapshot: AliasSnapshot? = null
 
+    /**
+     * 索引版本号：每次重建 / 失效自增。供解析 memo 判定"索引是否变过"（
+     * 不必在每处写盘点逐个清缓存）。
+     */
+    @Volatile
+    var version: Long = 0L
+        private set
+
     /** 获取 [root] 的文件名索引（TTL 内复用；过期或换根时重建）。 */
     @Synchronized
     fun names(root: File): Map<String, List<String>> {
@@ -45,6 +54,7 @@ class VaultNameIndex @Inject constructor() {
         snapshot?.takeIf { it.root == key && now - it.builtAt < TTL_MS }?.let { return it.names }
         val built = buildNames(root, key)
         snapshot = Snapshot(key, now, built)
+        version++
         return built
     }
 
@@ -60,6 +70,7 @@ class VaultNameIndex @Inject constructor() {
             ?.let { return it.aliases }
         val built = buildAliases(root, key)
         aliasSnapshot = AliasSnapshot(key, now, built)
+        version++
         return built
     }
 
@@ -68,6 +79,7 @@ class VaultNameIndex @Inject constructor() {
     fun invalidate() {
         snapshot = null
         aliasSnapshot = null
+        version++
     }
 
     // ---------------------------------------------------------------- 内部
@@ -86,7 +98,7 @@ class VaultNameIndex @Inject constructor() {
                 collectNames(f, rootPath, out)
             } else {
                 val relative = f.absolutePath.removePrefix(rootPath).trimStart('/', '\\')
-                out.getOrPut(f.name.lowercase()) { ArrayList() }.add(relative)
+                out.getOrPut(WikiLinkResolver.foldName(f.name)) { ArrayList() }.add(relative)
             }
         }
     }
@@ -111,7 +123,8 @@ class VaultNameIndex @Inject constructor() {
             if (declared.isEmpty()) continue
             val relative = f.absolutePath.removePrefix(rootPath).trimStart('/', '\\')
             declared.forEach { alias ->
-                out.getOrPut(alias.lowercase()) { ArrayList() }.add(NoteAlias(alias, relative))
+                out.getOrPut(WikiLinkResolver.foldName(alias)) { ArrayList() }
+                    .add(NoteAlias(alias, relative))
             }
         }
     }

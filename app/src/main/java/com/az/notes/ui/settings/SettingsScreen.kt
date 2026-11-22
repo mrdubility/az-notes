@@ -15,6 +15,7 @@ import androidx.compose.material.icons.outlined.Build
 import androidx.compose.material.icons.outlined.Cloud
 import androidx.compose.material.icons.outlined.ColorLens
 import androidx.compose.material.icons.outlined.DeleteSweep
+import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Image
@@ -169,6 +170,20 @@ fun SettingsScreen(
                     title = stringResource(R.string.settings_editor_toolbar),
                     subtitle = stringResource(R.string.settings_editor_toolbar_subtitle),
                     onClick = onOpenToolbarSettings
+                )
+            }
+            item {
+                SettingsRow(
+                    icon = Icons.Outlined.Description,
+                    title = stringResource(R.string.settings_always_update_links),
+                    subtitle = stringResource(R.string.settings_always_update_links_subtitle),
+                    trailing = {
+                        Switch(
+                            checked = settings.alwaysUpdateLinks,
+                            onCheckedChange = viewModel::setAlwaysUpdateLinks
+                        )
+                    },
+                    onClick = { viewModel.setAlwaysUpdateLinks(!settings.alwaysUpdateLinks) }
                 )
             }
 

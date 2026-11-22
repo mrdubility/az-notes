@@ -132,6 +132,10 @@ class SettingsViewModel @Inject constructor(
     fun setTrashEnabled(enabled: Boolean) =
         viewModelScope.launch { settingsRepository.setTrashEnabled(enabled) }
 
+    /** 改名 / 移动时是否自动更新其它笔记里的双链。 */
+    fun setAlwaysUpdateLinks(enabled: Boolean) =
+        viewModelScope.launch { settingsRepository.setAlwaysUpdateLinks(enabled) }
+
     /** 编辑器工具栏顺序。 */
     fun setEditorToolOrder(order: List<String>) =
         viewModelScope.launch { settingsRepository.setEditorToolOrder(order) }

@@ -17,6 +17,7 @@ import com.az.notes.data.storage.VaultLinkIndex
 import com.az.notes.data.storage.VaultNameIndex
 import com.az.notes.data.storage.VaultPropertyIndex
 import com.az.notes.data.storage.VaultRepository
+import com.az.notes.data.storage.WikiLinkResolveCache
 import com.az.notes.domain.markdown.FrontmatterAttribute
 import com.az.notes.domain.markdown.FrontmatterParser
 import com.az.notes.domain.markdown.FrontmatterPatchResult
@@ -109,6 +110,7 @@ class ReaderViewModel @Inject constructor(
     private val settingsRepository: SettingsRepository,
     private val debugLogRepository: DebugLogRepository,
     private val vaultNameIndex: VaultNameIndex,
+    private val wikiResolveCache: WikiLinkResolveCache,
     private val vaultPropertyIndex: VaultPropertyIndex,
     private val linkIndex: VaultLinkIndex,
     private val pathUpdateBus: PathUpdateBus,
@@ -352,7 +354,7 @@ class ReaderViewModel @Inject constructor(
         }
         val root = wikiRoot ?: return null
         val noteDir = File(absolutePath).parentFile
-        val file = WikiLinkResolver.resolve(filePart, root, noteDir, wikiIndex, wikiAliases)
+        val file = wikiResolveCache.resolve(filePart, root, noteDir, wikiIndex, wikiAliases)
             ?: return null
         return WikiLinkTarget(file.absolutePath, anchor)
     }

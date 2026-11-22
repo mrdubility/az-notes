@@ -7,6 +7,7 @@ import com.az.notes.R
 import com.az.notes.data.media.AttachmentRepository
 import com.az.notes.data.media.ImageImportRepository
 import com.az.notes.data.settings.SettingsRepository
+import com.az.notes.data.storage.LinkRewriter
 import com.az.notes.data.storage.TrashItem
 import com.az.notes.data.storage.TrashRepository
 import com.az.notes.data.storage.VaultNameIndex
@@ -17,6 +18,7 @@ import com.az.notes.domain.model.AppSettings
 import com.az.notes.domain.model.FileNode
 import com.az.notes.domain.model.NoteSortOrder
 import com.az.notes.domain.model.VaultInfo
+import com.az.notes.domain.markdown.NoteRewritePlan
 import com.az.notes.domain.notes.resolveStartFolder
 import com.az.notes.domain.notes.splitPinnedNotes
 import com.az.notes.ui.common.UiMessage
@@ -112,6 +114,7 @@ data class NotesUiState(
 class NotesViewModel @Inject constructor(
     private val vaultRepository: VaultRepository,
     private val vaultNameIndex: VaultNameIndex,
+    private val linkRewriter: LinkRewriter,
     private val settingsRepository: SettingsRepository,
     private val trashRepository: TrashRepository,
     private val attachmentRepository: AttachmentRepository,
@@ -357,6 +360,8 @@ class NotesViewModel @Inject constructor(
                 return@launch
             }
             val target = File(parent, newName).absolutePath
+            // 链接改写计划必须在改名之前生成（要用改前解析结果判定哪些引用指向它）
+            val plans = planLinkRewrites(mapOf(node.absolutePath to target))
             val ok = withContext(Dispatchers.IO) { vaultRepository.rename(node.absolutePath, target) }
             _state.update {
                 it.copy(
@@ -377,8 +382,60 @@ class NotesViewModel @Inject constructor(
                 reloadItems(pullRefresh = false, preserveOrder = true)
                 syncRemoteRename(node.absolutePath, target)
                 scheduleSaveSync()
+                showLinkRewrite(applyLinkRewrites(plans, setOf(node.absolutePath)))
             }
         }
+    }
+
+    /**
+     * 生成改名 / 移动后的链接改写计划（设置关闭或无仓库时返回空，不产生扫描）。
+     * 必须在文件系统操作**之前**调用。
+     */
+    private suspend fun planLinkRewrites(moves: Map<String, String>): List<NoteRewritePlan> {
+        if (!currentSettings.alwaysUpdateLinks || moves.isEmpty()) return emptyList()
+        val vault = currentSettings.vaultPath ?: return emptyList()
+        return runCatching { linkRewriter.plan(vault, moves) }.getOrDefault(emptyList())
+    }
+
+    /** 执行链接改写：登记同步强制上传（防指纹未变漏传）。 */
+    private suspend fun applyLinkRewrites(
+        plans: List<NoteRewritePlan>,
+        succeeded: Set<String>
+    ): LinkRewriter.Outcome? {
+        if (plans.isEmpty()) return null
+        val vault = currentSettings.vaultPath ?: return null
+        val outcome = runCatching { linkRewriter.apply(plans, succeeded) }.getOrNull() ?: return null
+        if (outcome.links > 0) {
+            currentSettings.currentVaultId?.let {
+                syncEngine.markForcedUpload(it, outcome.relativePaths(vault))
+            }
+        }
+        return outcome
+    }
+
+    /** 链接改写结果的一次性提示（无命中时不打扰）。 */
+    private fun showLinkRewrite(outcome: LinkRewriter.Outcome?) {
+        if (outcome == null || outcome.links <= 0) return
+        _state.update {
+            it.copy(message = UiMessage(UiText.of(R.string.msg_links_updated, outcome.files, outcome.links)))
+        }
+    }
+
+    /** 目录移动展开为"目录内每篇旧路径 → 新路径"；文件移动原样返回。 */
+    private fun expandMoves(pairs: List<Pair<String, String>>): Map<String, String> {
+        if (pairs.isEmpty()) return emptyMap()
+        val out = HashMap<String, String>()
+        for ((oldPath, newPath) in pairs) {
+            val src = File(oldPath)
+            if (!src.isDirectory) {
+                out[oldPath] = newPath
+                continue
+            }
+            src.walkTopDown().filter { it.isFile }.forEach { file ->
+                out[file.absolutePath] = newPath + file.absolutePath.removePrefix(src.absolutePath)
+            }
+        }
+        return out
     }
 
     /**
@@ -766,6 +823,14 @@ class NotesViewModel @Inject constructor(
             val crossVault = isCrossVaultMove(targetDir)
             var skipped = 0
             val movedPairs = mutableListOf<Pair<String, String>>()
+            // 链接改写计划：目录移动先展开为逐篇旧路径→新路径，再一次性生成（避免逐条全库扫描）
+            val planned = withContext(Dispatchers.IO) {
+                paths.mapNotNull { src ->
+                    val dst = File(targetDir, File(src).name).absolutePath
+                    if (dst == src) null else src to dst
+                }
+            }
+            val plans = if (crossVault) emptyList() else planLinkRewrites(expandMoves(planned))
             val moved = withContext(Dispatchers.IO) {
                 var ok = 0
                 for (src in paths) {
@@ -783,6 +848,9 @@ class NotesViewModel @Inject constructor(
                 ok
             }
             if (moved > 0) vaultNameIndex.invalidate()
+            if (!crossVault && movedPairs.isNotEmpty()) {
+                showLinkRewrite(applyLinkRewrites(plans, movedPairs.map { it.first }.toSet()))
+            }
             if (crossVault) {
                 removeFavoriteTrees(movedPairs.map { it.first })
                 removePinnedTrees(movedPairs.map { it.first })
@@ -824,6 +892,8 @@ class NotesViewModel @Inject constructor(
                 return@launch
             }
             val crossVault = isCrossVaultMove(targetDir)
+            // 链接改写计划必须在移动之前生成（用改前解析结果判定指向）
+            val plans = if (crossVault) emptyList() else planLinkRewrites(mapOf(sourcePath to target))
             val ok = withContext(Dispatchers.IO) { vaultRepository.rename(sourcePath, target) }
             if (ok) {
                 vaultNameIndex.invalidate()
@@ -841,6 +911,8 @@ class NotesViewModel @Inject constructor(
                 _state.update {
                     it.copy(message = UiMessage(UiText.of(R.string.msg_moved_one, src.name)))
                 }
+                // 链接改写放在提示之后：命中时用「已更新 N 篇…」覆盖条目式提示
+                if (!crossVault) showLinkRewrite(applyLinkRewrites(plans, setOf(sourcePath)))
             } else {
                 _state.update { it.copy(message = UiMessage(UiText.of(R.string.msg_move_failed))) }
             }
