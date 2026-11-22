@@ -5,10 +5,9 @@ import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -393,9 +392,9 @@ fun HomeScreen(
             },
             floatingActionButton = {
                 // 新建浮层：三个快捷动作横条（主题色背景）；列表向下滚动时隐藏、往回划时出现；
-                // 搜索态整体隐藏（搜索中不需要新建入口）
+                // 搜索态 / 多选态整体隐藏（搜索中不需要新建入口；多选时应专注批量操作）
                 AnimatedVisibility(
-                    visible = fabVisible && !searchActive,
+                    visible = fabVisible && !searchActive && !state.selectMode,
                     enter = fadeIn() + slideInVertically(),
                     exit = fadeOut() + slideOutVertically()
                 ) {
@@ -454,14 +453,16 @@ fun HomeScreen(
                     onLoadMore = { viewModel.loadMore() }
                 )
                 // 回到顶部：与新建浮层同步（向上回划出现）、离开顶部后浮现于页面顶部居中；
-                // 尺寸与下拉刷新指示器一致（容器 40dp、内部旋转图标 20dp）
+                // 尺寸与下拉刷新指示器一致（容器 40dp、内部旋转图标 20dp）。
+                // 入场/退场只做淡入淡出 + 轻微竖向位移，不做缩放：缩放期间阴影层在部分机型上
+                // 会先以矩形轮廓渲染（视觉上“先方后圆”），去掉缩放后按钮全程保持圆形。
                 AnimatedVisibility(
                     visible = showBackTop,
                     modifier = Modifier
                         .align(Alignment.TopCenter)
                         .padding(top = 8.dp),
-                    enter = fadeIn() + scaleIn(),
-                    exit = fadeOut() + scaleOut()
+                    enter = fadeIn(tween(120)) + slideInVertically(tween(120)) { -it / 3 },
+                    exit = fadeOut(tween(120)) + slideOutVertically(tween(120)) { -it / 3 }
                 ) {
                     Box(
                         modifier = Modifier
