@@ -114,7 +114,8 @@ class TagIndex @Inject constructor(
 
     /** 扫描单篇笔记的标签（正文 + frontmatter tags 属性）并入 [index]。 */
     private fun scan(node: FileNode, index: LinkedHashMap<String, Entry>) {
-        val text = vaultRepository.contentFor(node) ?: return
+        // 与链接索引同口径：用索引预算（4MB）而非搜索上限，大笔记的标签不再静默丢失
+        val text = vaultRepository.contentFor(node, VaultRepository.INDEX_MAX_BYTES) ?: return
         val split = FrontmatterParser.split(text)
         split.tags().forEach { add(it, node, index) }
         TagMatcher.extract(split.body).forEach { add(it.tag, node, index) }

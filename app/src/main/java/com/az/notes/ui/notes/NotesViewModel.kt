@@ -9,6 +9,7 @@ import com.az.notes.data.media.ImageImportRepository
 import com.az.notes.data.settings.SettingsRepository
 import com.az.notes.data.storage.TrashItem
 import com.az.notes.data.storage.TrashRepository
+import com.az.notes.data.storage.VaultNameIndex
 import com.az.notes.data.storage.VaultRepository
 import com.az.notes.data.sync.SyncEngine
 import com.az.notes.data.sync.SyncRunNotifier
@@ -110,6 +111,7 @@ data class NotesUiState(
 @HiltViewModel
 class NotesViewModel @Inject constructor(
     private val vaultRepository: VaultRepository,
+    private val vaultNameIndex: VaultNameIndex,
     private val settingsRepository: SettingsRepository,
     private val trashRepository: TrashRepository,
     private val attachmentRepository: AttachmentRepository,
@@ -366,6 +368,8 @@ class NotesViewModel @Inject constructor(
                 )
             }
             if (ok) {
+                // 名字 / 别名索引立即失效：否则 TTL 窗口（10s / 60s）内新名字解析不到、旧名字仍可能命中
+                vaultNameIndex.invalidate()
                 migrateFavorite(node.absolutePath, target)
                 migratePinned(node.absolutePath, target)
                 // 顺序快照同步替换为新路径：重命名后条目保持原位
@@ -469,6 +473,7 @@ class NotesViewModel @Inject constructor(
                 )
             }
             if (ok) {
+                vaultNameIndex.invalidate()
                 // 保序重载：删除后其余条目保持原位（置顶记录不在此清理：撤销恢复后自动重新置顶，
                 // 残留的已删除路径不会渲染，与收藏同一口径）
                 reloadItems(pullRefresh = false, preserveOrder = true)
@@ -481,6 +486,7 @@ class NotesViewModel @Inject constructor(
     private fun undoRestoreFromTrash(vault: String, items: List<TrashItem>): () -> Unit = {
         viewModelScope.launch {
             withContext(Dispatchers.IO) { items.forEach { trashRepository.restore(vault, it) } }
+            vaultNameIndex.invalidate()
             reloadItems(pullRefresh = false, preserveOrder = true)
             scheduleSaveSync()
         }
@@ -776,6 +782,7 @@ class NotesViewModel @Inject constructor(
                 }
                 ok
             }
+            if (moved > 0) vaultNameIndex.invalidate()
             if (crossVault) {
                 removeFavoriteTrees(movedPairs.map { it.first })
                 removePinnedTrees(movedPairs.map { it.first })
@@ -819,6 +826,7 @@ class NotesViewModel @Inject constructor(
             val crossVault = isCrossVaultMove(targetDir)
             val ok = withContext(Dispatchers.IO) { vaultRepository.rename(sourcePath, target) }
             if (ok) {
+                vaultNameIndex.invalidate()
                 if (crossVault) {
                     removeFavoriteTrees(listOf(sourcePath))
                     removePinnedTrees(listOf(sourcePath))
@@ -894,6 +902,7 @@ class NotesViewModel @Inject constructor(
                 }
             }
             val failed = paths.size - done
+            if (done > 0) vaultNameIndex.invalidate()
             _state.update {
                 it.copy(
                     message = when {
@@ -908,6 +917,7 @@ class NotesViewModel @Inject constructor(
                                     withContext(Dispatchers.IO) {
                                         trashed.forEach { trashRepository.restore(vault, it) }
                                     }
+                                    vaultNameIndex.invalidate()
                                     // 撤销批量删除：恢复项置顶，其余条目保持原位
                                     reloadItems(pullRefresh = false, preserveOrder = true)
                                     scheduleSaveSync()

@@ -179,6 +179,7 @@ class EditorViewModel @Inject constructor(
         withContext(Dispatchers.IO) {
             if (discardFresh) {
                 vaultRepository.delete(path)
+                vaultNameIndex.invalidate()
             } else if (current.dirty) {
                 flushed = runCatching { vaultRepository.writeTextAtomically(path, current.text) }.isSuccess
             }
@@ -223,6 +224,8 @@ class EditorViewModel @Inject constructor(
                 }
             }.getOrDefault(false)
             if (ok) {
+                // 名字 / 别名索引立即失效：否则 TTL 窗口内新名字解析不到、旧名字仍可能命中
+                vaultNameIndex.invalidate()
                 val oldPath = src.absolutePath
                 absolutePath = target.absolutePath
                 _state.update {
@@ -373,6 +376,7 @@ class EditorViewModel @Inject constructor(
                 }
             }.getOrDefault(false)
             if (ok) {
+                vaultNameIndex.invalidate()
                 val oldPath = absolutePath
                 absolutePath = target.absolutePath
                 var movedMessage = if (!vault.isNullOrBlank() && targetDir == vault) {

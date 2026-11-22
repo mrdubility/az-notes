@@ -3,6 +3,7 @@ package com.az.notes.data.storage
 import com.az.notes.domain.markdown.PreviewExtractor
 import com.az.notes.domain.model.FileNode
 import java.io.File
+import java.io.IOException
 import java.nio.charset.StandardCharsets
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -69,6 +70,16 @@ class VaultRepository @Inject constructor() {
 
         /** 正文搜索 / 附件引用扫描：超过该大小的文件跳过正文匹配（仅参与文件名匹配）。 */
         const val CONTENT_SEARCH_MAX_BYTES = 262_144L
+
+        /**
+         * 链接 / 标签索引的解析预算（与搜索上限刻意分开）：
+         * 搜索可以跳过超大文件，但索引不能——否则大笔记的双链 / 标签会"忽有忽无"。
+         * 该上限与 dirty 状态无关，超限的笔记始终不参与索引（结果稳定可预期）。
+         */
+        const val INDEX_MAX_BYTES = 4L * 1024 * 1024
+
+        /** 残留临时文件清理阀值：超过该年龄的 `.tmp` / `.bak` 才删除，避开并发写盘。 */
+        private const val STALE_TEMP_MS = 60_000L
 
         /** 正文搜索缓存上限：超过后整体清空，控制内存占用。 */
         private const val CONTENT_CACHE_LIMIT = 512
@@ -249,14 +260,30 @@ class VaultRepository @Inject constructor() {
 
     private val contentCache = ConcurrentHashMap<String, CachedContent>()
 
-    /** 读取文件正文（搜索用，mtime 增量缓存）；超大文件返回 null 跳过正文匹配。 */
-    internal fun contentFor(node: FileNode): String? {
-        if (node.size > CONTENT_SEARCH_MAX_BYTES) return null
-        val cached = contentCache[node.absolutePath]
-        if (cached != null && cached.lastModified == node.lastModified) return cached.text
+    /**
+     * 读取文件正文（默认搜索口径，mtime 增量缓存）；超大文件返回 null。
+     *
+     * [maxBytes] 为本次调用的解析预算：搜索用 [CONTENT_SEARCH_MAX_BYTES]，链接 / 标签
+     * 索引用 [INDEX_MAX_BYTES]（同一读取路径，不再有"dirty 直读磁盘"的分叉）。
+     * [forceRead] 强制重读磁盘（绕过 mtime 缓存，写盘后同秒 mtime 未变的场景使用）。
+     * 超过搜索上限的正文不进缓存，避免单篇大文件把 512 条缓存挤空。
+     */
+    internal fun contentFor(
+        node: FileNode,
+        maxBytes: Long = CONTENT_SEARCH_MAX_BYTES,
+        forceRead: Boolean = false
+    ): String? {
+        if (node.size > maxBytes) return null
+        val cacheable = node.size <= CONTENT_SEARCH_MAX_BYTES
+        if (cacheable && !forceRead) {
+            val cached = contentCache[node.absolutePath]
+            if (cached != null && cached.lastModified == node.lastModified) return cached.text
+        }
         val text = runCatching { readText(node.absolutePath) }.getOrNull() ?: return null
-        if (contentCache.size >= CONTENT_CACHE_LIMIT) contentCache.clear()
-        contentCache[node.absolutePath] = CachedContent(node.lastModified, text)
+        if (cacheable) {
+            if (contentCache.size >= CONTENT_CACHE_LIMIT) contentCache.clear()
+            contentCache[node.absolutePath] = CachedContent(node.lastModified, text)
+        }
         return text
     }
 
@@ -332,19 +359,56 @@ class VaultRepository @Inject constructor() {
     /**
      * 原子写盘（§5.3）：先写 `.tmp` 再 rename，避免崩溃损坏原文件；
      * 统一 UTF-8 无 BOM、LF 换行。
+     *
+     * rename 失败（部分 FUSE / 外置存储不接受覆盖式 rename）时**不再直接覆盖写**——那会在
+     * 写到一半崩溃时留下半截原文件。改为 `.bak` 三步交换：目标→`.bak` → `.tmp`→目标，
+     * 任一步失败立即回滚并抛出异常（笔记宁可不写，也不要半截文件）。
      */
     fun writeTextAtomically(absolutePath: String, content: String) {
-        val target = File(absolutePath)
-        target.parentFile?.mkdirs()
-        val tmp = File(target.parentFile, target.name + ".tmp")
-        val normalized = content.replace("\r\n", "\n").replace("\r", "\n")
+        val target = File(absolutePath).absoluteFile
+        val dir = target.parentFile ?: return
+        dir.mkdirs()
+        val tmp = File(dir, target.name + ".tmp")
+        val normalized = content.replace("\r\n", "\n").replace('\r', '\n')
         tmp.writeText(normalized, StandardCharsets.UTF_8)
         // 直接 rename 覆盖目标（Linux rename(2) 对已存在目标是原子替换）：不再先 delete 目标，
         // 消除「删旧完成、rename 前进程被杀」原文件已丢失的窗口（.tmp 仍在，可人工找回）
-        if (!tmp.renameTo(target)) {
-            // rename 失败兜底：直接覆盖写
-            target.writeText(normalized, StandardCharsets.UTF_8)
+        if (tmp.renameTo(target)) {
+            cleanStaleTempFiles(dir)
+            return
+        }
+        if (!target.exists()) {
+            if (!tmp.renameTo(target)) {
+                tmp.delete()
+                throw IOException("write failed: $absolutePath")
+            }
+            cleanStaleTempFiles(dir)
+            return
+        }
+        val bak = File(dir, target.name + ".bak")
+        runCatching { bak.delete() }
+        if (!target.renameTo(bak)) {
             tmp.delete()
+            throw IOException("write failed: $absolutePath")
+        }
+        if (!tmp.renameTo(target)) {
+            // 回滚：原文件复位，绝不半截覆盖
+            bak.renameTo(target)
+            tmp.delete()
+            throw IOException("write failed: $absolutePath")
+        }
+        bak.delete()
+        cleanStaleTempFiles(dir)
+    }
+
+    /** 清理同目录残留的临时文件（跳过一分钟内可能仍在写入的，避免误删并发写盘）。 */
+    private fun cleanStaleTempFiles(dir: File) {
+        val now = System.currentTimeMillis()
+        runCatching {
+            dir.listFiles()?.forEach { f ->
+                val stale = f.isFile && (f.name.endsWith(".tmp") || f.name.endsWith(".bak"))
+                if (stale && now - f.lastModified() > STALE_TEMP_MS) f.delete()
+            }
         }
     }
 

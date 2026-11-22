@@ -97,4 +97,75 @@ class FrontmatterTest {
         assertTrue(FrontmatterParser.split("---\ntags:\n---\n").tags().isEmpty())
         assertTrue(FrontmatterParser.split("plain body").tags().isEmpty())
     }
+
+    // ---------------------------------------------------------------- patch（行区间外科手术）
+
+    @Test
+    fun `patch keeps nested yaml comments and untouched lines`() {
+        val original = "---\ntitle: 项目\nauthor:\n  name: az\n  url: https://x\n# 备注行\ntags: [a, b]\n---\nbody"
+        val entries = FrontmatterParser.split(original).entries.map {
+            if (it.key == "title") it.copy(values = listOf("新项目")) else it
+        }
+        val patched = FrontmatterParser.patch(original, entries)
+        assertTrue(patched is FrontmatterPatchResult.Ok)
+        val text = (patched as FrontmatterPatchResult.Ok).text
+
+        assertEquals(
+            "---\ntitle: 新项目\nauthor:\n  name: az\n  url: https://x\n# 备注行\ntags: [a, b]\n---\nbody",
+            text
+        )
+    }
+
+    @Test
+    fun `patch refuses editing key whose yaml is inexpressible`() {
+        val original = "---\nauthor:\n  name: az\n---\nbody"
+        val entries = FrontmatterParser.split(original).entries.map {
+            if (it.key == "author") it.copy(values = listOf("az")) else it
+        }
+        val result = FrontmatterParser.patch(original, entries)
+        assertTrue(result is FrontmatterPatchResult.Refused)
+        assertEquals(listOf("author"), (result as FrontmatterPatchResult.Refused).keys)
+    }
+
+    @Test
+    fun `patch rewrites only the changed key lines`() {
+        val original = "---\ntags:\n  - a\n  - b\ntitle: t\n---\nbody"
+        val entries = FrontmatterParser.split(original).entries.map {
+            if (it.key == "tags") it.copy(values = listOf("c")) else it
+        }
+        val text = (FrontmatterParser.patch(original, entries) as FrontmatterPatchResult.Ok).text
+        assertEquals("---\ntags: c\ntitle: t\n---\nbody", text)
+    }
+
+    @Test
+    fun `patch appends new keys and drops removed ones`() {
+        val original = "---\ntitle: t\n# 说明\nstatus: draft\n---\nbody"
+        val entries = FrontmatterParser.split(original).entries.filter { it.key != "status" } +
+            FrontmatterAttribute("done", listOf("true"))
+        val text = (FrontmatterParser.patch(original, entries) as FrontmatterPatchResult.Ok).text
+        assertEquals("---\ntitle: t\n# 说明\ndone: true\n---\nbody", text)
+    }
+
+    @Test
+    fun `patch without changes keeps original block bytes`() {
+        val original = "---\ntitle: t\nauthor:\n  name: az\n---\nbody"
+        val entries = FrontmatterParser.split(original).entries
+        val text = (FrontmatterParser.patch(original, entries) as FrontmatterPatchResult.Ok).text
+        assertEquals(original, text)
+    }
+
+    @Test
+    fun `patch with empty entries drops block`() {
+        val text = (FrontmatterParser.patch("---\na: b\n---\nbody", emptyList()) as FrontmatterPatchResult.Ok).text
+        assertEquals("body", text)
+    }
+
+    @Test
+    fun `patch creates block when none exists`() {
+        val text = (
+            FrontmatterParser.patch("body", listOf(FrontmatterAttribute("title", listOf("t"))))
+                as FrontmatterPatchResult.Ok
+            ).text
+        assertEquals("---\ntitle: t\n---\nbody", text)
+    }
 }

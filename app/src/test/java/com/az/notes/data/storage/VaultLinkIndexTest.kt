@@ -13,7 +13,7 @@ import java.nio.file.Files
 /**
  * 全库双链索引单测（真实临时目录文件，JVM 直跑）。
  * 覆盖：正向 / 反向解析、别名回退、同名消歧、嵌入过滤、自锚点与自链、
- * 增量刷新（改 / 删 / 新增）、改名后重解析、未解析、超大笔记跳过与显式失效。
+ * 增量刷新（改 / 删 / 新增）、改名后重解析、未解析、大文件索引预算与显式失效。
  */
 class VaultLinkIndexTest {
 
@@ -155,14 +155,32 @@ class VaultLinkIndexTest {
     }
 
     @Test
-    fun `oversized notes are skipped`() = runBlocking {
+    fun `notes above search limit but inside index budget are indexed`() = runBlocking {
+        // 300KB：超过搜索上限（256KB）但远小于索引预算（4MB）——必须参与索引
         val big = "[[target]]\n" + "x".repeat(300_000)
-        note("big.md", big)
+        val src = note("big.md", big)
+        val target = note("target.md", "")
+        index.buildOrRefresh(root.absolutePath, force = true)
+        assertEquals(listOf(src.absolutePath), index.backlinksOf(target.absolutePath).map { it.sourcePath })
+
+        // 一致性：dirty（markChanged 强制重读）与非 dirty 两条路径的可见范围必须相同
+        index.markChanged(src.absolutePath)
+        index.buildOrRefresh(root.absolutePath, force = true)
+        assertEquals(1, index.backlinksOf(target.absolutePath).size)
+    }
+
+    @Test
+    fun `notes above index budget are always skipped`() = runBlocking {
+        val huge = "[[target]]\n" + "x".repeat((VaultRepository.INDEX_MAX_BYTES + 1024).toInt())
+        val src = note("huge.md", huge)
         note("target.md", "")
         index.buildOrRefresh(root.absolutePath, force = true)
 
-        assertTrue(index.outLinksOf(File(root, "big.md").absolutePath).isEmpty())
-        assertTrue(index.backlinksOf(File(root, "target.md").absolutePath).isEmpty())
+        assertTrue(index.outLinksOf(src.absolutePath).isEmpty())
+        // 路径稳定：标脏后仍不参与索引（不会"刚编辑时跑进来、刷新后又消失"）
+        index.markChanged(src.absolutePath)
+        index.buildOrRefresh(root.absolutePath, force = true)
+        assertTrue(index.outLinksOf(src.absolutePath).isEmpty())
     }
 
     @Test

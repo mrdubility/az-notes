@@ -62,8 +62,10 @@ sealed interface LinkResolution {
  * 解析一律走 [WikiLinkResolver]（含同目录优先、层级与字典序消歧、aliases 回退），
  * 与正文点击共用同一套规则——解析规则只有一处。
  *
- * 已知局限：正文读取复用 [VaultRepository.contentFor]，超过
- * [VaultRepository.CONTENT_SEARCH_MAX_BYTES] 的超大笔记不参与索引（与标签索引同口径）。
+ * 已知上限：正文读取走 [VaultRepository.INDEX_MAX_BYTES]（4MB，与首页搜索的 256KB 上限
+ * 刻意分开）——超过这一预算的笔记始终不参与索引（与是否 dirty 无关），因此大笔记的双链
+ * 不会出现"刚编辑时有、刷新后消失"的忽有忽无。单篇引用数仍受
+ * [WikiLinkExtractor.MAX_REFS_PER_NOTE] 限制。
  */
 @Singleton
 class VaultLinkIndex @Inject constructor(
@@ -181,7 +183,7 @@ class VaultLinkIndex @Inject constructor(
             } else {
                 null
             }
-            raw[node.absolutePath] = cached ?: extractLinks(node, bypassCache = node.absolutePath in dirty)
+            raw[node.absolutePath] = cached ?: extractLinks(node, forceRead = node.absolutePath in dirty)
             done++
             if (done and 15 == 0) yield()
             onProgress(done, notes.size)
@@ -245,12 +247,17 @@ class VaultLinkIndex @Inject constructor(
         )
     }
 
-    private fun extractLinks(node: FileNode, bypassCache: Boolean): List<RawLinkRef> {
-        val text = if (bypassCache) {
-            runCatching { vaultRepository.readText(node.absolutePath) }.getOrNull()
-        } else {
-            vaultRepository.contentFor(node)
-        }
+    /**
+     * 读取单篇正文并提取双链：统一走 [VaultRepository.contentFor] 的索引预算（4MB），
+     * [forceRead] 仅表示"绕过 mtime 缓存重读"，不再改变大小上限——
+     * 否则 dirty 与非 dirty 两条路径的可见范围不同，索引结果会随之漂移。
+     */
+    private fun extractLinks(node: FileNode, forceRead: Boolean): List<RawLinkRef> {
+        val text = vaultRepository.contentFor(
+            node,
+            maxBytes = VaultRepository.INDEX_MAX_BYTES,
+            forceRead = forceRead
+        )
         val linked = text?.takeIf { it.contains("[[") } ?: return emptyList()
         return WikiLinkExtractor.extract(FrontmatterParser.split(linked).body)
     }

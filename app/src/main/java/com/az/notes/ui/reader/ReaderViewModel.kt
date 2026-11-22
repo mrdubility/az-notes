@@ -19,6 +19,7 @@ import com.az.notes.data.storage.VaultPropertyIndex
 import com.az.notes.data.storage.VaultRepository
 import com.az.notes.domain.markdown.FrontmatterAttribute
 import com.az.notes.domain.markdown.FrontmatterParser
+import com.az.notes.domain.markdown.FrontmatterPatchResult
 import com.az.notes.domain.markdown.Heading
 import com.az.notes.domain.markdown.HeadingExtractor
 import com.az.notes.domain.markdown.ImageReference
@@ -576,34 +577,43 @@ class ReaderViewModel @Inject constructor(
     }
 
     /**
-     * 属性写回：重读磁盘 → 仅重建 frontmatter 属性块 → 原子写盘 → 失效名字 / 属性索引 →
-     * 调度保存同步；成功后用新属性就地更新状态（仅属性区变化，不做整篇重载，
-     * 复选框等操作立即反馈）。读 / 写失败时通过 [ReaderUiState.message] 提示。
+     * 属性写回：重读磁盘 → 仅改动与编辑器状态的差异键（[FrontmatterParser.patch]，其余原文行
+     * 逐行保留）→ 原子写盘 → 失效名字 / 属性索引 → 调度保存同步；成功后用新属性就地更新状态
+     * （仅属性区变化，不做整篇重载，复选框等操作立即反馈）。
+     *
+     * 若被改动的键原文含嵌套子键 / 块标量 / 行尾注释等无法无损表达的 YAML 形态，patch 会拒绝
+     * 写入并提示到编辑器修改，绝不静默压平（数据损坏级风险）。
      */
     private fun mutateAttributes(transform: (List<FrontmatterAttribute>) -> List<FrontmatterAttribute>?) {
         viewModelScope.launch {
-            val result = attrMutex.withLock {
+            val outcome = attrMutex.withLock {
                 withContext(Dispatchers.IO) {
                     runCatching {
                         val current = vaultRepository.readText(absolutePath)
                         val split = FrontmatterParser.split(current)
-                        val entries = transform(split.entries)
-                        if (entries == null) {
-                            Result.success<List<FrontmatterAttribute>?>(null)
-                        } else {
-                            vaultRepository.writeTextAtomically(
-                                absolutePath,
-                                FrontmatterParser.build(entries, split.body)
-                            )
-                            Result.success<List<FrontmatterAttribute>?>(entries)
+                        val entries = transform(split.entries) ?: return@runCatching AttrWrite.NoChange
+                        when (val patched = FrontmatterParser.patch(current, entries)) {
+                            is FrontmatterPatchResult.Refused -> AttrWrite.Refused
+                            is FrontmatterPatchResult.Ok -> {
+                                vaultRepository.writeTextAtomically(absolutePath, patched.text)
+                                AttrWrite.Saved(entries)
+                            }
                         }
-                    }.getOrElse { Result.failure(it) }
+                    }.getOrDefault(AttrWrite.Failed)
                 }
             }
-            val newEntries = result.getOrNull()
-            if (result.isSuccess) {
-                if (newEntries != null) {
-                    _state.update { it.copy(attributes = newEntries) }
+            when (outcome) {
+                AttrWrite.NoChange -> Unit
+                AttrWrite.Failed -> _state.update {
+                    it.copy(message = UiText.of(R.string.msg_attr_save_failed))
+                }
+
+                AttrWrite.Refused -> _state.update {
+                    it.copy(message = UiText.of(R.string.msg_attr_advanced_yaml))
+                }
+
+                is AttrWrite.Saved -> {
+                    _state.update { it.copy(attributes = outcome.entries) }
                     vaultNameIndex.invalidate()
                     vaultPropertyIndex.invalidate()
                     linkIndex.markChanged(absolutePath)
@@ -611,9 +621,18 @@ class ReaderViewModel @Inject constructor(
                     loadPropertyHistory()
                     runCatching { syncScheduler.scheduleSaveSync() }
                 }
-            } else {
-                _state.update { it.copy(message = UiText.of(R.string.msg_attr_save_failed)) }
             }
         }
+    }
+
+    /** 属性写回的结局：无变化 / 因高级 YAML 被拒 / 写盘失败 / 已保存。 */
+    private sealed interface AttrWrite {
+        data object NoChange : AttrWrite
+
+        data object Refused : AttrWrite
+
+        data object Failed : AttrWrite
+
+        data class Saved(val entries: List<FrontmatterAttribute>) : AttrWrite
     }
 }

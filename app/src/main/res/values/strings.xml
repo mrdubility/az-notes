@@ -597,6 +597,7 @@
     <string name="task_edit_title">编辑待办</string>
     <string name="msg_task_save_failed">待办保存失败，请重试</string>
     <string name="msg_attr_save_failed">属性保存失败，请重试</string>
+    <string name="msg_attr_advanced_yaml">该属性含嵌套或高级 YAML 写法，请到编辑器修改</string>
 
     <!-- 回收站（恢复被云端删除波及的本地文件） -->
     <string name="trash_title">回收站</string>

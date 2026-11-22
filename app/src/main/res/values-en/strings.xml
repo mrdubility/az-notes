@@ -597,6 +597,7 @@
     <string name="task_edit_title">Edit task</string>
     <string name="msg_task_save_failed">Failed to save task, please retry</string>
     <string name="msg_attr_save_failed">Failed to save properties, please retry</string>
+    <string name="msg_attr_advanced_yaml">This property uses nested or advanced YAML. Edit it in the editor.</string>
 
     <!-- Trash -->
     <string name="trash_title">Trash</string>

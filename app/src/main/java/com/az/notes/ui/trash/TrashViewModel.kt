@@ -7,6 +7,7 @@ import com.az.notes.data.settings.SettingsRepository
 import com.az.notes.data.storage.TrashBatch
 import com.az.notes.data.storage.TrashItem
 import com.az.notes.data.storage.TrashRepository
+import com.az.notes.data.storage.VaultNameIndex
 import com.az.notes.ui.common.UiMessage
 import com.az.notes.ui.common.UiText
 import com.az.notes.work.SyncScheduler
@@ -37,6 +38,7 @@ data class TrashUiState(
 @HiltViewModel
 class TrashViewModel @Inject constructor(
     private val trashRepository: TrashRepository,
+    private val vaultNameIndex: VaultNameIndex,
     private val settingsRepository: SettingsRepository,
     private val syncScheduler: SyncScheduler
 ) : ViewModel() {
@@ -76,6 +78,7 @@ class TrashViewModel @Inject constructor(
                 return@launch
             }
             val restored = withContext(Dispatchers.IO) { trashRepository.restore(vault, item) }
+            if (restored != null) vaultNameIndex.invalidate()
             _state.update {
                 it.copy(
                     message = if (restored != null) {
@@ -87,6 +90,7 @@ class TrashViewModel @Inject constructor(
                                     withContext(Dispatchers.IO) {
                                         trashRepository.moveToTrash(vault, restored.absolutePath)
                                     }
+                                    vaultNameIndex.invalidate()
                                     refreshBatches()
                                 }
                             }
