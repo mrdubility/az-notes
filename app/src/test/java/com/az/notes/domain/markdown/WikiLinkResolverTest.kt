@@ -2,6 +2,7 @@ package com.az.notes.domain.markdown
 
 import java.io.File
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Rule
 import org.junit.Test
@@ -143,13 +144,15 @@ class WikiLinkResolverTest {
     }
 
     @Test
-    fun `nfd file name resolves from nfc target`() {
-        val vault = temp.newFolder("vault")
-        // macOS / iCloud 同步回来的文件名常为 NFD（e + 组合附加符号）；目标则是 NFC
-        val nfdName = "cafe\u0301.md"
-        File(vault, nfdName).writeText("x")
-        val index = com.az.notes.data.storage.VaultNameIndex().names(vault)
-        val hit = WikiLinkResolver.resolve("cafe\u00E9", vault, vault, index)
-        assertEquals(File(vault, nfdName).absolutePath, hit?.absolutePath)
+    fun `nfd and nfc spellings fold to the same key`() {
+        // macOS / iCloud 同步回来的文件名常为 NFD（e + 组合附加符号），而键入的目标是 NFC。
+        // 索引键与查询键必须走同一个 foldName，否则"明明同名却解析不到"。
+        // 这里不落盘：CI 的 JVM 文件名编码（sun.jnu.encoding）不保证 UTF-8，
+        // 非 ASCII 文件名用例在不同 runner 上不可靠。
+        val nfd = "cafe\u0301.md"
+        val nfc = "cafe\u00E9.md"
+        assertNotEquals(nfd, nfc)
+        assertEquals(WikiLinkResolver.foldName(nfc), WikiLinkResolver.foldName(nfd))
+        assertEquals(WikiLinkResolver.foldName(nfc), WikiLinkResolver.foldName(nfc.uppercase()))
     }
 }
