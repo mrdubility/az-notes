@@ -527,9 +527,9 @@ class EditorViewModel @Inject constructor(
                 }
             } else emptyList()
             val settingsSnapshot = settings
-            // 链接改写计划在移动之前生成（同改名：用改前解析结果判定）
+            // 链接改写计划在移动之前生成（同改名：用改前解析结果判定）；跳仓库不改写
             val plans = if (crossVault) {
-                emptyList()
+                null
             } else {
                 planLinkRewrites(settingsSnapshot, mapOf(absolutePath to target.absolutePath))
             }
