@@ -16,6 +16,7 @@ import com.az.notes.data.storage.TagRow
 import com.az.notes.data.storage.VaultLinkIndex
 import com.az.notes.data.storage.VaultNameIndex
 import com.az.notes.data.storage.VaultRepository
+import com.az.notes.data.sync.ConflictMarkerResolver
 import com.az.notes.data.sync.SyncEngine
 import com.az.notes.domain.model.EditorTool
 import com.az.notes.domain.model.AppSettings
@@ -380,6 +381,22 @@ class EditorViewModel @Inject constructor(
         }
         message?.let { text -> _state.update { it.copy(message = text) } }
         reloadSelfIfRewritten(outcome, textBeforeApply)
+    }
+
+    /**
+     * 消解正文里的同步冲突标记（两设备改到同一段时的合并产物）：
+     * [keepLocal] 为 true 保留本地段、否则保留云端段，标记行全部移除；结果置脏并立即保存。
+     */
+    fun resolveConflictMarkers(keepLocal: Boolean) {
+        val current = _state.value
+        val resolved = if (keepLocal) {
+            ConflictMarkerResolver.keepLocal(current.text)
+        } else {
+            ConflictMarkerResolver.keepRemote(current.text)
+        }
+        if (resolved == current.text) return
+        _state.update { it.copy(text = resolved, dirty = true) }
+        save()
     }
 
     /**

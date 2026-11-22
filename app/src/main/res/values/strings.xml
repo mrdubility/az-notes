@@ -609,10 +609,17 @@
     <string name="sync_conflict_backed_up">旧版本已备份到应用内部：%1$s</string>
     <string name="sync_conflict_no_backup">旧版本未保留（按最新版覆盖）</string>
     <string name="sync_conflict_markers">待处理 %1$d 处冲突（正文已内联标记）</string>
+    <string name="sync_restore_backup">恢复旧版本</string>
+    <string name="sync_restore_done">已恢复旧版本，并已排队同步</string>
+    <string name="sync_restore_failed">恢复失败（备份可能已被清理）</string>
     <string name="editor_external_title">文件已更新</string>
     <string name="editor_external_message">该文件已在别处被修改（同步或链接改写），直接保存会覆盖对方的修改。要如何处理？</string>
     <string name="editor_external_reload">重新载入</string>
     <string name="editor_external_keep">保留我的修改</string>
+    <string name="editor_resolve_conflict">处理同步冲突</string>
+    <string name="editor_resolve_conflict_message">正文里有两台设备对同一段的两种写法（已内联标记）。选择保留哪一侧，标记行会被移除。</string>
+    <string name="editor_resolve_keep_local">保留本地</string>
+    <string name="editor_resolve_keep_remote">保留云端</string>
 
     <!-- 回收站（恢复被云端删除波及的本地文件） -->
     <string name="trash_title">回收站</string>

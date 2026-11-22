@@ -18,11 +18,15 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -38,19 +42,26 @@ import com.az.notes.data.local.ConflictRecordEntity
 import com.az.notes.data.local.SyncLogDao
 import com.az.notes.data.local.SyncLogEntity
 import com.az.notes.data.settings.SettingsRepository
+import com.az.notes.data.sync.ConflictBackupStore
 import com.az.notes.domain.model.ConflictMergeState
 import com.az.notes.domain.model.SyncOpType
+import com.az.notes.ui.common.UiText
 import com.az.notes.ui.common.label
+import com.az.notes.ui.common.resolve
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
 import javax.inject.Inject
 
 /**
@@ -61,7 +72,9 @@ import javax.inject.Inject
 class SyncHistoryViewModel @Inject constructor(
     syncLogDao: SyncLogDao,
     private val conflictRecordDao: ConflictRecordDao,
-    private val settingsRepository: SettingsRepository
+    private val settingsRepository: SettingsRepository,
+    private val conflictBackupStore: ConflictBackupStore,
+    private val syncScheduler: com.az.notes.work.SyncScheduler
 ) : ViewModel() {
 
     /** 同步日志（最近 100 条，仅当前仓库）。 */
@@ -97,6 +110,32 @@ class SyncHistoryViewModel @Inject constructor(
         val vaultId = settingsRepository.requireCurrentVaultId() ?: return@launch
         conflictRecordDao.clear(vaultId)
     }
+
+    private val _message = kotlinx.coroutines.flow.MutableStateFlow<UiText?>(null)
+
+    /** 一次性提示（恢复结果）。 */
+    val message: StateFlow<UiText?> = _message
+
+    fun consumeMessage() {
+        _message.value = null
+    }
+
+    /** 从应用私有备份里恢复旧版本到原笔记路径（人工回退用）。 */
+    fun restoreBackup(record: ConflictRecordEntity) = viewModelScope.launch {
+        val vault = runCatching { settingsRepository.settings.first().vaultPath }.getOrNull()
+        if (vault.isNullOrBlank() || record.backupPath.isBlank()) {
+            _message.value = UiText.of(R.string.sync_restore_failed)
+            return@launch
+        }
+        val ok = withContext(Dispatchers.IO) {
+            conflictBackupStore.restore(
+                backup = File(record.backupPath),
+                targetPath = File(vault, record.path).absolutePath
+            )
+        }
+        _message.value = UiText.of(if (ok) R.string.sync_restore_done else R.string.sync_restore_failed)
+        if (ok) runCatching { syncScheduler.scheduleSaveSync() }
+    }
 }
 
 /** 冲突记录页：说明 + 列表 + 清除全部（自同步页独立成页）。 */
@@ -107,7 +146,16 @@ fun SyncConflictScreen(
     viewModel: SyncHistoryViewModel = hiltViewModel()
 ) {
     val conflicts by viewModel.conflicts.collectAsStateWithLifecycle()
+    val snackbarHostState = remember { SnackbarHostState() }
+    val message by viewModel.message.collectAsStateWithLifecycle()
+    val messageText = message?.resolve()
+    LaunchedEffect(messageText) {
+        val text = messageText ?: return@LaunchedEffect
+        snackbarHostState.showSnackbar(text)
+        viewModel.consumeMessage()
+    }
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = { Text(stringResource(R.string.sync_conflict_title)) },
@@ -144,7 +192,9 @@ fun SyncConflictScreen(
                         modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
                     )
                 }
-                items(conflicts, key = { it.id }) { record -> ConflictRow(record) }
+                items(conflicts, key = { it.id }) { record ->
+                    ConflictRow(record) { viewModel.restoreBackup(record) }
+                }
                 item {
                     TextButton(
                         onClick = viewModel::clearConflicts,
@@ -260,7 +310,7 @@ private fun LogRow(log: SyncLogEntity) {
 
 /** 单条冲突记录：文件、解决方式与败方副本路径（§6.2）。 */
 @Composable
-private fun ConflictRow(record: ConflictRecordEntity) {
+private fun ConflictRow(record: ConflictRecordEntity, onRestore: () -> Unit) {
     Column(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp)
     ) {
@@ -309,6 +359,14 @@ private fun ConflictRow(record: ConflictRecordEntity) {
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+        }
+        if (record.backupPath.isNotEmpty()) {
+            TextButton(
+                onClick = onRestore,
+                contentPadding = PaddingValues(horizontal = 0.dp, vertical = 4.dp)
+            ) {
+                Text(stringResource(R.string.sync_restore_backup))
+            }
         }
     }
 }

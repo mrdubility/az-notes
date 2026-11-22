@@ -609,10 +609,17 @@
     <string name="sync_conflict_backed_up">Previous version backed up in app storage: %1$s</string>
     <string name="sync_conflict_no_backup">Previous version not kept (latest wins)</string>
     <string name="sync_conflict_markers">%1$d conflict block(s) pending (marked inline)</string>
+    <string name="sync_restore_backup">Restore previous version</string>
+    <string name="sync_restore_done">Previous version restored and queued for sync</string>
+    <string name="sync_restore_failed">Restore failed (backup may have been cleaned up)</string>
     <string name="editor_external_title">File updated elsewhere</string>
     <string name="editor_external_message">This note was modified elsewhere (sync or link rewrite). Saving now overwrites those changes. What do you want to do?</string>
     <string name="editor_external_reload">Reload</string>
     <string name="editor_external_keep">Keep my changes</string>
+    <string name="editor_resolve_conflict">Resolve sync conflict</string>
+    <string name="editor_resolve_conflict_message">This note contains two versions of the same paragraph (marked inline). Choose which side to keep; markers will be removed.</string>
+    <string name="editor_resolve_keep_local">Keep local</string>
+    <string name="editor_resolve_keep_remote">Keep cloud</string>
 
     <!-- Trash -->
     <string name="trash_title">Trash</string>

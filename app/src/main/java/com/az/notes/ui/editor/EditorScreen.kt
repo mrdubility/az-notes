@@ -27,6 +27,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.Sync
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
@@ -66,6 +67,7 @@ import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.az.notes.R
+import com.az.notes.data.sync.ConflictMarkerResolver
 import com.az.notes.data.media.ImportedMedia
 import com.az.notes.data.storage.TagRow
 import com.az.notes.domain.markdown.ImageReference
@@ -113,6 +115,12 @@ fun EditorScreen(
     var renameDialog by remember { mutableStateOf(false) }
     var moveDialog by remember { mutableStateOf(false) }
     var insertImageDialog by remember { mutableStateOf(false) }
+    var conflictDialog by remember { mutableStateOf(false) }
+
+    // 正文含同步冲突标记（两设备改同一段）时，顶栏出现一键消解入口
+    val hasConflictMarkers = remember(state.text) {
+        ConflictMarkerResolver.hasMarkers(state.text)
+    }
 
     // —— 编辑器文本状态：内建 undo/redo 栈与自滚动 ——
     val textState = rememberTextFieldState()
@@ -352,6 +360,31 @@ fun EditorScreen(
         }
     }
 
+    // 同步冲突消解：保留本地 / 保留云端（均为整篇替换，标记行一并移除）
+    if (conflictDialog) {
+        AlertDialog(
+            onDismissRequest = { conflictDialog = false },
+            title = { Text(stringResource(R.string.editor_resolve_conflict)) },
+            text = { Text(stringResource(R.string.editor_resolve_conflict_message)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.resolveConflictMarkers(keepLocal = true)
+                    conflictDialog = false
+                }) {
+                    Text(stringResource(R.string.editor_resolve_keep_local))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    viewModel.resolveConflictMarkers(keepLocal = false)
+                    conflictDialog = false
+                }) {
+                    Text(stringResource(R.string.editor_resolve_keep_remote))
+                }
+            }
+        )
+    }
+
     // 外部修改拦截：保存前发现磁盘 mtime 变过（同步拉取 / 链接改写）→ 二选一，不默默覆盖
     if (state.externalChange) {
         AlertDialog(
@@ -427,6 +460,15 @@ fun EditorScreen(
                     }
                 },
                 actions = {
+                    // 正文含同步冲突标记时提供一键消解入口
+                    if (hasConflictMarkers) {
+                        IconButton(onClick = { conflictDialog = true }) {
+                            Icon(
+                                Icons.Outlined.Sync,
+                                stringResource(R.string.editor_resolve_conflict)
+                            )
+                        }
+                    }
                     // 移动到其他文件夹
                     IconButton(onClick = {
                         moveDialog = true

@@ -229,18 +229,23 @@ object ParagraphMerger {
         flush()
 
         val out = ArrayList<Chunk>(raw.size)
+        val pending = StringBuilder()
         for (builder in raw) {
             val text = builder.toString()
             val key = text.trim()
             if (key.isEmpty()) {
-                // 纯空白块并入前一块，保证拼接能还原分隔空行
+                // 纯空白块：有前一块就并入前一块，否则挂起到下一个内容块前面
+                // （frontmatter 与正文之间的空行就属于这种前导空白，丢了会粘在一起）
                 if (out.isNotEmpty()) {
                     val last = out.removeAt(out.lastIndex)
                     out += Chunk(last.raw + text, last.key)
+                } else {
+                    pending.append(text)
                 }
                 continue
             }
-            out += Chunk(text, key)
+            out += Chunk(pending.toString() + text, key)
+            pending.setLength(0)
         }
         return out
     }
