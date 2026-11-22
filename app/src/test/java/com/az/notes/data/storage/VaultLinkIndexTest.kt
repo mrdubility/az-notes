@@ -113,15 +113,18 @@ class VaultLinkIndexTest {
         val a = note("a.md", "[[b]]")
         val b = note("b.md", "")
         index.buildOrRefresh(root.absolutePath, force = true)
-        assertEquals(1, index.backlinksOf(a.absolutePath).size)
+        // a 指向 b，所以 b 的反向链接里有 a
+        assertEquals(listOf(a.absolutePath), index.backlinksOf(b.absolutePath).map { it.sourcePath })
 
-        Thread.sleep(20)
+        // a 改指 c（内容变长，不依赖 mtime 精度），b 被删除
+        a.writeText("[[c]] 说明")
         val c = note("c.md", "")
-        b.writeText("[[c]]")
+        assertTrue(b.delete())
         index.buildOrRefresh(root.absolutePath, force = true)
 
-        assertTrue(index.backlinksOf(a.absolutePath).isEmpty())
-        assertEquals(listOf(b.absolutePath), index.backlinksOf(c.absolutePath).map { it.sourcePath })
+        assertTrue(index.backlinksOf(b.absolutePath).isEmpty())
+        assertEquals(listOf(a.absolutePath), index.backlinksOf(c.absolutePath).map { it.sourcePath })
+        assertEquals(c.absolutePath, index.outLinksOf(a.absolutePath).single().targetPath)
     }
 
     @Test
