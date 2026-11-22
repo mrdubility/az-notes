@@ -136,7 +136,9 @@ data class SyncOp(
     /** MOVE_LOCAL / MOVE_REMOTE：源相对路径（[path] 为目标路径） */
     val moveFrom: String? = null,
     /** CONFLICT_COPY：败方私有备份的**绝对路径**（应用私有目录，不进 Vault）；null = 不备份（二进制 / 超大） */
-    val backupPath: String? = null
+    val backupPath: String? = null,
+    /** CONFLICT_COPY：是否尝试“同文件内合并”（文本类且有祖先内容时为 true） */
+    val merge: Boolean = false
 )
 
 /** Scan → Diff 产出的操作计划（§6.1 Plan 阶段；execute 前经用户预览确认）。 */
@@ -171,6 +173,8 @@ data class SyncSummary(
     val moved: Int = 0,
     val skippedLarge: Int = 0,
     val failed: Int = 0,
+    /** 冲突中成功同文件内合并（无残留冲突块）的篇数 */
+    val merged: Int = 0,
     val finishedAt: Long = System.currentTimeMillis()
 )
 

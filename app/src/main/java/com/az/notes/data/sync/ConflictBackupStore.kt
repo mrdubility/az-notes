@@ -47,6 +47,13 @@ class ConflictBackupStore @Inject constructor(
         target.takeIf { it.isFile }
     }.getOrNull()
 
+    /** 合并前暂存远端版本用的临时文件（与备份同批次目录，事后由调用方删除）。 */
+    fun tempFile(vaultId: String, relativePath: String): File {
+        val dir = targetPath(vaultId, relativePath).parentFile
+        val name = relativePath.substringAfterLast('/').ifEmpty { "remote.txt" }
+        return File(dir, "remote-$name")
+    }
+
     /** 把备份复制回笔记（人工恢复用）；成功返回 true。 */
     fun restore(backup: File, targetPath: String): Boolean = runCatching {
         if (!backup.isFile) return@runCatching false

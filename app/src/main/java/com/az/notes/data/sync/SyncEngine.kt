@@ -12,6 +12,7 @@ import com.az.notes.data.local.SyncLogEntity
 import com.az.notes.data.settings.SettingsRepository
 import com.az.notes.data.storage.TrashRepository
 import com.az.notes.data.storage.VaultLinkIndex
+import com.az.notes.data.storage.VaultRepository
 import com.az.notes.data.webdav.WebDavClient
 import com.az.notes.domain.model.ConflictMergeState
 import com.az.notes.domain.model.ConflictStrategy
@@ -61,7 +62,9 @@ class SyncEngine @Inject constructor(
     private val syncRunNotifier: SyncRunNotifier,
     private val debugLogRepository: DebugLogRepository,
     private val conflictBackupStore: ConflictBackupStore,
-    private val linkIndex: VaultLinkIndex
+    private val conflictBaseStore: ConflictBaseStore,
+    private val linkIndex: VaultLinkIndex,
+    private val vaultRepository: VaultRepository
 ) {
 
     private data class LocalStat(val size: Long, val mtime: Long)
@@ -253,12 +256,23 @@ class SyncEngine @Inject constructor(
                     "winner" to winner
                 )
             )
-            val backup = if (isTextLike(path)) {
+            val text = isTextLike(path)
+            val backup = if (text) {
                 conflictBackupStore.targetPath(ref.id, path).absolutePath
             } else {
                 null
             }
-            ops += SyncOp(SyncOpType.CONFLICT_COPY, path, detail = winner, backupPath = backup)
+            // 文本类且有祖先内容 → 尝试同文件内三方合并；否则退回“择一覆盖 + 私有备份”
+            val canMerge = text && conflictBaseStore.has(ref.id, path)
+            ops += SyncOp(
+                SyncOpType.CONFLICT_COPY,
+                path,
+                detail = winner,
+                backupPath = backup,
+                merge = canMerge
+            )
+            // 合并分支自己负责写回与上传（含失败时退化为胜方覆盖），不再叠加单独的覆盖操作
+            if (canMerge) return
             if (localWins) {
                 if (allowUpload) ops += SyncOp(SyncOpType.UPLOAD, path)
             } else {
@@ -484,6 +498,7 @@ class SyncEngine @Inject constructor(
         var deletedRemote = 0
         var trashedLocal = 0
         var conflictCopies = 0
+        var merged = 0
         var moved = 0
         var failed = 0
         val failedPaths = HashSet<String>()
@@ -494,6 +509,8 @@ class SyncEngine @Inject constructor(
         val downloadedStats = HashMap<String, LocalStat>()
         // 执行成功的冲突副本：全部操作完成后统一计算指纹写入 conflict_record（§4.2）
         val conflictOps = ArrayList<SyncOp>()
+        // 同文件内合并的结果（path → 状态），供基线刷新与冲突记录写入使用
+        val mergeOutcomes = HashMap<String, ConflictMergeState>()
         // 冲突副本（败方备份）失败的路径：同路径的覆盖操作必须跳过，避免丢失版本
         val unprotectedConflict = HashSet<String>()
         val logs = ArrayList<SyncLogEntity>()
@@ -536,7 +553,7 @@ class SyncEngine @Inject constructor(
             var ok = false
             var error: String? = null
             try {
-                ok = executeOp(vault, ref.id, client, op)
+                ok = executeOp(vault, ref.id, client, op, mergeOutcomes)
                 if (!ok) error = "操作未完成"
             } catch (ce: CancellationException) {
                 throw ce
@@ -568,6 +585,14 @@ class SyncEngine @Inject constructor(
                     SyncOpType.CONFLICT_COPY -> {
                         conflictCopies++
                         conflictOps += op
+                        // 合并成功：本地内容已变，按上传口径刷新基线（下轮不再判为冲突）
+                        if (mergeOutcomes[op.path] == ConflictMergeState.MERGED_CLEAN) {
+                            merged++
+                            localStatOf(vault, op.path)?.let {
+                                uploadedStats[op.path] = it
+                                persistBaselineEntry(ref.id, op.path, it)
+                            }
+                        }
                         syncLog(
                             DebugLogLevel.INFO,
                             "冲突副本已创建",
@@ -628,9 +653,15 @@ class SyncEngine @Inject constructor(
             withContext(Dispatchers.IO) {
                 val now = System.currentTimeMillis()
                 for (op in conflictOps) {
-                    // 胜方内容在 path（覆盖成功后）；败方在私有备份里（二进制 / 超大不备份 → null）
+                    // 胜方内容在 path（覆盖 / 合并成功后）；败方在私有备份里（合并成功或二进制则无备份）
+                    val state = mergeOutcomes[op.path]
+                    val mergedClean = state == ConflictMergeState.MERGED_CLEAN
                     val winHash = if (op.path in failedPaths) null else sha1(File(vault, op.path))
-                    val backupFile = op.backupPath?.takeIf { it.isNotEmpty() }?.let { File(it) }
+                    val backupFile = if (mergedClean) {
+                        null
+                    } else {
+                        op.backupPath?.takeIf { it.isNotEmpty() }?.let { File(it) }
+                    }
                     val loseHash = backupFile?.let { sha1(it) }
                     conflictRecordDao.insert(
                         ConflictRecordEntity(
@@ -641,10 +672,10 @@ class SyncEngine @Inject constructor(
                             remoteSha1 = if (op.detail == "local") loseHash else winHash,
                             resolvedBy = "${config.conflictStrategy.name}:${op.detail}",
                             backupPath = backupFile?.absolutePath.orEmpty(),
-                            mergeState = if (backupFile != null) {
-                                ConflictMergeState.BACKED_UP.name
-                            } else {
-                                ConflictMergeState.BINARY_KEEP.name
+                            mergeState = when {
+                                state != null -> state.name
+                                backupFile != null -> ConflictMergeState.BACKED_UP.name
+                                else -> ConflictMergeState.BINARY_KEEP.name
                             },
                             createdAt = now
                         )
@@ -658,7 +689,11 @@ class SyncEngine @Inject constructor(
         if (downloaded > 0 || trashedLocal > 0 || moved > 0 || conflictCopies > 0) {
             linkIndex.invalidate()
         }
-        withContext(Dispatchers.IO) { conflictBackupStore.purgeExpired(ref.id) }
+        withContext(Dispatchers.IO) {
+            // 祖先内容跟上本轮结果（下次冲突才能做三方合并）
+            updateBaseStore(ref.id, vault, plan.ops, failedPaths)
+            conflictBackupStore.purgeExpired(ref.id)
+        }
         // 已解决的冲突记录清理已前移至计划阶段（副本被合并 / 删除后在下一轮扫描时移除，
         // 不再依赖本轮有无待执行操作）
         // CommitBaseline：重新快照两端状态；失败路径不写基线，下一轮重新决策
@@ -724,7 +759,8 @@ class SyncEngine @Inject constructor(
             conflictCopies = conflictCopies,
             moved = moved,
             skippedLarge = plan.skippedLarge,
-            failed = failed
+            failed = failed,
+            merged = merged
         )
     }
 
@@ -732,7 +768,8 @@ class SyncEngine @Inject constructor(
         vaultRoot: String,
         vaultId: String,
         client: WebDavClient,
-        op: SyncOp
+        op: SyncOp,
+        mergeOutcomes: MutableMap<String, ConflictMergeState>
     ): Boolean =
         when (op.type) {
             SyncOpType.UPLOAD -> {
@@ -748,6 +785,21 @@ class SyncEngine @Inject constructor(
                 if (backupPath.isNullOrEmpty()) {
                     // 二进制 / 超大：按最新版直接覆盖，不保留旧版
                     true
+                } else if (op.merge) {
+                    // 先试合并；失败时在本条内完成“备份败方 + 胜方覆盖”，不再依赖后续覆盖操作
+                    if (tryMergeText(vaultRoot, vaultId, client, op, mergeOutcomes)) {
+                        true
+                    } else {
+                        val backup = File(backupPath)
+                        backup.parentFile?.mkdirs()
+                        if (op.detail == "local") {
+                            client.download(op.path, backup) &&
+                                client.upload(File(vaultRoot, op.path), op.path)
+                        } else {
+                            conflictBackupStore.backupFile(vaultId, op.path, File(vaultRoot, op.path)) != null &&
+                                client.download(op.path, File(vaultRoot, op.path))
+                        }
+                    }
                 } else if (op.detail == "local") {
                     // 本地胜：远端是败方，先把远端旧版下载到私有备份
                     val backup = File(backupPath)
@@ -1038,6 +1090,81 @@ class SyncEngine @Inject constructor(
         }.getOrNull()
     }
 
+    /**
+     * 尝试同文件内三方合并：下载远端 → 读祖先与本地 → 段落级合并 → 写回并上传。
+     * 任一步失败或仍有冲突块时返回 false，由调用方退回“择一覆盖 + 私有备份”。
+     */
+    private suspend fun tryMergeText(
+        vaultRoot: String,
+        vaultId: String,
+        client: WebDavClient,
+        op: SyncOp,
+        mergeOutcomes: MutableMap<String, ConflictMergeState>
+    ): Boolean {
+        val base = conflictBaseStore.read(vaultId, op.path) ?: return false
+        val localFile = File(vaultRoot, op.path)
+        if (!localFile.isFile) return false
+        val remoteFile = conflictBackupStore.tempFile(vaultId, op.path)
+        remoteFile.parentFile?.mkdirs()
+        val ok = runCatching {
+            if (!client.download(op.path, remoteFile)) return@runCatching false
+            val remoteText = remoteFile.readText()
+            val localText = localFile.readText()
+            val result = ParagraphMerger.merge(base, localText, remoteText)
+            when {
+                result.conflicts > 0 -> false
+                result.text == localText -> client.upload(localFile, op.path)
+                else -> {
+                    vaultRepository.writeTextAtomically(localFile.absolutePath, result.text)
+                    client.upload(localFile, op.path)
+                }
+            }
+        }.getOrDefault(false)
+        runCatching { remoteFile.delete() }
+        if (ok) mergeOutcomes[op.path] = ConflictMergeState.MERGED_CLEAN
+        return ok
+    }
+
+    /**
+     * 同步成功后刷新祖先内容：本轮变更过的文本笔记留一份当前内容供下次三方合并；
+     * 删除 / 移入回收站清掉祖先；改名迁移祖先（旧路径清除、新路径重建）。
+     */
+    private fun updateBaseStore(
+        vaultId: String,
+        vaultRoot: String,
+        ops: List<SyncOp>,
+        failed: Set<String>
+    ) {
+        for (op in ops) {
+            if (op.path in failed) continue
+            when (op.type) {
+                SyncOpType.UPLOAD, SyncOpType.DOWNLOAD, SyncOpType.CONFLICT_COPY ->
+                    saveBase(vaultId, vaultRoot, op.path)
+
+                SyncOpType.MOVE_LOCAL, SyncOpType.MOVE_REMOTE -> {
+                    op.moveFrom?.let { from ->
+                        conflictBaseStore.remove(vaultId, from)
+                        conflictBaseStore.removeTree(vaultId, from)
+                    }
+                    saveBase(vaultId, vaultRoot, op.path)
+                }
+
+                SyncOpType.TRASH_LOCAL, SyncOpType.DELETE_REMOTE -> {
+                    conflictBaseStore.remove(vaultId, op.path)
+                    conflictBaseStore.removeTree(vaultId, op.path)
+                }
+            }
+        }
+    }
+
+    private fun saveBase(vaultId: String, vaultRoot: String, relativePath: String) {
+        if (!isTextLike(relativePath)) return
+        val file = File(vaultRoot, relativePath)
+        if (!file.isFile || file.length() > BASE_MAX_BYTES) return
+        val text = runCatching { file.readText() }.getOrNull() ?: return
+        conflictBaseStore.save(vaultId, relativePath, text)
+    }
+
     /** 文本类文件（可人工合并）：冲突时生成冲突副本；图片/二进制按优先策略直接覆盖（§6.2）。 */
     private fun isTextLike(path: String): Boolean =
         path.substringAfterLast('.', "").lowercase(Locale.ROOT) in TEXT_EXTENSIONS
@@ -1131,6 +1258,9 @@ class SyncEngine @Inject constructor(
         /** 冲突时按“文本可人工合并”处理的扩展名（其余走优先策略直接覆盖，§6.2）。 */
         val TEXT_EXTENSIONS =
             setOf("md", "markdown", "txt", "text", "json", "yaml", "yml", "csv", "canvas", "html")
+
+        /** 单篇祖先缓存的大小上限（字节）：超过不缓存，冲突时退回择一覆盖。 */
+        const val BASE_MAX_BYTES = 2L * 1024 * 1024
     }
 }
 
