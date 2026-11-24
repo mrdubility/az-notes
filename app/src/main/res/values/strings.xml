@@ -569,7 +569,7 @@
     <string name="reader_add_to_ai_chat">加入 AI 对话</string>
     <string name="reader_outline_empty">本文无标题层级</string>
     <string name="reader_outline_untitled">（无标题）</string>
-    <string name="reader_panel_backlinks">反向链接</string>
+    <string name="reader_panel_backlinks">反链</string>
     <string name="reader_panel_outlinks">出链</string>
     <string name="reader_backlinks_empty">暂无其他笔记链接到本篇</string>
     <string name="reader_outlinks_empty">本篇未链接其他笔记</string>

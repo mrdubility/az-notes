@@ -6,6 +6,7 @@ import com.az.notes.data.local.ConflictRecordDao
 import com.az.notes.data.local.SyncLogDao
 import com.az.notes.data.settings.SettingsRepository
 import com.az.notes.data.storage.TrashRepository
+import com.az.notes.data.storage.VaultLinkIndex
 import com.az.notes.data.storage.VaultRepository
 import com.az.notes.data.sync.CredentialStore
 import com.az.notes.data.sync.SyncConfigRepository
@@ -37,7 +38,8 @@ class VaultViewModel @Inject constructor(
     private val credentialStore: CredentialStore,
     private val trashRepository: TrashRepository,
     private val conflictRecordDao: ConflictRecordDao,
-    private val syncLogDao: SyncLogDao
+    private val syncLogDao: SyncLogDao,
+    private val vaultLinkIndex: VaultLinkIndex
 ) : ViewModel() {
 
     val settings: StateFlow<AppSettings> = settingsRepository.settings
@@ -91,10 +93,9 @@ class VaultViewModel @Inject constructor(
     /** 移除仓库：注册表 + per-vault 应用内数据收尾；磁盘笔记文件不受影响。 */
     fun removeVault(id: String) {
         viewModelScope.launch {
+            val target = settingsRepository.settings.first().vaults.firstOrNull { it.id == id }
             // 内置默认仓库不可移除（UI 已不提供入口，此处兜底避免误清 per-vault 数据）
-            if (settingsRepository.settings.first().vaults
-                    .firstOrNull { it.id == id }?.builtin == true
-            ) {
+            if (target?.builtin == true) {
                 return@launch
             }
             runCatching { syncConfigRepository.clearVault(id) }
@@ -102,6 +103,8 @@ class VaultViewModel @Inject constructor(
             runCatching { withContext(Dispatchers.IO) { trashRepository.purgeAll(id) } }
             runCatching { syncLogDao.clear(id) }
             runCatching { conflictRecordDao.clear(id) }
+            // 双链索引的持久化缓存也属于该仓库的应用内数据
+            runCatching { target?.let { vaultLinkIndex.forget(it.path) } }
             settingsRepository.removeVault(id)
             runCatching { syncScheduler.reschedulePeriodic() }
         }

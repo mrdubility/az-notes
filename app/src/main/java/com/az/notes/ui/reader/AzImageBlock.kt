@@ -31,6 +31,8 @@ import coil3.compose.rememberAsyncImagePainter
 import coil3.request.ImageRequest
 import coil3.size.Size as CoilSize
 import com.az.notes.R
+import com.az.notes.ui.common.localFile
+import com.az.notes.ui.common.localFileVersion
 import com.az.notes.domain.markdown.ImageReference
 import com.az.notes.domain.markdown.WikiLinkTransformer
 import org.intellij.markdown.MarkdownElementTypes
@@ -86,9 +88,11 @@ internal fun AzImageBlock(
     }
 
     val platformContext = LocalPlatformContext.current
-    val request = remember(file, platformContext) {
+    // 文件版本进组合键：同步覆盖同名图片后重建请求，否则会命中旧的内存缓存
+    val fileVersion = localFileVersion(file)
+    val request = remember(file, fileVersion, platformContext) {
         ImageRequest.Builder(platformContext)
-            .data(Uri.fromFile(file))
+            .localFile(file)
             // 与库路径 / 官方实现一致：按原始尺寸解码，上报的 intrinsicSize 即原图像素
             // 尺寸，与预读尺寸同口径（占位盒与解码结果零偏差）
             .size(CoilSize.ORIGINAL)

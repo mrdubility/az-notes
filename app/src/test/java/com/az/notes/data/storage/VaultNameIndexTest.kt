@@ -1,5 +1,7 @@
 package com.az.notes.data.storage
 
+import com.az.notes.domain.markdown.NoteAlias
+import com.az.notes.domain.markdown.WikiLinkResolver
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -57,5 +59,21 @@ class VaultNameIndexTest {
         index.invalidate()
         // 失效后重建不抛错、结果一致
         assertTrue(index.names(vault).containsKey("a.md"))
+    }
+
+    @Test
+    fun `primed aliases skip header scan`() {
+        val vault = temp.newFolder("vault")
+        val note = File(vault, "番茄工作法.md")
+        note.writeText("---\naliases: [番茄钟]\n---\nbody")
+        val index = VaultNameIndex()
+        index.primeAliases(
+            vault,
+            mapOf(WikiLinkResolver.foldName("番茄钟") to listOf(NoteAlias("番茄钟", "番茄工作法.md", 0)))
+        )
+
+        // 推送后删掉文件：仍能读到别名，说明没有重新扫描文件头
+        assertTrue(note.delete())
+        assertEquals("番茄钟", index.aliases(vault)[WikiLinkResolver.foldName("番茄钟")]?.first()?.name)
     }
 }

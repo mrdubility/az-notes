@@ -52,12 +52,15 @@ sealed interface LinkResolution {
 }
 
 /**
- * 全库双链索引（内存态）：`原始引用 → 解析结果` 的两层结构与派生反向表。
+ * 全库双链索引：`原始引用 → 解析结果` 的两层结构与派生反向表。
  *
  * 分层理由（与内容寻址无关的简化口径）：
  *  - [Snapshot.raw] 只依赖文件内容，与"解析到哪"解耦；
  *  - [Snapshot.forward] / [Snapshot.reverse] 由 raw 派生，文件集合或内容一变就**整体重算**
  *    （纯 CPU，不重读盘）——改名、新增同名文件都会改变既有链接的解析结果，必须重算。
+ *
+ * 持久化（[LinkCacheStore]）：raw / 指纹 / 别名声明落库，冷启动只做一次目录 stat 比对，
+ * 正文只在文件真的变化时才读；[invalidate] 只丢内存快照，下次从缓存恢复后仍然增量。
  *
  * 刷新口径与 [TagIndex] 一致：size + mtime 指纹增量、只重读变化文件、分批 [yield] 让步、
  * 局部副本构建完成后原子发布。反向表在构建期顺带生成，面板读取为 O(1)，不做全库扫描。
@@ -73,20 +76,21 @@ sealed interface LinkResolution {
 @Singleton
 class VaultLinkIndex @Inject constructor(
     private val vaultRepository: VaultRepository,
-    private val vaultNameIndex: VaultNameIndex
+    private val vaultNameIndex: VaultNameIndex,
+    private val linkCacheStore: LinkCacheStore
 ) {
-
-    private data class Fingerprint(val size: Long, val mtime: Long)
 
     private data class Snapshot(
         val rootPath: String,
         val builtAt: Long,
-        val fingerprints: Map<String, Fingerprint>,
+        val fingerprints: Map<String, CachedFingerprint>,
         /** 写盘后被显式标记为需要重读的路径（消除同秒 mtime 的边界） */
         val dirty: Set<String>,
         val raw: Map<String, List<RawLinkRef>>,
         val forward: Map<String, List<LinkOutItem>>,
-        val reverse: Map<String, List<BacklinkItem>>
+        val reverse: Map<String, List<BacklinkItem>>,
+        /** 别名声明（foldName → 条目）：随缓存持久化，冷启动不再重读全库文件头 */
+        val aliases: Map<String, List<NoteAlias>>
     )
 
     private val buildMutex = Mutex()
@@ -136,8 +140,8 @@ class VaultLinkIndex @Inject constructor(
         val current = snapshot?.takeIf { it.rootPath == key } ?: return ExternalDiff()
         return withContext(Dispatchers.IO) {
             val notes = vaultRepository.listAllNotes(key)
-            val now = HashMap<String, Fingerprint>(notes.size)
-            notes.forEach { now[it.absolutePath] = Fingerprint(it.size, it.lastModified) }
+            val now = HashMap<String, CachedFingerprint>(notes.size)
+            notes.forEach { now[it.absolutePath] = CachedFingerprint(it.size, it.lastModified) }
             val changed = ArrayList<String>()
             val added = ArrayList<String>()
             for ((path, fingerprint) in now) {
@@ -215,21 +219,46 @@ class VaultLinkIndex @Inject constructor(
 
     /**
      * 标记某篇笔记内容已变（写盘后调用）：下次刷新必定重读该文件，且绕过正文缓存。
-     * 同秒写盘（mtime 未变且 size 相同）时，正文缓存会命中旧文本——必须直读磁盘。
-     * 笔记尚未进入索引时忽略（首次构建会自然读到最新内容）。
+     * 同秒写盘（mtime 未变且 size 相同）时，指纹比对与正文缓存都会失真——必须直读磁盘。
+     * 快照缺失（冷启动 / 刚被同步失效）时先记入待重读集合，等下一次构建一并生效。
      */
     @Synchronized
     fun markChanged(path: String) {
-        val current = snapshot ?: return
         val key = keyOf(path)
+        val current = snapshot
+        if (current == null) {
+            pendingDirty += key
+            return
+        }
         if (!current.fingerprints.containsKey(key)) return
         snapshot = current.copy(builtAt = 0L, dirty = current.dirty + key)
     }
 
-    /** 清空索引（仓库切换等场景兜底；[buildOrRefresh] 检测到换根时会自动冷扫）。 */
+    /** 快照缺失期间累积的待重读路径（随构建成功清空）。 */
+    private val pendingDirty = HashSet<String>()
+
+    @Synchronized
+    private fun pendingDirtySnapshot(): Set<String> = pendingDirty.toSet()
+
+    @Synchronized
+    private fun clearPendingDirty(keys: Set<String>) {
+        pendingDirty.removeAll(keys)
+    }
+
+    /**
+     * 清空内存索引（仓库切换 / 同步后失效等场景）。持久化缓存**保留**：
+     * 下一次 [buildOrRefresh] 会从缓存恢复，只重读真正变化的文件，不再全库扫。
+     */
     @Synchronized
     fun invalidate() {
         snapshot = null
+    }
+
+    /** 丢弃某仓库的持久化缓存（仓库被移除时调用；下次重建会重新全量提取）。 */
+    suspend fun forget(vaultPath: String) {
+        val key = keyOf(vaultPath)
+        if (snapshot?.rootPath == key) snapshot = null
+        runCatching { linkCacheStore.clear(key) }
     }
 
     /**
@@ -271,21 +300,33 @@ class VaultLinkIndex @Inject constructor(
         onProgress: (Int, Int) -> Unit
     ) {
         val notes = vaultRepository.listAllNotes(key)
-        val fingerprints = HashMap<String, Fingerprint>(notes.size)
-        notes.forEach { fingerprints[it.absolutePath] = Fingerprint(it.size, it.lastModified) }
+        val fingerprints = HashMap<String, CachedFingerprint>(notes.size)
+        notes.forEach { fingerprints[it.absolutePath] = CachedFingerprint(it.size, it.lastModified) }
 
         val previous = prev?.takeIf { it.rootPath == key }
-        val prevFingerprints = previous?.fingerprints.orEmpty()
-        val prevRaw = previous?.raw.orEmpty()
-        val removed = prevFingerprints.keys - fingerprints.keys
-        val added = fingerprints.keys - prevFingerprints.keys
-        val dirty = previous?.dirty.orEmpty()
+        // 内存快照缺失（冷启动 / 同步后失效）时从持久化缓存恢复：
+        // 指纹一致的文件不读正文，只对真正变化的文件重新提取
+        val cached = if (previous == null) runCatching { linkCacheStore.load(key) }.getOrNull() else null
+        val baseFingerprints = previous?.fingerprints ?: cached?.fingerprints.orEmpty()
+        val baseRaw = previous?.raw ?: cached?.refs.orEmpty()
+        val baseAliases = previous?.aliases ?: cached?.aliases.orEmpty()
+
+        val removed = baseFingerprints.keys - fingerprints.keys
+        val added = fingerprints.keys - baseFingerprints.keys
+        val dirty = previous?.dirty.orEmpty() + pendingDirtySnapshot()
         val changed = notes.filter { node ->
             node.absolutePath in dirty ||
-                prevFingerprints[node.absolutePath]?.let { it != fingerprints[node.absolutePath] } ?: true
+                (baseFingerprints[node.absolutePath]?.let { it != fingerprints[node.absolutePath] } ?: true)
         }
         if (previous != null && removed.isEmpty() && added.isEmpty() && changed.isEmpty()) {
             snapshot = previous.copy(builtAt = System.currentTimeMillis())
+            return
+        }
+        if (previous == null && cached != null && removed.isEmpty() && added.isEmpty() && changed.isEmpty()) {
+            // 缓存命中且文件全部未变：零正文读取，只重算派生表
+            val raw = HashMap<String, List<RawLinkRef>>(fingerprints.size)
+            fingerprints.keys.forEach { raw[it] = baseRaw[it].orEmpty() }
+            publish(key, fingerprints, emptySet(), raw, baseAliases, root, vaultNameIndex.names(root))
             return
         }
         // 文件集合变了：名字 / 别名索引可能是旧的（改名、新建同名文件），先失效再取
@@ -293,23 +334,63 @@ class VaultLinkIndex @Inject constructor(
             vaultNameIndex.invalidate()
         }
         val names = vaultNameIndex.names(root)
-        val aliases = vaultNameIndex.aliases(root)
 
         val changedPaths = changed.mapTo(HashSet()) { it.absolutePath }
+        // 删除或内容变更的文件：旧别名条目先剔除（变更文件可能改掉 aliases 声明）
+        val staleRelative = (removed + changedPaths).mapTo(HashSet()) { relativePathOf(root, File(it)) }
+        val aliases = HashMap<String, MutableList<NoteAlias>>(baseAliases.size)
+        baseAliases.forEach { (folded, list) ->
+            val kept = list.filter { it.relativePath !in staleRelative }
+            if (kept.isNotEmpty()) aliases[folded] = kept.toMutableList()
+        }
+
         val raw = HashMap<String, List<RawLinkRef>>(notes.size)
+        val pending = ArrayList<CachedFile>()
         var done = 0
         for (node in notes) {
-            val cached = if (previous != null && node.absolutePath !in changedPaths) {
-                prevRaw[node.absolutePath]
+            val path = node.absolutePath
+            if (path !in changedPaths) {
+                raw[path] = baseRaw[path].orEmpty()
             } else {
-                null
+                val refs = extractLinks(node, forceRead = path in dirty)
+                raw[path] = refs
+                // 变化文件顺带重读头部：别名声明可能与正文一起改了，缓存需要同步更新
+                val declared = vaultNameIndex.aliasesOf(root, File(path))
+                declared.forEach { alias ->
+                    aliases.getOrPut(WikiLinkResolver.foldName(alias.name)) { ArrayList() }.add(alias)
+                }
+                pending += CachedFile(
+                    path = path,
+                    relativePath = relativePathOf(root, File(path)),
+                    fingerprint = fingerprints.getValue(path),
+                    refs = refs,
+                    aliases = declared.map { it.name }
+                )
             }
-            raw[node.absolutePath] = cached ?: extractLinks(node, forceRead = node.absolutePath in dirty)
             done++
             if (done and 15 == 0) yield()
             onProgress(done, notes.size)
         }
 
+        // 缓存写回：分批提交，避免一次性构造过多行
+        pending.chunked(CACHE_WRITE_BATCH).forEach { chunk -> linkCacheStore.saveFiles(key, chunk) }
+        if (removed.isNotEmpty()) {
+            linkCacheStore.removeFiles(key, removed.map { RemovedFile(it, relativePathOf(root, File(it))) })
+        }
+        publish(key, fingerprints, emptySet(), raw, aliases.mapValues { it.value.toList() }, root, names)
+        clearPendingDirty(dirty)
+    }
+
+    /** 由原始引用派生正向 / 反向表并原子发布（纯 CPU，不读盘）。 */
+    private fun publish(
+        key: String,
+        fingerprints: Map<String, CachedFingerprint>,
+        dirty: Set<String>,
+        raw: Map<String, List<RawLinkRef>>,
+        aliases: Map<String, List<NoteAlias>>,
+        root: File,
+        names: Map<String, List<String>>
+    ) {
         val forward = HashMap<String, List<LinkOutItem>>()
         val reverse = HashMap<String, MutableList<BacklinkItem>>()
         for ((source, refs) in raw) {
@@ -367,11 +448,14 @@ class VaultLinkIndex @Inject constructor(
             rootPath = key,
             builtAt = System.currentTimeMillis(),
             fingerprints = fingerprints,
-            dirty = emptySet(),
+            dirty = dirty,
             raw = raw,
             forward = forward,
-            reverse = counted.mapValues { it.value.toList() }
+            reverse = counted.mapValues { it.value.toList() },
+            aliases = aliases
         )
+        // 把别名表推给名字索引：点击解析 / 编辑补全 / 改名 / AI 引用不再重扫全库文件头
+        vaultNameIndex.primeAliases(root, aliases)
     }
 
     /**
@@ -403,12 +487,13 @@ class VaultLinkIndex @Inject constructor(
         val names = LinkedHashSet<String>()
         val fileName = File(targetAbs).name
         names += if (fileName.endsWith(".md", ignoreCase = true)) fileName.dropLast(3) else fileName
-        runCatching {
-            vaultNameIndex.aliases(root).values.forEach { list ->
-                list.forEach { alias ->
-                    if (File(root, alias.relativePath).normalize().absolutePath == targetAbs) {
-                        names += alias.name
-                    }
+        // 别名走索引快照（随缓存持久化），仅快照缺失时才回退到读文件头
+        val aliasMap = snapshot?.aliases
+            ?: runCatching { vaultNameIndex.aliases(root) }.getOrDefault(emptyMap())
+        aliasMap.values.forEach { list ->
+            list.forEach { alias ->
+                if (File(root, alias.relativePath).normalize().absolutePath == targetAbs) {
+                    names += alias.name
                 }
             }
         }
@@ -463,6 +548,9 @@ class VaultLinkIndex @Inject constructor(
 
         /** 未链接提及单次最多返回条数（面板展示上限）。 */
         private const val MENTIONS_LIMIT = 100
+
+        /** 缓存写回分批大小：控制单次事务的行数。 */
+        private const val CACHE_WRITE_BATCH = 200
 
         /**
          * 解析单条引用（索引与「当前笔记出链」共用，避免两处口径漂移）。

@@ -32,7 +32,9 @@ class VaultNameIndex @Inject constructor() {
     private data class AliasSnapshot(
         val root: String,
         val builtAt: Long,
-        val aliases: Map<String, List<NoteAlias>>
+        val aliases: Map<String, List<NoteAlias>>,
+        /** 由全库双链索引推送（数据源持续维护），不受 TTL 约束 */
+        val pinned: Boolean = false
     )
 
     private var snapshot: Snapshot? = null
@@ -66,12 +68,26 @@ class VaultNameIndex @Inject constructor() {
     fun aliases(root: File): Map<String, List<NoteAlias>> {
         val key = root.absolutePath
         val now = System.currentTimeMillis()
-        aliasSnapshot?.takeIf { it.root == key && now - it.builtAt < ALIAS_TTL_MS }
+        aliasSnapshot
+            ?.takeIf { it.root == key && (it.pinned || now - it.builtAt < ALIAS_TTL_MS) }
             ?.let { return it.aliases }
-        val built = buildAliases(root, key)
+        val built = buildAliases(root)
         if (aliasSnapshot?.aliases != built) version++
         aliasSnapshot = AliasSnapshot(key, now, built)
         return built
+    }
+
+    /**
+     * 接收全库双链索引维护好的别名表（数据源是持久化缓存 + 增量，比定期重扫文件头更准也更便宜）。
+     *
+     * 之后同一进程内的 [aliases] 直接命中，不再遍历全库；结构变化仍由 [invalidate] 失效，
+     * 索引下次构建会重新推送。
+     */
+    @Synchronized
+    fun primeAliases(root: File, aliases: Map<String, List<NoteAlias>>) {
+        val key = root.absolutePath
+        if (aliasSnapshot?.aliases != aliases) version++
+        aliasSnapshot = AliasSnapshot(key, System.currentTimeMillis(), aliases, pinned = true)
     }
 
     /** 失效缓存（新建 / 重命名 / 删除后调用，避免 TTL 窗口内读到旧索引）。 */
@@ -103,28 +119,36 @@ class VaultNameIndex @Inject constructor() {
         }
     }
 
-    private fun buildAliases(root: File, rootPath: String): Map<String, List<NoteAlias>> {
+    private fun buildAliases(root: File): Map<String, List<NoteAlias>> {
         val out = HashMap<String, MutableList<NoteAlias>>()
-        collectAliases(root, rootPath, out)
+        collectAliases(root, root, out)
         return out
     }
 
-    private fun collectAliases(dir: File, rootPath: String, out: MutableMap<String, MutableList<NoteAlias>>) {
+    /**
+     * 单篇笔记声明的别名（含相对路径与声明下标）。
+     * 与 [aliases] 共用同一头部读取与解析口径，供增量索引只重读变化的文件。
+     */
+    fun aliasesOf(root: File, file: File): List<NoteAlias> {
+        val declared = runCatching { FrontmatterParser.split(readHead(file)).aliases() }
+            .getOrDefault(emptyList())
+        if (declared.isEmpty()) return emptyList()
+        val rootPath = root.absolutePath
+        val relative = file.absolutePath.removePrefix(rootPath).trimStart('/', '\\')
+        return declared.mapIndexed { index, alias -> NoteAlias(alias, relative, index) }
+    }
+
+    private fun collectAliases(dir: File, root: File, out: MutableMap<String, MutableList<NoteAlias>>) {
         val children = dir.listFiles() ?: return
         for (f in children) {
             if (f.name.startsWith(".")) continue
             if (f.isDirectory) {
-                collectAliases(f, rootPath, out)
+                collectAliases(f, root, out)
                 continue
             }
             if (!VaultRepository.isMarkdownName(f.name)) continue
-            val declared = runCatching { FrontmatterParser.split(readHead(f)).aliases() }
-                .getOrDefault(emptyList())
-            if (declared.isEmpty()) continue
-            val relative = f.absolutePath.removePrefix(rootPath).trimStart('/', '\\')
-            declared.forEachIndexed { index, alias ->
-                out.getOrPut(WikiLinkResolver.foldName(alias)) { ArrayList() }
-                    .add(NoteAlias(alias, relative, index))
+            for (alias in aliasesOf(root, f)) {
+                out.getOrPut(WikiLinkResolver.foldName(alias.name)) { ArrayList() }.add(alias)
             }
         }
     }

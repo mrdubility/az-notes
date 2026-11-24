@@ -305,6 +305,18 @@ fun EditorScreen(
         snapshotFlow { textState.text.toString() }.collect { viewModel.onTextChange(it) }
     }
 
+    // 后台改写了正文（同步冲突合并、链接改写回灌）时把新文本同步进编辑器；
+    // 仅在本地没有未保存修改时执行，避免覆盖用户正在输入的内容
+    LaunchedEffect(state.text, state.dirty) {
+        if (!initialized || state.dirty) return@LaunchedEffect
+        // 让加载 / 恢复流程的回写先落定，避免把重建后的编辑器内容覆盖回磁盘版本
+        withFrameNanos { }
+        if (state.dirty) return@LaunchedEffect
+        if (textState.text.toString() != state.text) {
+            textState.setTextAndPlaceCursorAtEnd(state.text)
+        }
+    }
+
     // —— 输入法遮挡校正：内建光标自滚动只在光标 / 文本 / 排版变化时触发，
     // IME 弹出使编辑视口收缩（imePadding 抬升）时不触发——点选屏幕偏下方文本后，
     // 光标会留在键盘后面。键盘可见期间跟随视口 / 光标 / 排版变化主动校正：光标
@@ -379,6 +391,24 @@ fun EditorScreen(
         )
     }
 
+    // 冲突消解：直接改编辑器的文本状态（ViewModel 的 text 只是镜像，
+    // 只改它不会反映到输入框，下次输入还会把标记写回磁盘）
+    val resolveConflict: (Boolean) -> Unit = { keepLocal ->
+        val current = textState.text.toString()
+        val resolved = if (keepLocal) {
+            ConflictMarkerResolver.keepLocal(current)
+        } else {
+            ConflictMarkerResolver.keepRemote(current)
+        }
+        if (resolved != current) {
+            textState.setTextAndPlaceCursorAtEnd(resolved)
+            viewModel.onTextChange(resolved)
+            // 标记已消解：立即清掉这条冲突记录，顶栏角标随之归零
+            viewModel.markConflictResolved()
+        }
+        conflictDialog = false
+    }
+
     // 同步冲突消解：保留本地 / 保留云端（均为整篇替换，标记行一并移除）
     if (conflictDialog) {
         AlertDialog(
@@ -386,18 +416,12 @@ fun EditorScreen(
             title = { Text(stringResource(R.string.editor_resolve_conflict)) },
             text = { Text(stringResource(R.string.editor_resolve_conflict_message)) },
             confirmButton = {
-                TextButton(onClick = {
-                    viewModel.resolveConflictMarkers(keepLocal = true)
-                    conflictDialog = false
-                }) {
+                TextButton(onClick = { resolveConflict(true) }) {
                     Text(stringResource(R.string.editor_resolve_keep_local))
                 }
             },
             dismissButton = {
-                TextButton(onClick = {
-                    viewModel.resolveConflictMarkers(keepLocal = false)
-                    conflictDialog = false
-                }) {
+                TextButton(onClick = { resolveConflict(false) }) {
                     Text(stringResource(R.string.editor_resolve_keep_remote))
                 }
             }

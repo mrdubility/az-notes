@@ -1,5 +1,8 @@
 package com.az.notes.data.storage
 
+import com.az.notes.domain.markdown.NoteAlias
+import com.az.notes.domain.markdown.RawLinkRef
+import com.az.notes.domain.markdown.WikiLinkResolver
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -18,13 +21,19 @@ import java.nio.file.Files
 class VaultLinkIndexTest {
 
     private lateinit var root: File
+    private lateinit var store: MemoryLinkCacheStore
     private lateinit var index: VaultLinkIndex
 
     @Before
     fun setUp() {
         root = Files.createTempDirectory("link-index-test").toFile()
-        index = VaultLinkIndex(VaultRepository(), VaultNameIndex())
+        store = MemoryLinkCacheStore()
+        index = newIndex()
     }
+
+    /** 新建索引实例：模拟冷启动（内存快照为空，只能靠持久化缓存恢复）。 */
+    private fun newIndex(): VaultLinkIndex =
+        VaultLinkIndex(VaultRepository(), VaultNameIndex(), store)
 
     @After
     fun tearDown() {
@@ -205,5 +214,92 @@ class VaultLinkIndexTest {
         index.buildOrRefresh(root.absolutePath, force = true)
         assertTrue(index.outLinksOf(File(root, "a.md").absolutePath).isEmpty())
         assertTrue(index.backlinksOf(File(root, "a.md").absolutePath).isEmpty())
+    }
+
+    @Test
+    fun `cold start restores index from persisted cache`() = runBlocking {
+        val a = note("a.md", "[[b]]")
+        val b = note("b.md", "[[a]]")
+        index.buildOrRefresh(root.absolutePath, force = true)
+
+        // 新实例（冷启动）：不读正文，仅靠缓存恢复出同样的双向链接
+        val cold = newIndex()
+        cold.buildOrRefresh(root.absolutePath, force = true)
+
+        assertTrue(cold.isReadyFor(root.absolutePath))
+        assertEquals(listOf(b.absolutePath), cold.backlinksOf(a.absolutePath).map { it.sourcePath })
+        assertEquals(listOf(a.absolutePath), cold.backlinksOf(b.absolutePath).map { it.sourcePath })
+        assertEquals("b", cold.outLinksOf(a.absolutePath).single().display)
+    }
+
+    @Test
+    fun `changed file is re-extracted after cold start`() = runBlocking {
+        note("a.md", "")
+        val b = note("b.md", "无链接内容")
+        index.buildOrRefresh(root.absolutePath, force = true)
+        assertTrue(index.backlinksOf(b.absolutePath).isEmpty())
+
+        // 内容变长（不依赖 mtime 精度）：缓存应失效，只重读这一篇
+        note("a.md", "[[b]] 新加的一段说明文字")
+        val cold = newIndex()
+        cold.buildOrRefresh(root.absolutePath, force = true)
+
+        assertEquals(listOf(File(root, "a.md").absolutePath), cold.backlinksOf(b.absolutePath).map { it.sourcePath })
+    }
+
+    @Test
+    fun `aliases survive cold start`() = runBlocking {
+        val target = note("目标.md", "---\naliases: [别名甲]\n---\n\n正文")
+        val src = note("src.md", "[[别名甲]]")
+        index.buildOrRefresh(root.absolutePath, force = true)
+        assertEquals(listOf(target.absolutePath), index.outLinksOf(src.absolutePath).mapNotNull { it.targetPath })
+
+        val cold = newIndex()
+        cold.buildOrRefresh(root.absolutePath, force = true)
+
+        assertEquals(listOf(target.absolutePath), cold.outLinksOf(src.absolutePath).mapNotNull { it.targetPath })
+    }
+
+    /** 内存版缓存：跨索引实例共享，用来模拟“杀进程后再进来”。 */
+    private class MemoryLinkCacheStore : LinkCacheStore {
+
+        private data class Entry(
+            val fingerprint: CachedFingerprint,
+            val refs: List<RawLinkRef>,
+            val aliases: List<String>
+        )
+
+        private val scopes = HashMap<String, MutableMap<String, Entry>>()
+
+        override suspend fun load(scope: String): LinkCacheSnapshot? {
+            val entries = scopes[scope]?.takeIf { it.isNotEmpty() } ?: return null
+            val fingerprints = HashMap<String, CachedFingerprint>(entries.size)
+            val refs = HashMap<String, List<RawLinkRef>>(entries.size)
+            val aliases = HashMap<String, MutableList<NoteAlias>>()
+            for ((path, entry) in entries) {
+                fingerprints[path] = entry.fingerprint
+                refs[path] = entry.refs
+                val relative = path.removePrefix(scope).trimStart('/', '\\')
+                entry.aliases.forEachIndexed { index, name ->
+                    aliases.getOrPut(WikiLinkResolver.foldName(name)) { ArrayList() }
+                        .add(NoteAlias(name, relative, index))
+                }
+            }
+            return LinkCacheSnapshot(fingerprints, refs, aliases)
+        }
+
+        override suspend fun saveFiles(scope: String, files: List<CachedFile>) {
+            val entries = scopes.getOrPut(scope) { HashMap() }
+            files.forEach { entries[it.path] = Entry(it.fingerprint, it.refs, it.aliases) }
+        }
+
+        override suspend fun removeFiles(scope: String, removed: List<RemovedFile>) {
+            val entries = scopes[scope] ?: return
+            removed.forEach { entries.remove(it.absolutePath) }
+        }
+
+        override suspend fun clear(scope: String) {
+            scopes.remove(scope)
+        }
     }
 }

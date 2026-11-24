@@ -20,14 +20,23 @@ import com.az.notes.domain.markdown.FrontmatterParser
  */
 object ParagraphMerger {
 
-    /** 冲突块起始标记（本地侧） */
-    const val MARK_LOCAL = "<<<<<<< 本地"
+    /**
+     * 冲突块标记（全角括号包裹）。
+     *
+     * 刻意不用 Git 风格的 `<<<<<<<` / `>>>>>>>`：行首的 `>` 会被 Markdown 当成引用块，
+     * 预览里会渲染成竖线（`>>>>>>> 云端` 显示成 `||||||| 云端`）。全角括号是普通正文，
+     * 不会被任何 Markdown 语法误识。
+     */
+    const val MARK_LOCAL = "〔同步冲突·本地〕"
 
     /** 冲突块分隔标记 */
-    const val MARK_SEPARATOR = "======="
+    const val MARK_SEPARATOR = "〔同步冲突·分隔〕"
 
-    /** 冲突块结束标记（云端侧） */
-    const val MARK_REMOTE = ">>>>>>> 云端"
+    /** 冲突块云端开始标记 */
+    const val MARK_REMOTE = "〔同步冲突·云端〕"
+
+    /** 冲突块结束标记 */
+    const val MARK_END = "〔同步冲突·结束〕"
 
     /**
      * 合并结果：[text] 为合并文本（有冲突块时带内联标记；无祖先时等于 [local]）、
@@ -162,9 +171,10 @@ object ParagraphMerger {
                 appendRange(local, l0, l1, out)
                 ensureNewline(out)
                 out.append(MARK_SEPARATOR).append('\n')
+                out.append(MARK_REMOTE).append('\n')
                 appendRange(remote, r0, r1, out)
                 ensureNewline(out)
-                out.append(MARK_REMOTE).append('\n')
+                out.append(MARK_END).append('\n')
             }
         }
     }

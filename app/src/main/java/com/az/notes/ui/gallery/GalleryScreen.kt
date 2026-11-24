@@ -61,6 +61,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
+import coil3.compose.LocalPlatformContext
+import coil3.request.ImageRequest
+import com.az.notes.ui.common.localFile
+import com.az.notes.ui.common.localFileVersion
 import com.az.notes.R
 import com.az.notes.ui.common.formatSize
 import com.az.notes.ui.common.resolve
@@ -325,8 +329,13 @@ private fun GalleryCell(
             .background(MaterialTheme.colorScheme.surfaceContainerLow)
             .combinedClickable(onClick = onClick, onLongClick = onLongClick)
     ) {
+        val platformContext = LocalPlatformContext.current
+        // 文件版本进键：同步覆盖同名图片后缩略图重新解码
+        val request = remember(image.file, localFileVersion(image.file)) {
+            ImageRequest.Builder(platformContext).localFile(image.file).build()
+        }
         AsyncImage(
-            model = Uri.fromFile(image.file),
+            model = request,
             contentDescription = image.relativePath,
             contentScale = ContentScale.Crop,
             modifier = Modifier.fillMaxSize()
@@ -369,8 +378,12 @@ private fun GalleryListRow(
             .combinedClickable(onClick = onClick, onLongClick = onLongClick)
             .padding(horizontal = 10.dp, vertical = 8.dp)
     ) {
+        val platformContext = LocalPlatformContext.current
+        val request = remember(image.file, localFileVersion(image.file)) {
+            ImageRequest.Builder(platformContext).localFile(image.file).build()
+        }
         AsyncImage(
-            model = Uri.fromFile(image.file),
+            model = request,
             contentDescription = image.relativePath,
             contentScale = ContentScale.Crop,
             modifier = Modifier

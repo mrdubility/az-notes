@@ -84,6 +84,8 @@ import com.az.notes.di.CoilHolderEntryPoint
 import com.az.notes.domain.markdown.Heading
 import com.az.notes.ui.common.formatDateTimeSeconds
 import com.az.notes.ui.common.formatSize
+import com.az.notes.ui.common.localFile
+import com.az.notes.ui.common.localFileVersion
 import dagger.hilt.android.EntryPointAccessors
 import java.io.File
 import kotlinx.coroutines.delay
@@ -465,9 +467,9 @@ internal sealed interface PreviewSaveSource {
 @Composable
 internal fun ImagePreviewDialog(file: File, onDismiss: () -> Unit) {
     val platformContext = LocalPlatformContext.current
-    val request = remember(file) {
+    val request = remember(file, localFileVersion(file)) {
         ImageRequest.Builder(platformContext)
-            .data(Uri.fromFile(file))
+            .localFile(file)
             .crossfade(true)
             .build()
     }

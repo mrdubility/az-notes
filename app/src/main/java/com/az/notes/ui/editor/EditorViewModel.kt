@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import android.net.Uri
 import com.az.notes.R
+import com.az.notes.data.local.ConflictRecordDao
 import com.az.notes.data.media.AttachmentRepository
 import com.az.notes.data.media.ImageImportRepository
 import com.az.notes.data.media.ImportedMedia
@@ -85,7 +86,8 @@ class EditorViewModel @Inject constructor(
     private val pathUpdateBus: PathUpdateBus,
     private val tagIndex: TagIndex,
     private val linkIndex: VaultLinkIndex,
-    private val linkRewriter: LinkRewriter
+    private val linkRewriter: LinkRewriter,
+    private val conflictRecordDao: ConflictRecordDao
 ) : ViewModel() {
 
     private var absolutePath: String =
@@ -122,6 +124,9 @@ class EditorViewModel @Inject constructor(
     /** ASK 模式下的待确认请求（await 期间挂起改名 / 移动流程）。 */
     private var linkConfirmDeferred: CompletableDeferred<Boolean>? = null
 
+    /** 上次落盘时正文是否带同步冲突标记：从"有"变"无"时清掉待处理记录。 */
+    private var lastSavedHadMarkers = false
+
     init {
         // 工具栏配置：设置页调整顺序 / 启用状态后实时生效
         viewModelScope.launch {
@@ -152,6 +157,7 @@ class EditorViewModel @Inject constructor(
                 return@launch
             }
             _state.update { it.copy(loading = false, text = text, dirty = false) }
+            lastSavedHadMarkers = ConflictMarkerResolver.hasMarkers(text)
             // 记录最近查看 / 编辑（打开即算；重复打开幂等置顶）
             recordRecent()
         }
@@ -196,6 +202,12 @@ class EditorViewModel @Inject constructor(
             result.fold(
                 onSuccess = { written ->
                     if (written) {
+                        // 标记从"有"变成"无"（点消解或手动删掉）→ 清掉待处理记录，角标归零
+                        val hasMarkers = ConflictMarkerResolver.hasMarkers(current.text)
+                        if (lastSavedHadMarkers && !hasMarkers) {
+                            viewModelScope.launch { deleteConflictRecord() }
+                        }
+                        lastSavedHadMarkers = hasMarkers
                         _state.update {
                             it.copy(saving = false, dirty = false, savedAt = System.currentTimeMillis())
                         }
@@ -269,7 +281,13 @@ class EditorViewModel @Inject constructor(
                 vaultNameIndex.invalidate()
             } else if (current.dirty) {
                 flushed = runCatching { vaultRepository.writeTextAtomically(path, current.text) }.isSuccess
-                if (flushed) lastKnownMtime = File(path).lastModified()
+                if (flushed) {
+                    lastKnownMtime = File(path).lastModified()
+                    // 退出前手动删掉标记也算消解：清掉待处理记录，避免角标常亮
+                    val hasMarkers = ConflictMarkerResolver.hasMarkers(current.text)
+                    if (lastSavedHadMarkers && !hasMarkers) deleteConflictRecord()
+                    lastSavedHadMarkers = hasMarkers
+                }
             }
         }
         if (flushed) schedulePostSaveSync()
@@ -416,20 +434,20 @@ class EditorViewModel @Inject constructor(
         reloadSelfIfRewritten(outcome, textBeforeApply)
     }
 
-    /**
-     * 消解正文里的同步冲突标记（两设备改到同一段时的合并产物）：
-     * [keepLocal] 为 true 保留本地段、否则保留云端段，标记行全部移除；结果置脏并立即保存。
-     */
-    fun resolveConflictMarkers(keepLocal: Boolean) {
-        val current = _state.value
-        val resolved = if (keepLocal) {
-            ConflictMarkerResolver.keepLocal(current.text)
-        } else {
-            ConflictMarkerResolver.keepRemote(current.text)
-        }
-        if (resolved == current.text) return
-        _state.update { it.copy(text = resolved, dirty = true) }
-        save()
+    /** 用户点"保留本地 / 保留云端"消解标记后调用：立即清掉记录（不等自动保存）。 */
+    fun markConflictResolved() {
+        lastSavedHadMarkers = false
+        viewModelScope.launch { deleteConflictRecord() }
+    }
+
+    /** 删除当前笔记的待处理冲突记录（顶栏角标随之归零）。 */
+    private suspend fun deleteConflictRecord() {
+        val settings = runCatching { settingsRepository.settings.first() }.getOrNull() ?: return
+        val vaultId = settings.currentVaultId ?: return
+        val vault = settings.vaultPath ?: return
+        val relativePath = absolutePath.removePrefix(vault).trimStart('/', '\\')
+        if (relativePath.isBlank() || relativePath == absolutePath) return
+        runCatching { conflictRecordDao.deleteByPath(vaultId, relativePath) }
     }
 
     /**

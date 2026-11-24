@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.room.Room
 import com.az.notes.data.local.AppDatabase
 import com.az.notes.data.local.ConflictRecordDao
+import com.az.notes.data.local.LinkCacheDao
 import com.az.notes.data.local.SyncBaselineDao
 import com.az.notes.data.local.SyncLogDao
 import dagger.Module
@@ -33,4 +34,7 @@ object DatabaseModule {
 
     @Provides
     fun provideConflictRecordDao(db: AppDatabase): ConflictRecordDao = db.conflictRecordDao()
+
+    @Provides
+    fun provideLinkCacheDao(db: AppDatabase): LinkCacheDao = db.linkCacheDao()
 }

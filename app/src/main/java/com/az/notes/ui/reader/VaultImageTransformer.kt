@@ -36,6 +36,8 @@ import coil3.compose.rememberAsyncImagePainter
 import coil3.request.ImageRequest
 import coil3.size.Size as CoilSize
 import com.az.notes.R
+import com.az.notes.ui.common.localFile
+import com.az.notes.ui.common.localFileVersion
 import com.az.notes.data.debug.DebugLogLevel
 import com.az.notes.domain.markdown.ImageReference
 import com.mikepenz.markdown.model.ImageData
@@ -247,9 +249,11 @@ class VaultImageTransformer(
             }
             return ImageData(painter = reasonPainter(reasonText(null, retryable = false)))
         }
-        val request = remember(file, platformContext) {
+        // 文件版本进组合键与缓存键：同步覆盖同名图片后重新解码（否则命中旧的内存缓存）
+        val fileVersion = localFileVersion(file)
+        val request = remember(file, fileVersion, platformContext) {
             ImageRequest.Builder(platformContext)
-                .data(Uri.fromFile(file))
+                .localFile(file)
                 // 与远程分支 / 官方实现一致：按原始尺寸解码，保证上报的 intrinsicSize 即原图像素尺寸
                 .size(CoilSize.ORIGINAL)
                 // 不加 crossfade：与官方 Coil3 实现一致，图片就位立即显示（去掉"缓缓淡入"观感）

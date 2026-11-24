@@ -24,6 +24,10 @@ interface ConflictRecordDao {
     @Query("DELETE FROM conflict_record WHERE id IN (:ids)")
     suspend fun deleteByIds(ids: List<Long>)
 
+    /** 删除单篇笔记的冲突记录（标记被消解后调用，顶栏角标随之归零）。 */
+    @Query("DELETE FROM conflict_record WHERE vault_id = :vaultId AND path = :path")
+    suspend fun deleteByPath(vaultId: String, path: String)
+
     /** 清除指定仓库全部记录（用户确认已人工合并 / 移除仓库时调用）。 */
     @Query("DELETE FROM conflict_record WHERE vault_id = :vaultId")
     suspend fun clear(vaultId: String)
