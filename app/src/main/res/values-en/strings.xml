@@ -572,6 +572,7 @@
     <string name="reader_panel_backlinks">Backlinks</string>
     <string name="reader_panel_outlinks">Outgoing links</string>
     <string name="reader_backlinks_empty">No other note links here</string>
+    <string name="reader_backlink_line">Line %1$d · %2$s</string>
     <string name="reader_outlinks_empty">This note links nowhere</string>
     <string name="reader_links_scanning">Indexing links %1$d/%2$d</string>
     <string name="reader_link_unresolved">Not created</string>

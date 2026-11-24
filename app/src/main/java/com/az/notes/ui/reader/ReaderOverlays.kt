@@ -299,91 +299,93 @@ private fun OutLinksTab(
     }
 }
 
-/** 单条反向引用：文件名 + 相对目录 + 上下文片段。 */
+/** 单条反向引用：来源笔记标题 + 完整路径 + 引用位置预览（右侧为引用次数）。 */
 @Composable
 private fun BacklinkRow(item: BacklinkItem, onClick: () -> Unit) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(horizontal = 20.dp, vertical = 10.dp)
-    ) {
-        Text(
-            text = buildString {
-                append(item.sourcePath.substringAfterLast('/'))
-                // 同一篇笔记的多行引用：右侧标出该来源的引用次数
-                if (item.count > 1) append("  ×").append(item.count)
-            },
-            style = MaterialTheme.typography.bodyLarge,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
-        val dir = item.relativePath.substringBeforeLast('/', "")
-        if (dir.isNotEmpty()) {
-            Text(
-                text = dir,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-        }
-        Text(
-            text = item.snippet,
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(top = 4.dp)
-        )
-    }
+    val fileName = item.relativePath.substringAfterLast('/')
+    LinkRow(
+        title = if (fileName.endsWith(".md", ignoreCase = true)) fileName.dropLast(3) else fileName,
+        subtitle = item.relativePath,
+        preview = stringResource(R.string.reader_backlink_line, item.line + 1, item.snippet),
+        count = item.count,
+        titleColor = MaterialTheme.colorScheme.primary,
+        onClick = onClick
+    )
 }
 
-/** 单条出链：显示名 + 次数 + 目标相对路径；未解析附「未创建」标记。 */
+/** 单条出链：显示名 + 目标路径（未解析时标注「未创建」且置灰不可点）。 */
 @Composable
 private fun OutLinkRow(item: LinkOutItem, onClick: (() -> Unit)?) {
     val resolved = item.targetPath != null
+    val subtitle = if (resolved) {
+        item.relativePath?.let { path -> item.anchor?.let { "$path#$it" } ?: path }
+            ?: item.anchor
+    } else {
+        stringResource(R.string.reader_link_unresolved)
+    }
+    LinkRow(
+        title = item.display,
+        subtitle = subtitle,
+        count = item.count,
+        titleColor = if (resolved) MaterialTheme.colorScheme.primary
+        else MaterialTheme.colorScheme.onSurfaceVariant,
+        onClick = onClick
+    )
+}
+
+/**
+ * 反链与出链共用的条目布局：标题、路径小字、（可选）引用位置预览，右侧统一标出次数。
+ * [onClick] 为 null 时不可点（未解析的出链）。
+ */
+@Composable
+private fun LinkRow(
+    title: String,
+    subtitle: String?,
+    count: Int,
+    titleColor: Color,
+    onClick: (() -> Unit)?,
+    preview: String? = null
+) {
     val base = Modifier.fillMaxWidth()
-    Column(
+    Row(
         modifier = (if (onClick != null) base.clickable(onClick = onClick) else base)
-            .padding(horizontal = 20.dp, vertical = 10.dp)
+            .padding(horizontal = 20.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.Top
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
             Text(
-                text = item.display,
+                text = title,
                 style = MaterialTheme.typography.bodyLarge,
-                color = if (resolved) MaterialTheme.colorScheme.primary
-                else MaterialTheme.colorScheme.onSurfaceVariant,
+                color = titleColor,
                 maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f)
+                overflow = TextOverflow.Ellipsis
             )
-            if (item.count > 1) {
+            if (!subtitle.isNullOrBlank()) {
                 Text(
-                    text = "×${item.count}",
+                    text = subtitle,
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
-            if (!resolved) {
+            if (preview != null) {
                 Text(
-                    text = stringResource(R.string.reader_link_unresolved),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.outline,
-                    modifier = Modifier.padding(start = 8.dp)
+                    text = preview,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = 4.dp)
                 )
             }
         }
-        val sub = item.relativePath?.let { path ->
-            item.anchor?.let { "$path#$it" } ?: path
-        } ?: item.anchor
-        if (sub != null) {
+        if (count > 1) {
             Text(
-                text = sub,
+                text = "×$count",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+                modifier = Modifier.padding(start = 8.dp)
             )
         }
     }

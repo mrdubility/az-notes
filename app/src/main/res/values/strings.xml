@@ -572,6 +572,7 @@
     <string name="reader_panel_backlinks">反链</string>
     <string name="reader_panel_outlinks">出链</string>
     <string name="reader_backlinks_empty">暂无其他笔记链接到本篇</string>
+    <string name="reader_backlink_line">第 %1$d 行 · %2$s</string>
     <string name="reader_outlinks_empty">本篇未链接其他笔记</string>
     <string name="reader_links_scanning">建立链接索引 %1$d/%2$d</string>
     <string name="reader_link_unresolved">未创建</string>
