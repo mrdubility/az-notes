@@ -673,7 +673,7 @@
 
     <!-- Gallery -->
     <string name="gallery_title">Gallery</string>
-    <string name="gallery_filter_orphans">Show unreferenced images only</string>
+    <string name="gallery_filter_orphans">Unreferenced</string>
     <string name="gallery_scanning">Scanning references… %1$d/%2$d</string>
     <string name="gallery_summary_all">%1$d image(s) · %2$s total</string>
     <string name="gallery_summary_unreferenced">%1$d unreferenced image(s) · %2$s total</string>
@@ -682,7 +682,22 @@
     <string name="gallery_empty_unreferenced">No unreferenced images</string>
     <string name="gallery_view_list">Switch to list</string>
     <string name="gallery_view_grid">Switch to grid</string>
-    <string name="gallery_select">Select</string>
+    <string name="gallery_selected_count">%1$d selected</string>
+    <string name="gallery_action_save">Save to gallery</string>
+    <string name="gallery_action_references">References</string>
+    <string name="gallery_action_info">Info</string>
+    <string name="gallery_references_title">Referenced by</string>
+    <string name="gallery_references_empty">Not referenced by any note</string>
+    <string name="gallery_reference_line">Line %1$d · %2$s</string>
+    <string name="gallery_info_title">Image info</string>
+    <string name="gallery_info_name">File name</string>
+    <string name="gallery_info_path">Path</string>
+    <string name="gallery_info_size">Size</string>
+    <string name="gallery_info_time">Modified</string>
+    <string name="gallery_info_resolution">Resolution</string>
+    <string name="gallery_info_unknown">Unknown</string>
+    <string name="gallery_saved_count">Saved %1$d image(s) to gallery</string>
+    <string name="gallery_saved_partial">Saved %1$d, %2$d failed</string>
     <string name="gallery_select_all">Select all</string>
     <string name="gallery_cancel_select">Clear selection</string>
     <string name="gallery_move_trash">Move to trash</string>

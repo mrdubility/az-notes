@@ -1,9 +1,14 @@
 package com.az.notes.ui.gallery
 
-import android.net.Uri
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -15,6 +20,8 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -22,11 +29,13 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.ViewList
-import androidx.compose.material.icons.outlined.DeleteSweep
+import androidx.compose.material.icons.outlined.DeleteOutline
+import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.GridView
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -37,6 +46,8 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -48,6 +59,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -63,32 +75,48 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
 import coil3.compose.LocalPlatformContext
 import coil3.request.ImageRequest
+import com.az.notes.R
+import com.az.notes.data.media.GallerySaver
+import com.az.notes.ui.common.formatDateTimeSeconds
+import com.az.notes.ui.common.formatSize
 import com.az.notes.ui.common.localFile
 import com.az.notes.ui.common.localFileVersion
-import com.az.notes.R
-import com.az.notes.ui.common.formatSize
 import com.az.notes.ui.common.resolve
 import com.az.notes.ui.common.showTimedSnackbar
-import com.az.notes.ui.reader.ImagePreviewDialog
 import java.io.File
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+
+/** 待删除的图片集合：预览单张与多选批量共用同一确认框。 */
+private data class DeleteRequest(val paths: List<String>)
 
 /**
- * 图库页（跟随当前仓库）：网格浏览仓库全部图片，点击全屏预览（捏合缩放）；
- * 长按或顶栏「选择」进入多选，可批量「移入回收站」（回收站关闭时物理删除并二次确认）；
- * 「只显示未被引用的图片」按需扫描引用索引（未被任何笔记引用的图片，供清理）；
- * 顶栏可切换网格 / 列表视图（列表含缩略图、文件名、体积）。
+ * 图库页（跟随当前仓库）：网格 / 列表两种样式，操作完全一致——
+ * 点按图片全屏预览（底部提供保存到相册 / 删除 / 查看引用 / 图片信息）；
+ * 长按进入多选，底栏提供批量保存与删除（回收站关闭时物理删除并二次确认）；
+ * 「未被引用」按需扫描引用索引（未被任何笔记引用的图片，供清理）。
  */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun GalleryScreen(
     viewModel: GalleryViewModel,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onOpenNote: (String) -> Unit
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
-    var confirmTrash by remember { mutableStateOf(false) }
-    var previewFile by remember { mutableStateOf<File?>(null) }
+    val scope = rememberCoroutineScope()
+    var deleteRequest by remember { mutableStateOf<DeleteRequest?>(null) }
+    var previewImage by remember { mutableStateOf<GalleryImage?>(null) }
+    // 预览页内的即时反馈（全屏 Dialog 会盖住页面 Snackbar）
+    var previewHint by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(previewHint) {
+        if (previewHint != null) {
+            delay(2000)
+            previewHint = null
+        }
+    }
     // 视图模式：false = 网格（默认），true = 列表（缩略图 + 文件名 + 大小）
     var listView by rememberSaveable { mutableStateOf(false) }
 
@@ -108,22 +136,85 @@ fun GalleryScreen(
     val displayed = state.displayed
     // 仅当展示列表变化时重算（选择 / 预览等状态重组不再触发 O(n) 求和）
     val totalBytes = remember(displayed) { displayed.sumOf { it.size } }
-    // 网格 / 列表双视图共用的点击（预览或选择）与长按（进入选择）行为
-    val onItemClick: (File) -> Unit = { file ->
-        val absolutePath = file.absolutePath
-        if (state.selectMode) viewModel.toggleSelect(absolutePath) else previewFile = file
+    val selectedImages = remember(state.images, state.selected) {
+        state.images.filter { it.file.absolutePath in state.selected }
     }
-    val onItemLongClick: (File) -> Unit = { file ->
-        val absolutePath = file.absolutePath
+    // 网格 / 列表双视图共用的点击（预览或选择）与长按（进入选择）行为
+    val onItemClick: (GalleryImage) -> Unit = { image ->
+        if (state.selectMode) {
+            viewModel.toggleSelect(image.file.absolutePath)
+        } else {
+            previewImage = image
+        }
+    }
+    val onItemLongClick: (GalleryImage) -> Unit = { image ->
+        val absolutePath = image.file.absolutePath
         if (!state.selectMode) viewModel.enterSelectMode()
         if (absolutePath !in state.selected) viewModel.toggleSelect(absolutePath)
+    }
+
+    // —— 保存到相册（预览单张 / 多选批量共用；Android 8–9 需运行时 WRITE 权限）——
+    var pendingSave by remember { mutableStateOf<List<File>?>(null) }
+    var saving by remember { mutableStateOf(false) }
+    val saveToGallery: (List<File>) -> Unit = { files ->
+        if (files.isNotEmpty() && !saving) {
+            saving = true
+            scope.launch {
+                var saved = 0
+                for (file in files) {
+                    if (GallerySaver.save(context, file) != null) saved++
+                }
+                saving = false
+                val text = when {
+                    saved == files.size -> context.getString(R.string.gallery_saved_count, saved)
+                    saved > 0 -> context.getString(R.string.gallery_saved_partial, saved, files.size - saved)
+                    else -> context.getString(R.string.image_save_failed)
+                }
+                if (previewImage != null) previewHint = text else snackbarHostState.showTimedSnackbar(text)
+            }
+        }
+    }
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        val files = pendingSave
+        pendingSave = null
+        if (granted && files != null) {
+            saveToGallery(files)
+        } else if (!granted) {
+            val text = context.getString(R.string.image_save_denied)
+            if (previewImage != null) {
+                previewHint = text
+            } else {
+                scope.launch { snackbarHostState.showTimedSnackbar(text) }
+            }
+        }
+    }
+    val requestSave: (List<File>) -> Unit = { files ->
+        val needsPermission = Build.VERSION.SDK_INT < Build.VERSION_CODES.Q &&
+            context.checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) !=
+            PackageManager.PERMISSION_GRANTED
+        if (needsPermission) {
+            pendingSave = files
+            permissionLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+        } else {
+            saveToGallery(files)
+        }
     }
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
-                title = { Text(stringResource(R.string.gallery_title)) },
+                title = {
+                    Text(
+                        if (state.selectMode) {
+                            stringResource(R.string.gallery_selected_count, state.selected.size)
+                        } else {
+                            stringResource(R.string.gallery_title)
+                        }
+                    )
+                },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.action_back))
@@ -152,30 +243,57 @@ fun GalleryScreen(
                                     )
                                 )
                             }
-                            TextButton(onClick = viewModel::enterSelectMode) {
-                                Text(stringResource(R.string.gallery_select))
-                            }
                         }
                     }
                 }
             )
         },
         bottomBar = {
-            if (state.selected.isNotEmpty()) {
-                Button(
-                    onClick = { confirmTrash = true },
+            if (state.selectMode) {
+                Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(16.dp)
+                        .navigationBarsPadding()
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    Icon(Icons.Outlined.DeleteSweep, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        text = stringResource(
-                            if (state.trashEnabled) R.string.gallery_move_trash
-                            else R.string.gallery_delete_permanently
+                    OutlinedButton(
+                        onClick = { requestSave(selectedImages.map { it.file }) },
+                        enabled = selectedImages.isNotEmpty() && !saving,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        if (saving) {
+                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                        } else {
+                            Icon(
+                                Icons.Outlined.Download,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        Text(stringResource(R.string.gallery_action_save))
+                    }
+                    Button(
+                        onClick = { deleteRequest = DeleteRequest(state.selected.toList()) },
+                        enabled = selectedImages.isNotEmpty(),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(
+                            Icons.Outlined.DeleteOutline,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
                         )
-                    )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            stringResource(
+                                if (state.trashEnabled) R.string.gallery_move_trash
+                                else R.string.gallery_delete_permanently
+                            ),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                 }
             }
         }
@@ -208,8 +326,8 @@ fun GalleryScreen(
                             image = image,
                             selectMode = state.selectMode,
                             selected = image.file.absolutePath in state.selected,
-                            onClick = { onItemClick(image.file) },
-                            onLongClick = { onItemLongClick(image.file) }
+                            onClick = { onItemClick(image) },
+                            onLongClick = { onItemLongClick(image) }
                         )
                     }
                 }
@@ -222,13 +340,12 @@ fun GalleryScreen(
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     items(displayed, key = { it.file.absolutePath }) { image ->
-                        val absolutePath = image.file.absolutePath
                         GalleryCell(
                             image = image,
                             selectMode = state.selectMode,
-                            selected = absolutePath in state.selected,
-                            onClick = { onItemClick(image.file) },
-                            onLongClick = { onItemLongClick(image.file) }
+                            selected = image.file.absolutePath in state.selected,
+                            onClick = { onItemClick(image) },
+                            onLongClick = { onItemLongClick(image) }
                         )
                     }
                 }
@@ -236,42 +353,148 @@ fun GalleryScreen(
         }
     }
 
-    if (confirmTrash) {
+    deleteRequest?.let { request ->
         AlertDialog(
-            onDismissRequest = { confirmTrash = false },
+            onDismissRequest = { deleteRequest = null },
             title = { Text(stringResource(R.string.gallery_confirm_title)) },
             text = {
                 Text(
                     stringResource(
                         if (state.trashEnabled) R.string.gallery_confirm_trash
                         else R.string.gallery_confirm_delete,
-                        state.selected.size
+                        request.paths.size
                     )
                 )
             },
             confirmButton = {
                 TextButton(onClick = {
-                    confirmTrash = false
-                    viewModel.trashSelected()
+                    deleteRequest = null
+                    previewImage = null
+                    previewHint = null
+                    viewModel.deleteImages(request.paths)
                 }) {
                     Text(stringResource(R.string.action_confirm), color = MaterialTheme.colorScheme.error)
                 }
             },
             dismissButton = {
-                TextButton(onClick = { confirmTrash = false }) {
+                TextButton(onClick = { deleteRequest = null }) {
                     Text(stringResource(R.string.action_cancel))
                 }
             }
         )
     }
 
-    // 全屏图片预览（复用阅读器组件：黑底 + 点按关闭 + 捏合缩放）
-    previewFile?.let { file ->
-        ImagePreviewDialog(file = file, onDismiss = { previewFile = null })
+    // 全屏预览：底部提供保存 / 删除 / 查看引用 / 图片信息
+    previewImage?.let { image ->
+        GalleryPreviewDialog(
+            image = image,
+            deleteLabel = stringResource(
+                if (state.trashEnabled) R.string.gallery_move_trash
+                else R.string.gallery_delete_permanently
+            ),
+            hint = previewHint,
+            onDismiss = { previewImage = null; previewHint = null },
+            onSave = { requestSave(listOf(image.file)) },
+            onDelete = { deleteRequest = DeleteRequest(listOf(image.file.absolutePath)) },
+            onShowReferences = { viewModel.openReferences(image) },
+            onShowInfo = { viewModel.openInfo(image) }
+        )
+    }
+
+    // 引用抽屉：列出引用该图片的笔记，点击进入笔记
+    val references = state.references
+    if (references != null) {
+        ModalBottomSheet(onDismissRequest = viewModel::closeReferences) {
+            Column(Modifier.fillMaxWidth().padding(bottom = 24.dp)) {
+                Text(
+                    text = stringResource(R.string.gallery_references_title),
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                )
+                when {
+                    state.referencesLoading -> Box(
+                        modifier = Modifier.fillMaxWidth().padding(24.dp),
+                        contentAlignment = Alignment.Center
+                    ) { CircularProgressIndicator() }
+
+                    references.isEmpty() -> Text(
+                        text = stringResource(R.string.gallery_references_empty),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
+                    )
+
+                    else -> LazyColumn(Modifier.heightIn(max = 420.dp)) {
+                        items(references, key = { it.notePath }) { hit ->
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        viewModel.closeReferences()
+                                        previewImage = null
+                                        onOpenNote(hit.notePath)
+                                    }
+                                    .padding(horizontal = 16.dp, vertical = 10.dp)
+                            ) {
+                                Text(
+                                    text = hit.relativePath,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = stringResource(
+                                        R.string.gallery_reference_line,
+                                        hit.line + 1,
+                                        hit.snippet
+                                    ),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 图片信息浮窗：完整文件名 / 路径 / 大小 / 修改时间 / 分辨率
+    state.info?.let { info ->
+        AlertDialog(
+            onDismissRequest = viewModel::closeInfo,
+            title = { Text(stringResource(R.string.gallery_info_title)) },
+            text = {
+                Column {
+                    InfoRow(stringResource(R.string.gallery_info_name), info.name)
+                    InfoRow(stringResource(R.string.gallery_info_path), info.relativePath)
+                    InfoRow(stringResource(R.string.gallery_info_size), formatSize(info.size))
+                    InfoRow(
+                        stringResource(R.string.gallery_info_time),
+                        formatDateTimeSeconds(info.lastModified)
+                    )
+                    InfoRow(
+                        stringResource(R.string.gallery_info_resolution),
+                        if (info.width > 0 && info.height > 0) {
+                            "${info.width} × ${info.height}"
+                        } else {
+                            stringResource(R.string.gallery_info_unknown)
+                        }
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = viewModel::closeInfo) {
+                    Text(stringResource(R.string.action_close))
+                }
+            }
+        )
     }
 }
 
-/** 顶部区：过滤开关（只显示未被引用的图片）+ 扫描进度 / 统计 + 未扫描笔记提示。 */
+/** 顶部区：过滤开关（未被引用）+ 扫描进度 / 统计 + 未扫描笔记提示。 */
 @Composable
 private fun GalleryHeader(
     state: GalleryUiState,
@@ -309,6 +532,24 @@ private fun GalleryHeader(
                 color = MaterialTheme.colorScheme.error
             )
         }
+    }
+}
+
+/** 信息行：定宽标签 + 可换行取值。 */
+@Composable
+private fun InfoRow(label: String, value: String) {
+    Row(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.width(72.dp)
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.weight(1f)
+        )
     }
 }
 

@@ -147,6 +147,92 @@ class AttachmentRepository @Inject constructor(
 
     // ---------------------------------------------------------------- 内部
 
+    /** 「查看引用」命中的一篇笔记：首个引用所在行号与该行摘要。 */
+    data class ReferenceHit(
+        val notePath: String,
+        val relativePath: String,
+        val line: Int,
+        val snippet: String
+    )
+
+    /**
+     * 查找引用了 [imagePath] 的笔记（每篇只列首个引用行）。
+     *
+     * 逐行判断以便给出准确行号，代码围栏内的示例链接跳过；
+     * 先用文件名做一次整篇包含判断，未提及的笔记直接跳过（绝大多数笔记不含该图）。
+     */
+    fun referencesOf(
+        vaultRoot: File,
+        imagePath: String,
+        limit: Int = REFERENCE_LIMIT
+    ): List<ReferenceHit> {
+        val root = vaultRoot.normalize()
+        val target = File(imagePath).normalize().absolutePath
+        val imageName = File(target).name
+        val attachments = listAttachments(root)
+        val nameIndex = buildNameIndex(root, attachments)
+        val notes = ArrayList<File>().also { collectNotes(root, it) }
+        val out = ArrayList<ReferenceHit>()
+        for (note in notes) {
+            if (out.size >= limit) break
+            if (note.length() > VaultRepository.CONTENT_SEARCH_MAX_BYTES) continue
+            val text = runCatching { vaultRepository.readText(note.absolutePath) }.getOrNull() ?: continue
+            if (!text.contains(imageName, ignoreCase = true)) continue
+            val noteDir = note.parentFile ?: continue
+            var hitLine = -1
+            var hitSnippet = ""
+            forEachBodyLine(text) { lineNo, line ->
+                val matched = ImageReference.extract(line).any { ref ->
+                    !ImageReference.isRemote(ref) &&
+                        ImageReference.resolveExisting(ref, root, noteDir, nameIndex)
+                            ?.absolutePath == target
+                }
+                if (matched) {
+                    hitLine = lineNo
+                    hitSnippet = line.trim().take(SNIPPET_MAX_CHARS)
+                    false
+                } else {
+                    true
+                }
+            }
+            if (hitLine >= 0) {
+                out += ReferenceHit(
+                    notePath = note.absolutePath,
+                    relativePath = relativePathOf(root, note),
+                    line = hitLine,
+                    snippet = hitSnippet
+                )
+            }
+        }
+        return out
+    }
+
+    /** 逐行遍历正文并跳过代码围栏内的行（围栏内的示例链接不算引用）。 */
+    private inline fun forEachBodyLine(text: String, action: (lineNo: Int, line: String) -> Boolean) {
+        var fence = false
+        var index = 0
+        for (line in text.split('\n')) {
+            val trimmed = line.trimStart()
+            if (trimmed.startsWith("```") || trimmed.startsWith("~~~")) {
+                fence = !fence
+            } else if (!fence && !action(index, line)) {
+                return
+            }
+            index++
+        }
+    }
+
+    private fun relativePathOf(root: File, file: File): String =
+        file.absolutePath.removePrefix(root.absolutePath).trimStart('/', '\\')
+
+    private companion object {
+        /** 「查看引用」单次最多返回的笔记数（浮层展示上限）。 */
+        const val REFERENCE_LIMIT = 200
+
+        /** 引用行摘要的截断长度。 */
+        const val SNIPPET_MAX_CHARS = 160
+    }
+
     private fun collectNotes(dir: File, out: MutableList<File>) {
         val children = dir.listFiles() ?: return
         for (f in children) {

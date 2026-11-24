@@ -250,7 +250,8 @@ fun AzNotesNavHost(
         composable(Routes.GALLERY) { entry ->
             GalleryScreen(
                 viewModel = hiltViewModel(),
-                onBack = { navController.popBackStackSafely(entry) }
+                onBack = { navController.popBackStackSafely(entry) },
+                onOpenNote = { path -> navController.navigate(Routes.reader(path)) }
             )
         }
 

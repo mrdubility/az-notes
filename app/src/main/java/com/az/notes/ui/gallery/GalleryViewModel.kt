@@ -1,5 +1,6 @@
 package com.az.notes.ui.gallery
 
+import android.graphics.BitmapFactory
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.az.notes.R
@@ -30,6 +31,16 @@ data class GalleryImage(
     val lastModified: Long
 )
 
+/** 图片文件信息（「图片信息」浮窗展示，尺寸只解文件头不整图解码）。 */
+data class ImageFileInfo(
+    val name: String,
+    val relativePath: String,
+    val size: Long,
+    val lastModified: Long,
+    val width: Int,
+    val height: Int
+)
+
 data class GalleryUiState(
     val vaultPath: String? = null,
     /** 回收站是否启用：关闭时清理为物理删除（UI 需二次确认）。 */
@@ -52,6 +63,11 @@ data class GalleryUiState(
     val selectMode: Boolean = false,
     /** 多选：选中项的绝对路径集合。 */
     val selected: Set<String> = emptySet(),
+    /** 「查看引用」结果：null = 浮层未打开；空列表 = 没有被任何笔记引用。 */
+    val references: List<AttachmentRepository.ReferenceHit>? = null,
+    val referencesLoading: Boolean = false,
+    /** 「图片信息」浮层数据：null = 未打开。 */
+    val info: ImageFileInfo? = null,
     val message: UiMessage? = null
 ) {
     /** 展示列表实例缓存：state 实例不可变（同实例的 images 与过滤条件不会变化），避免重复重组反复建表。 */
@@ -115,7 +131,10 @@ class GalleryViewModel @Inject constructor(
                     trashEnabled = settings.trashEnabled,
                     loading = true,
                     selectMode = false,
-                    selected = emptySet()
+                    selected = emptySet(),
+                    references = null,
+                    referencesLoading = false,
+                    info = null
                 )
             }
             val images = withContext(Dispatchers.IO) {
@@ -192,16 +211,61 @@ class GalleryViewModel @Inject constructor(
         _state.update { it.copy(selected = emptySet()) }
     }
 
+    /** 打开「查看引用」：扫描全库正文找出引用该图片的笔记（每篇列首个引用行）。 */
+    fun openReferences(image: GalleryImage) {
+        val root = vaultRoot ?: return
+        _state.update { it.copy(references = emptyList(), referencesLoading = true) }
+        viewModelScope.launch {
+            val hits = withContext(Dispatchers.IO) {
+                runCatching { attachmentRepository.referencesOf(root, image.file.absolutePath) }
+                    .getOrDefault(emptyList())
+            }
+            _state.update { it.copy(references = hits, referencesLoading = false) }
+        }
+    }
+
+    fun closeReferences() {
+        _state.update { it.copy(references = null, referencesLoading = false) }
+    }
+
+    /** 打开「图片信息」：尺寸只解文件头，不整图解码。 */
+    fun openInfo(image: GalleryImage) {
+        viewModelScope.launch {
+            val info = withContext(Dispatchers.IO) {
+                val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                runCatching { BitmapFactory.decodeFile(image.file.absolutePath, options) }
+                ImageFileInfo(
+                    name = image.file.name,
+                    relativePath = image.relativePath,
+                    size = image.size,
+                    lastModified = image.lastModified,
+                    width = options.outWidth,
+                    height = options.outHeight
+                )
+            }
+            _state.update { it.copy(info = info) }
+        }
+    }
+
+    fun closeInfo() {
+        _state.update { it.copy(info = null) }
+    }
+
+    /** 多选清理（顶栏批量入口）。 */
+    fun trashSelected() = deleteImages(_state.value.selected)
+
     /**
-     * 把选中图片移入回收站（回收站关闭时物理删除，UI 已二次确认）。
-     * 完成后重载列表（过滤开启时重扫引用）并调度同步；全程仅限仓库内路径。
+     * 删除指定图片（预览页单张 / 多选共用）：回收站启用时移入回收站，否则物理删除
+     * （调用方已二次确认）。完成后重载列表（过滤开启时重扫引用）并调度同步；
+     * 全程仅限仓库内路径。
      */
-    fun trashSelected() {
+    fun deleteImages(paths: Collection<String>) {
+        if (paths.isEmpty()) return
         viewModelScope.launch {
             val current = _state.value
             val vault = current.vaultPath
             if (vault.isNullOrBlank()) return@launch
-            val targets = current.images.filter { it.file.absolutePath in current.selected }
+            val targets = current.images.filter { it.file.absolutePath in paths }
             if (targets.isEmpty()) return@launch
             val moved = withContext(Dispatchers.IO) {
                 var ok = 0

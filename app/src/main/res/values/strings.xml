@@ -711,7 +711,7 @@
 
     <!-- 图库 -->
     <string name="gallery_title">图库</string>
-    <string name="gallery_filter_orphans">只显示未被引用的图片</string>
+    <string name="gallery_filter_orphans">未被引用</string>
     <string name="gallery_scanning">正在扫描引用… %1$d/%2$d</string>
     <string name="gallery_summary_all">共 %1$d 张图片 · 合计 %2$s</string>
     <string name="gallery_summary_unreferenced">发现 %1$d 张未被引用的图片 · 合计 %2$s</string>
@@ -720,7 +720,22 @@
     <string name="gallery_empty_unreferenced">没有未被引用的图片</string>
     <string name="gallery_view_list">切换为列表</string>
     <string name="gallery_view_grid">切换为网格</string>
-    <string name="gallery_select">选择</string>
+    <string name="gallery_selected_count">已选 %1$d 项</string>
+    <string name="gallery_action_save">保存到相册</string>
+    <string name="gallery_action_references">查看引用</string>
+    <string name="gallery_action_info">图片信息</string>
+    <string name="gallery_references_title">引用它的笔记</string>
+    <string name="gallery_references_empty">没有被任何笔记引用</string>
+    <string name="gallery_reference_line">第 %1$d 行 · %2$s</string>
+    <string name="gallery_info_title">图片信息</string>
+    <string name="gallery_info_name">文件名</string>
+    <string name="gallery_info_path">路径</string>
+    <string name="gallery_info_size">大小</string>
+    <string name="gallery_info_time">修改时间</string>
+    <string name="gallery_info_resolution">分辨率</string>
+    <string name="gallery_info_unknown">未知</string>
+    <string name="gallery_saved_count">已保存 %1$d 张到相册</string>
+    <string name="gallery_saved_partial">已保存 %1$d 张，%2$d 张失败</string>
     <string name="gallery_select_all">全选</string>
     <string name="gallery_cancel_select">取消选择</string>
     <string name="gallery_move_trash">移入回收站</string>
