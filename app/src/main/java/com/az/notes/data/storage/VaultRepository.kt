@@ -307,8 +307,13 @@ class VaultRepository @Inject constructor() {
         }
     }
 
-    /** 正文搜索缓存条目：文件 mtime 未变即可复用已读文本。 */
-    private data class CachedContent(val lastModified: Long, val text: String)
+    /**
+     * 正文缓存条目：mtime 与体积都一致才可复用。
+     *
+     * 单看 mtime 不够——同秒写盘时部分文件系统的 mtime 不会变，
+     * 长度变了的正文会被误当成旧文本复用（索引与搜索都会读到陈旧内容）。
+     */
+    private data class CachedContent(val lastModified: Long, val size: Long, val text: String)
 
     private val contentCache = ConcurrentHashMap<String, CachedContent>()
 
@@ -341,14 +346,18 @@ class VaultRepository @Inject constructor() {
         if (!forceRead) {
             if (cacheable) {
                 val cached = contentCache[node.absolutePath]
-                if (cached != null && cached.lastModified == node.lastModified) return cached.text
+                if (cached != null && cached.lastModified == node.lastModified && cached.size == node.size) {
+                    return cached.text
+                }
             } else if (indexCacheable) {
                 val cached = synchronized(indexContentCache) { indexContentCache[node.absolutePath] }
-                if (cached != null && cached.lastModified == node.lastModified) return cached.text
+                if (cached != null && cached.lastModified == node.lastModified && cached.size == node.size) {
+                    return cached.text
+                }
             }
         }
         val text = runCatching { readText(node.absolutePath) }.getOrNull() ?: return null
-        val entry = CachedContent(node.lastModified, text)
+        val entry = CachedContent(node.lastModified, node.size, text)
         when {
             cacheable -> {
                 if (contentCache.size >= CONTENT_CACHE_LIMIT) contentCache.clear()
